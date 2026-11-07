@@ -16,7 +16,19 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 final class ContactRendezvous {
     record Addresses(String local, String remote) {}
 
+    record Material(Addresses addresses, byte[] localPublic, byte[] remotePublic,
+                    byte[] sharedSecret, byte[] localSeed) implements AutoCloseable {
+        @Override public void close() {
+            Arrays.fill(sharedSecret, (byte) 0);
+            Arrays.fill(localSeed, (byte) 0);
+        }
+    }
+
     static Addresses importLink(Path directory, String link) throws IOException, GeneralSecurityException {
+        try (var material = derive(directory, link)) { return material.addresses(); }
+    }
+
+    static Material derive(Path directory, String link) throws IOException, GeneralSecurityException {
         byte[] remote = ContactLink.parse(link);
         PrivateKey privateKey = ContactLink.loadKey(directory);
         byte[] local = ContactLink.publicKey(privateKey);
@@ -32,14 +44,22 @@ final class ContactRendezvous {
         }
         byte[] shared = agreement.generateSecret();
         try {
-            // Binding ordered public keys makes the two endpoint seeds unambiguous.
-            return new Addresses(endpoint(shared, local, remote), endpoint(shared, remote, local));
-        } finally {
+            return new Material(new Addresses(endpoint(shared, local, remote), endpoint(shared, remote, local)),
+                    local, remote, shared, seed(shared, local, remote));
+        } catch (GeneralSecurityException | RuntimeException e) {
             Arrays.fill(shared, (byte) 0);
+            throw e;
         }
     }
 
     private static String endpoint(byte[] shared, byte[] owner, byte[] peer) throws GeneralSecurityException {
+        byte[] seed = seed(shared, owner, peer);
+        try {
+            return onionAddress(new Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().getEncoded());
+        } finally { Arrays.fill(seed, (byte) 0); }
+    }
+
+    private static byte[] seed(byte[] shared, byte[] owner, byte[] peer) {
         byte[] info = new byte[64];
         System.arraycopy(owner, 0, info, 0, 32);
         System.arraycopy(peer, 0, info, 32, 32);
@@ -47,11 +67,7 @@ final class ContactRendezvous {
         hkdf.init(new HKDFParameters(shared, "Onion-P2P/rendezvous/v1".getBytes(US_ASCII), info));
         byte[] seed = new byte[32];
         hkdf.generateBytes(seed, 0, seed.length);
-        try {
-            return onionAddress(new Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().getEncoded());
-        } finally {
-            Arrays.fill(seed, (byte) 0);
-        }
+        return seed;
     }
 
     static String onionAddress(byte[] publicKey) throws GeneralSecurityException {

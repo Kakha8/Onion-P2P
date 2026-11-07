@@ -5,6 +5,7 @@ import javafx.application.Platform;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ListView;
 import javafx.scene.layout.VBox;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
@@ -20,11 +21,41 @@ public class HelloController {
     @FXML private TextField importedAddress;
     @FXML private VBox addressPanel;
     @FXML private Label importStatus;
+    @FXML private ListView<String> savedContacts;
+    private volatile ContactManager manager;
+    private String selectedLink;
+
+    void setManager(ContactManager manager) {
+        this.manager = manager;
+        refreshContacts();
+    }
+
+    void contactEvent(ContactManager.Event event) {
+        Platform.runLater(() -> {
+            if (event.link().equals(selectedLink)) importStatus.setText(event.message());
+        });
+        refreshContacts();
+    }
+
+    private void refreshContacts() {
+        ContactManager current = manager;
+        if (current == null) return;
+        Thread.ofPlatform().daemon().name("contact-list").start(() -> {
+            try {
+                var contacts = current.contacts();
+                Platform.runLater(() -> savedContacts.getItems().setAll(contacts.stream()
+                        .map(c -> c.onion() + "  — saved").toList()));
+            } catch (Exception e) {
+                Platform.runLater(() -> importStatus.setText("Could not read the saved contacts database."));
+            }
+        });
+    }
 
     @FXML
     protected void onImportLink() {
         if (importButton.isDisabled()) return;
         String input = importLink.getText();
+        selectedLink = input.strip();
         importButton.setDisable(true);
         addressPanel.setVisible(false);
         addressPanel.setManaged(false);
@@ -32,13 +63,13 @@ public class HelloController {
         importStatus.setText("Importing contact link…");
         Thread.ofPlatform().daemon().name("contact-import").start(() -> {
             try {
-                var addresses = ContactRendezvous.importLink(AppData.directory(), input);
-                System.out.println("Derived contact onion address (not published): http://" + addresses.remote() + "/");
+                var addresses = manager == null ? ContactRendezvous.importLink(AppData.directory(), input) : manager.add(input);
+                System.out.println("Contact rendezvous address: " + addresses.remote());
                 Platform.runLater(() -> {
                     importedAddress.setText("http://" + addresses.remote() + "/");
                     addressPanel.setManaged(true);
                     addressPanel.setVisible(true);
-                    importStatus.setText("Address derived. A Tor service has not been started at this address.");
+                    if (manager == null) importStatus.setText("Contact service is not ready. Import again after startup.");
                     importButton.setDisable(false);
                 });
             } catch (Exception e) {

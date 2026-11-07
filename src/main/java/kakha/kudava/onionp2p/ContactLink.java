@@ -82,7 +82,7 @@ final class ContactLink {
         return new BigInteger(1, reversed);
     }
 
-    private static void restrictToOwner(Path file) throws IOException {
+    static void restrictToOwner(Path file) throws IOException {
         var acl = Files.getFileAttributeView(file, AclFileAttributeView.class);
         if (acl != null) {
             acl.setAcl(List.of(AclEntry.newBuilder().setType(AclEntryType.ALLOW)

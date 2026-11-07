@@ -4,6 +4,8 @@ module kakha.kudava.onionp2p {
     requires jdk.httpserver;
     requires org.bouncycastle.provider;
     requires jdk.crypto.ec;
+    requires java.sql;
+    requires org.xerial.sqlitejdbc;
 
 
     opens kakha.kudava.onionp2p to javafx.fxml;
