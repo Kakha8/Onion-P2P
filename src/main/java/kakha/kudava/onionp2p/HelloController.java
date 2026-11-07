@@ -7,8 +7,10 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.PasswordField;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 
@@ -29,8 +31,113 @@ public class HelloController {
     @FXML private HBox torProgressRow;
     @FXML private ProgressIndicator torProgress;
     @FXML private Label torStatus;
+    @FXML private VBox authPane;
+    @FXML private Label authTitle;
+    @FXML private Label authMessage;
+    @FXML private TextField usernameField;
+    @FXML private PasswordField passwordField;
+    @FXML private PasswordField confirmPasswordField;
+    @FXML private VBox confirmPasswordRow;
+    @FXML private Button authButton;
+    @FXML private ProgressIndicator authProgress;
+    @FXML private VBox appPane;
     private volatile ContactManager manager;
     private String selectedLink;
+    private AccountStore accounts;
+    private Runnable onAuthenticated;
+    private boolean creatingAccount;
+    private String authenticatedUsername;
+
+    void setOnAuthenticated(Runnable callback) { onAuthenticated = callback; }
+
+    void beginAuthentication() {
+        authPane.setManaged(true); authPane.setVisible(true);
+        setAuthBusy(true, "Checking local account…");
+        Thread.ofPlatform().daemon().name("account-load").start(() -> {
+            try {
+                accounts = new AccountStore(AppData.directory());
+                var profile = accounts.profile();
+                Platform.runLater(() -> showAuth(profile == null));
+            } catch (Exception e) {
+                System.err.println("Account load failed: " + e.getMessage());
+                Platform.runLater(() -> {
+                    showAuth(true);
+                    authButton.setDisable(true);
+                    authMessage.setText("Could not open the local account database.");
+                    authProgress.setVisible(false);
+                    authProgress.setManaged(false);
+                });
+            }
+        });
+    }
+
+    private void showAuth(boolean create) {
+        creatingAccount = create;
+        authTitle.setText(create ? "Set up your account" : "Unlock your account");
+        authMessage.setText(create ? "Choose a username and a password of at least 12 characters."
+                : "Enter your local username and password.");
+        confirmPasswordRow.setVisible(create);
+        confirmPasswordRow.setManaged(create);
+        authButton.setText(create ? "Create account" : "Unlock");
+        authButton.setDisable(false);
+        authProgress.setVisible(false);
+        authProgress.setManaged(false);
+        authPane.setVisible(true); authPane.setManaged(true);
+        appPane.setVisible(false); appPane.setManaged(false);
+        usernameField.requestFocus();
+    }
+
+    @FXML protected void onAuthenticate() {
+        if (authButton.isDisabled()) return;
+        String username = usernameField.getText();
+        char[] password = passwordField.getText().toCharArray();
+        char[] confirmation = confirmPasswordField.getText().toCharArray();
+        passwordField.clear(); confirmPasswordField.clear();
+        if (creatingAccount && !constantTimeEquals(password, confirmation)) {
+            java.util.Arrays.fill(password, '\0'); java.util.Arrays.fill(confirmation, '\0');
+            authMessage.setText("Passwords do not match."); return;
+        }
+        java.util.Arrays.fill(confirmation, '\0');
+        setAuthBusy(true, creatingAccount ? "Creating account…" : "Checking password…");
+        Thread.ofPlatform().daemon().name("account-authentication").start(() -> {
+            try {
+                AccountStore.Profile profile;
+                if (creatingAccount) {
+                    accounts.create(username, password);
+                    profile = accounts.profile();
+                } else profile = accounts.authenticate(username, password);
+                var authenticated = profile;
+                Platform.runLater(() -> {
+                    authenticatedUsername = authenticated.username();
+                    authPane.setVisible(false); authPane.setManaged(false);
+                    appPane.setVisible(true); appPane.setManaged(true);
+                    statusText.setText("Welcome, " + authenticated.username() + ".");
+                    if (onAuthenticated != null) onAuthenticated.run();
+                });
+            } catch (Exception e) {
+                java.util.Arrays.fill(password, '\0');
+                Platform.runLater(() -> {
+                    authMessage.setText(e instanceof IllegalArgumentException || e instanceof SecurityException
+                            ? e.getMessage() : "Could not set up or unlock the local account.");
+                    setAuthBusy(false, null);
+                    if (creatingAccount && e instanceof IllegalStateException) showAuth(false);
+                });
+            }
+        });
+    }
+
+    private static boolean constantTimeEquals(char[] left, char[] right) {
+        int difference = left.length ^ right.length;
+        for (int i = 0; i < Math.max(left.length, right.length); i++)
+            difference |= (i < left.length ? left[i] : 0) ^ (i < right.length ? right[i] : 0);
+        return difference == 0;
+    }
+
+    private void setAuthBusy(boolean busy, String message) {
+        authButton.setDisable(busy);
+        authProgress.setManaged(busy); authProgress.setVisible(busy);
+        if (busy) authMessage.setText(message);
+    }
 
     void torStarting() {
         torStatus.setText("Starting Tor and publishing your onion service…");
@@ -76,7 +183,8 @@ public class HelloController {
             try {
                 var contacts = current.contacts();
                 Platform.runLater(() -> {
-                    savedContacts.getItems().setAll(contacts.stream().map(c -> c.onion() + "  — saved").toList());
+                    savedContacts.getItems().setAll(contacts.stream()
+                            .map(c -> c.username() + "  —  " + c.onion() + "  (saved)").toList());
                     contactsProgress.setVisible(false);
                     contactsProgress.setManaged(false);
                 });
@@ -111,7 +219,8 @@ public class HelloController {
                 var addresses = manager == null ? ContactRendezvous.importLink(AppData.directory(), input) : manager.add(input);
                 System.out.println("Contact rendezvous address: " + addresses.remote());
                 Platform.runLater(() -> {
-                    importedAddress.setText("http://" + addresses.remote() + "/");
+                    String remoteName = ContactLink.parseLink(input).username();
+                    importedAddress.setText(remoteName + " — http://" + addresses.remote() + "/");
                     addressPanel.setManaged(true);
                     addressPanel.setVisible(true);
                     if (manager == null) {
@@ -146,7 +255,7 @@ public class HelloController {
         statusText.setText("Generating your link…");
         Thread.ofPlatform().daemon().name("contact-key").start(() -> {
             try {
-                String link = ContactLink.loadOrCreate(AppData.directory());
+                String link = ContactLink.loadOrCreate(AppData.directory(), authenticatedUsername);
                 Platform.runLater(() -> {
                     contactLink.setText(link);
                     linkPanel.setManaged(true);

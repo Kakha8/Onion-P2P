@@ -14,11 +14,17 @@ Open that URL in Tor Browser to see `Hello world!`. Initial Tor connection and o
 
 The persistent identity and Tor state live under `%LOCALAPPDATA%/Onion-P2P` (home directory fallback). Keep the `service` directory private and back it up to retain the same address. Do not commit it. Only one app instance can use a data directory. For development, override it with the JVM option `-Donion.dataDir=C:/some/private/path`.
 
+## Local account
+
+On first launch, create a local username and password. Later launches ask for those credentials before starting Tor or opening the app. Usernames are 3–32 ASCII letters, numbers, dots, dashes, or underscores; passwords must be at least 12 characters.
+
+The username and Argon2id password verifier (unique 16-byte salt, 19 MiB memory, 2 passes, 1 thread) live in the local `contacts.sqlite` database. The verifier can confirm a password but cannot recover it. The password is not currently used to encrypt the database, private keys, or messages; local encryption is still a separate planned feature. Forgetting the password currently means the account cannot be unlocked; there is no password-reset flow yet.
+
 ## Public-key links
 
 Click **Generate public-key link** to display your link, then **Copy link** to copy it. The same X25519 key is reused on subsequent clicks and app launches, including when Tor is offline. The private key is stored in `contact-x25519.pk8` in the app data directory with owner-only access; it is never included in the link. Back up this file privately to keep your contact key. A damaged key produces an error rather than silently replacing your identity.
 
-Link format: `onionp2p://contact/v1/x25519/<public-key>`, where the public key is the 32-byte little-endian X25519 public coordinate encoded as unpadded Base64url. This is our app's format, not a Briar link. X25519 is not post-quantum cryptography.
+Link format: `onionp2p://contact/v2/<base64url-username>/<base64url-public-key>`. Both fields use unpadded Base64url; the key is a 32-byte little-endian X25519 public coordinate. The advertised username is a claimed display name, not proof of a real-world identity. The pairing handshake authenticates that the remote participant controls the private key matching the link and binds the advertised name into the handshake. Legacy v1 links (`onionp2p://contact/v1/x25519/<public-key>`) can still be imported and appear as `Unknown`. This is our app's format, not a Briar link. X25519 is not post-quantum cryptography.
 
 Paste another user's link into **Import a contact's public-key link** and click **Import link**. The app displays and prints the derived contact onion address. Import also works before you generate your own link: it creates or loads your local key automatically. Wrong formats, noncanonical keys, unusable low-order keys, and your own link are rejected.
 
@@ -32,7 +38,7 @@ Pairing v1 binds the ordered X25519 public keys and two fresh 32-byte nonces int
 
 The receiver commits after validating the client acknowledgment, then sends its saved receipt. The initiating app commits only after validating that receipt. A dropped connection can temporarily leave only one side saved; retries are idempotent and finish the other side. This prototype protocol is not audited, is not post-quantum, and does not provide forward secrecy or implement chat encryption/history yet. Verify contact links through a trusted channel.
 
-Acknowledged contacts are stored in `%LOCALAPPDATA%/Onion-P2P/contacts.sqlite` (or your configured `onion.dataDir`). Each row contains the public-key link, remote rendezvous address, and first acknowledgment timestamp. The public-key link is unique, so repeat handshakes do not duplicate contacts. Private keys and handshake secrets are not written to this database. **The SQLite database is not encrypted at rest**; it has owner-only file access. Password-protected storage is a separate feature.
+Acknowledged contacts are stored in `%LOCALAPPDATA%/Onion-P2P/contacts.sqlite` (or your configured `onion.dataDir`). Each row contains the public-key link, remote rendezvous address, advertised username, and first acknowledgment timestamp. The public-key link is unique, so repeat handshakes do not duplicate contacts. Private keys and handshake secrets are not written to this database. **The SQLite database is not encrypted at rest**; it has owner-only file access. Password-protected storage is a separate feature.
 
 Our experimental rendezvous v1 calculation is X25519(local private key, remote public key), then HKDF-SHA256 with ASCII salt `Onion-P2P/rendezvous/v1` and info `endpoint owner's raw public key || peer's raw public key` (32 bytes each), yielding a 32-byte Ed25519 seed. The resulting Ed25519 public key is encoded using Tor's v3 onion address formula. Reversing the owner/peer order gives the other endpoint. Both participants can derive both endpoint keys, so these are rendezvous addresses, not independently authenticated identities. This is not Briar-compatible and is not an audited messaging protocol.
 

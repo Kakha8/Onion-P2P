@@ -16,7 +16,7 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 final class ContactRendezvous {
     record Addresses(String local, String remote) {}
 
-    record Material(Addresses addresses, byte[] localPublic, byte[] remotePublic,
+    record Material(Addresses addresses, String localUsername, String remoteUsername, byte[] localPublic, byte[] remotePublic,
                     byte[] sharedSecret, byte[] localSeed) implements AutoCloseable {
         @Override public void close() {
             Arrays.fill(sharedSecret, (byte) 0);
@@ -25,11 +25,16 @@ final class ContactRendezvous {
     }
 
     static Addresses importLink(Path directory, String link) throws IOException, GeneralSecurityException {
-        try (var material = derive(directory, link)) { return material.addresses(); }
+        try (var material = derive(directory, link, "local")) { return material.addresses(); }
     }
 
     static Material derive(Path directory, String link) throws IOException, GeneralSecurityException {
-        byte[] remote = ContactLink.parse(link);
+        return derive(directory, link, "local");
+    }
+
+    static Material derive(Path directory, String link, String localUsername) throws IOException, GeneralSecurityException {
+        var parsed = ContactLink.parseLink(link);
+        byte[] remote = parsed.publicKey();
         PrivateKey privateKey = ContactLink.loadKey(directory);
         byte[] local = ContactLink.publicKey(privateKey);
         if (Arrays.equals(local, remote)) throw new IllegalArgumentException("This is your own link. Paste a contact's link.");
@@ -45,7 +50,7 @@ final class ContactRendezvous {
         byte[] shared = agreement.generateSecret();
         try {
             return new Material(new Addresses(endpoint(shared, local, remote), endpoint(shared, remote, local)),
-                    local, remote, shared, seed(shared, local, remote));
+                    AccountStore.validateUsername(localUsername), parsed.username(), local, remote, shared, seed(shared, local, remote));
         } catch (GeneralSecurityException | RuntimeException e) {
             Arrays.fill(shared, (byte) 0);
             throw e;

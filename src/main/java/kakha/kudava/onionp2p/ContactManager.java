@@ -12,6 +12,7 @@ final class ContactManager implements AutoCloseable {
     private final Path directory;
     private final OnionServer tor;
     private final ContactStore store;
+    private final String localUsername;
     private final Consumer<Event> events;
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
@@ -24,20 +25,26 @@ final class ContactManager implements AutoCloseable {
     ContactManager(Path directory, OnionServer tor, Consumer<Event> events) throws Exception {
         this.directory = directory; this.tor = tor; this.events = events;
         store = new ContactStore(directory);
+        var profile = new AccountStore(directory).profile();
+        localUsername = profile == null ? "local" : profile.username();
     }
 
     List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
 
     synchronized ContactRendezvous.Addresses add(String input) throws Exception {
         if (closed) throw new IllegalStateException("Contact service is stopped.");
-        String link = ContactLink.PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(ContactLink.parse(input));
+        var parsed = ContactLink.parseLink(input);
+        String link = parsed.username().equals("Unknown")
+                ? ContactLink.PREFIX_V1 + Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.publicKey())
+                : ContactLink.PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.username().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    + "/" + Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.publicKey());
         Pending existing = pending.get(link);
         if (existing != null) {
             event(link, existing.saved ? "Contact already acknowledged and saved." : "Waiting for contact—both users must import each other's links.");
             return existing.material.addresses();
         }
         if (pending.size() >= 100) throw new IllegalArgumentException("Contact limit reached (100).");
-        var material = ContactRendezvous.derive(directory, link);
+        var material = ContactRendezvous.derive(directory, link, localUsername);
         Pending entry = new Pending(link, material);
         pending.put(link, entry);
         event(link, "Waiting for Tor, then for your contact to import your link…");
@@ -103,7 +110,7 @@ final class ContactManager implements AutoCloseable {
 
     private synchronized void save(Pending entry) throws Exception {
         if (closed || entry.stopped) throw new IllegalStateException("Contact service is stopped.");
-        store.acknowledge(entry.link, entry.material.addresses().remote());
+        store.acknowledge(entry.link, entry.material.addresses().remote(), entry.material.remoteUsername());
         entry.saved = true;
         event(entry.link, "Acknowledged—contact saved locally.");
         System.out.println("Contact acknowledged and saved: " + entry.material.addresses().remote());

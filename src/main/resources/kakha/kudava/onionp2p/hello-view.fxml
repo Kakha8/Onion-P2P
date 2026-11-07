@@ -9,8 +9,22 @@
 <?import javafx.scene.control.ListView?>
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.layout.HBox?>
-<VBox alignment="CENTER" spacing="20.0" xmlns:fx="http://javafx.com/fxml"
-      fx:controller="kakha.kudava.onionp2p.HelloController">
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.control.PasswordField?>
+<?import javafx.scene.control.Separator?>
+<StackPane xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
+    <VBox fx:id="authPane" alignment="CENTER" spacing="16" maxWidth="440" visible="false" managed="false">
+        <Label fx:id="authTitle" text="Set up your account" style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
+        <Label fx:id="authMessage" wrapText="true" text="Checking local account…"/>
+        <TextField fx:id="usernameField" promptText="Username" maxWidth="360"/>
+        <PasswordField fx:id="passwordField" promptText="Password (at least 12 characters)" maxWidth="360"/>
+        <VBox fx:id="confirmPasswordRow" spacing="8" alignment="CENTER" visible="false" managed="false">
+            <PasswordField fx:id="confirmPasswordField" promptText="Confirm password" maxWidth="360" onAction="#onAuthenticate"/>
+        </VBox>
+        <Button fx:id="authButton" text="Create account" onAction="#onAuthenticate"/>
+        <ProgressIndicator fx:id="authProgress" prefWidth="28" prefHeight="28" maxWidth="28" maxHeight="28" visible="false" managed="false"/>
+    </VBox>
+    <VBox fx:id="appPane" alignment="CENTER" spacing="20.0" visible="false" managed="false">
     <padding>
         <Insets bottom="20.0" left="20.0" right="20.0" top="20.0"/>
     </padding>
@@ -46,4 +60,5 @@
         <Label text="Saved contacts"/>
     </HBox>
     <ListView fx:id="savedContacts" prefHeight="120" VBox.vgrow="ALWAYS"/>
-</VBox>
+    </VBox>
+</StackPane>

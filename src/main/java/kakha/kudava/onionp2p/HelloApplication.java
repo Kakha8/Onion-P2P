@@ -17,15 +17,26 @@ public class HelloApplication extends Application {
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 760, 780);
         HelloController controller = fxmlLoader.getController();
-        controller.torStarting();
-        contacts = new ContactManager(AppData.directory(), onionServer, controller::contactEvent);
-        controller.setManager(contacts);
-        contacts.restore();
+        controller.setOnAuthenticated(() -> startServices(controller));
         stage.setTitle("Onion-P2P");
         stage.setMinWidth(480);
         stage.setMinHeight(780);
         stage.setScene(scene);
         stage.show();
+        controller.beginAuthentication();
+    }
+
+    private void startServices(HelloController controller) {
+        controller.torStarting();
+        try {
+            contacts = new ContactManager(AppData.directory(), onionServer, controller::contactEvent);
+            controller.setManager(contacts);
+            contacts.restore();
+        } catch (Exception e) {
+            System.err.println("Could not start contact storage: " + e.getMessage());
+            controller.torFailed(e.getMessage());
+            return;
+        }
         Thread.ofPlatform().daemon().name("onion-startup").start(() -> {
             try {
                 onionServer.start();

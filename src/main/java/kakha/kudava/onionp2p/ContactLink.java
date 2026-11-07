@@ -10,14 +10,24 @@ import java.security.*;
 import java.security.spec.*;
 import java.util.*;
 
-/** Version 1 links contain an unpadded Base64url raw, little-endian X25519 public key. */
+/** v2 links also carry the advertised username; v1 remains importable as an unknown-name contact. */
 final class ContactLink {
-    static final String PREFIX = "onionp2p://contact/v1/x25519/";
+    static final String PREFIX_V1 = "onionp2p://contact/v1/x25519/";
+    static final String PREFIX = "onionp2p://contact/v2/";
+    record Parsed(String username, byte[] publicKey) {}
 
     private ContactLink() {}
 
     static synchronized String loadOrCreate(Path directory) throws IOException, GeneralSecurityException {
-        return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(publicKey(loadKey(directory)));
+        return PREFIX_V1 + Base64.getUrlEncoder().withoutPadding().encodeToString(publicKey(loadKey(directory)));
+    }
+
+    static synchronized String loadOrCreate(Path directory, String username) throws IOException, GeneralSecurityException {
+        String validName = AccountStore.validateUsername(username);
+        String encodedName = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(validName.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return PREFIX + encodedName + "/" + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(publicKey(loadKey(directory)));
     }
 
     static synchronized PrivateKey loadKey(Path directory) throws IOException, GeneralSecurityException {
@@ -61,8 +71,32 @@ final class ContactLink {
 
     static byte[] parse(String input) {
         String link = input.strip();
-        if (!link.startsWith(PREFIX)) throw new IllegalArgumentException("Use an onionp2p X25519 v1 contact link.");
-        String encoded = link.substring(PREFIX.length());
+        if (link.startsWith(PREFIX_V1)) return parsePublicKey(link.substring(PREFIX_V1.length()));
+        Parsed parsed = parseLink(link);
+        return parsed.publicKey();
+    }
+
+    static Parsed parseLink(String input) {
+        String link = input.strip();
+        if (link.startsWith(PREFIX_V1)) return new Parsed("Unknown", parsePublicKey(link.substring(PREFIX_V1.length())));
+        if (!link.startsWith(PREFIX)) throw new IllegalArgumentException("Use an onionp2p X25519 v1 or v2 contact link.");
+        String[] parts = link.substring(PREFIX.length()).split("/", -1);
+        if (parts.length != 2 || !parts[0].matches("[A-Za-z0-9_-]{4,43}"))
+            throw new IllegalArgumentException("Contact link is malformed.");
+        try {
+            byte[] nameBytes = Base64.getUrlDecoder().decode(parts[0]);
+            if (!Base64.getUrlEncoder().withoutPadding().encodeToString(nameBytes).equals(parts[0]))
+                throw new IllegalArgumentException();
+            String username = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(nameBytes)).toString();
+            if (!AccountStore.validateUsername(username).equals(username)) throw new IllegalArgumentException();
+            return new Parsed(username, parsePublicKey(parts[1]));
+        } catch (java.nio.charset.CharacterCodingException | IllegalArgumentException e) {
+            throw new IllegalArgumentException("Contact link contains an invalid username or key.", e);
+        }
+    }
+
+    private static byte[] parsePublicKey(String encoded) {
         if (!encoded.matches("[A-Za-z0-9_-]{43}"))
             throw new IllegalArgumentException("The link must contain a 32-byte public key.");
         byte[] raw = Base64.getUrlDecoder().decode(encoded);

@@ -11,10 +11,10 @@ import java.security.*;
 import java.util.Arrays;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
-/** Pairing-only v1: fresh challenges, role-bound HMAC proofs and encrypted acknowledgments.
+/** Pairing-only v2: fresh challenges, role-bound HMAC proofs and encrypted acknowledgments.
  * Not a messaging protocol and does not claim forward secrecy. */
 final class ContactHandshake {
-    private static final int MAGIC = 0x4f503031; // OP01
+    private static final int MAGIC = 0x4f503032; // OP02; adds authenticated usernames
     private static final SecureRandom RANDOM = new SecureRandom();
     @FunctionalInterface interface Save { void run() throws Exception; }
 
@@ -23,11 +23,11 @@ final class ContactHandshake {
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
         byte[] nonce = nonce();
-        byte[] hello = join(material.localPublic(), material.remotePublic(), nonce);
+        byte[] hello = join(material.localPublic(), material.remotePublic(), name(material.localUsername()), nonce);
         output.writeInt(MAGIC); output.write(nonce);
         output.write(proof(material.sharedSecret(), "client-hello", hello)); output.flush();
         byte[] serverNonce = read(input, 32);
-        byte[] transcript = join(hello, serverNonce);
+        byte[] transcript = join(hello, name(material.remoteUsername()), serverNonce);
         verify(read(input, 32), proof(material.sharedSecret(), "server-proof", transcript));
         output.write(encrypt(material.sharedSecret(), transcript, "client-ack", "ACK")); output.flush();
         decrypt(material.sharedSecret(), transcript, "server-saved", read(input, 21), "SAVED");
@@ -40,10 +40,10 @@ final class ContactHandshake {
         var output = new DataOutputStream(socket.getOutputStream());
         if (input.readInt() != MAGIC) throw new IOException("Unsupported contact protocol.");
         byte[] clientNonce = read(input, 32);
-        byte[] hello = join(material.remotePublic(), material.localPublic(), clientNonce);
+        byte[] hello = join(material.remotePublic(), material.localPublic(), name(material.remoteUsername()), clientNonce);
         verify(read(input, 32), proof(material.sharedSecret(), "client-hello", hello));
         byte[] nonce = nonce();
-        byte[] transcript = join(hello, nonce);
+        byte[] transcript = join(hello, name(material.localUsername()), nonce);
         output.write(nonce); output.write(proof(material.sharedSecret(), "server-proof", transcript)); output.flush();
         decrypt(material.sharedSecret(), transcript, "client-ack", read(input, 19), "ACK");
         save.run();
@@ -51,6 +51,14 @@ final class ContactHandshake {
     }
 
     private static byte[] nonce() { byte[] nonce = new byte[32]; RANDOM.nextBytes(nonce); return nonce; }
+    private static byte[] name(String name) throws IOException {
+        if (!name.matches("[A-Za-z0-9_.-]{3,32}")) throw new IOException("Invalid contact username.");
+        byte[] bytes = name.getBytes(US_ASCII);
+        if (bytes.length < 3 || bytes.length > 32) throw new IOException("Invalid contact username.");
+        var framed = new ByteArrayOutputStream();
+        framed.write(bytes.length); framed.writeBytes(bytes);
+        return framed.toByteArray();
+    }
     private static byte[] read(DataInputStream input, int length) throws IOException {
         byte[] data = new byte[length]; input.readFully(data); return data;
     }
