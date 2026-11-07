@@ -17,6 +17,7 @@ public class HelloApplication extends Application {
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 760, 780);
         HelloController controller = fxmlLoader.getController();
+        controller.torStarting();
         contacts = new ContactManager(AppData.directory(), onionServer, controller::contactEvent);
         controller.setManager(contacts);
         contacts.restore();
@@ -28,8 +29,12 @@ public class HelloApplication extends Application {
         Thread.ofPlatform().daemon().name("onion-startup").start(() -> {
             try {
                 onionServer.start();
+                String onionAddress = java.nio.file.Files.readString(
+                        AppData.directory().resolve("service/hostname")).strip();
+                javafx.application.Platform.runLater(() -> controller.torReady(onionAddress));
             } catch (Exception e) {
                 System.err.println("Onion server failed: " + e.getMessage());
+                javafx.application.Platform.runLater(() -> controller.torFailed(e.getMessage()));
                 onionServer.close();
             }
         });

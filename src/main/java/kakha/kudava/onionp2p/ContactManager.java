@@ -61,6 +61,7 @@ final class ContactManager implements AutoCloseable {
             synchronized (entry) {
                 if (closed || entry.stopped) return;
                 if (entry.listener == null) {
+                    event(entry.link, "Publishing your contact address on Tor…");
                     entry.listener = new ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"));
                     try (var control = new TorControl(directory)) {
                         control.publish(entry.material.localSeed(), entry.listener.getLocalPort(), entry.material.addresses().local());
@@ -75,8 +76,12 @@ final class ContactManager implements AutoCloseable {
                 finally { connections.remove(socket); }
             }
         } catch (Exception e) {
-            if (!closed && !entry.saved && !entry.stopped)
-                event(entry.link, "Waiting for contact; retrying. " + safeMessage(e));
+            if (!closed && !entry.saved && !entry.stopped) {
+                String detail = safeMessage(e);
+                if (detail.contains("not reachable"))
+                    event(entry.link, "Waiting for your contact to come online… retrying automatically.");
+                else event(entry.link, "Connecting securely; retrying automatically. " + detail);
+            }
         }
     }
 

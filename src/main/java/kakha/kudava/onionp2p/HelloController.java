@@ -6,7 +6,9 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 
@@ -21,9 +23,32 @@ public class HelloController {
     @FXML private TextField importedAddress;
     @FXML private VBox addressPanel;
     @FXML private Label importStatus;
+    @FXML private ProgressIndicator pairingProgress;
     @FXML private ListView<String> savedContacts;
+    @FXML private ProgressIndicator contactsProgress;
+    @FXML private HBox torProgressRow;
+    @FXML private ProgressIndicator torProgress;
+    @FXML private Label torStatus;
     private volatile ContactManager manager;
     private String selectedLink;
+
+    void torStarting() {
+        torStatus.setText("Starting Tor and publishing your onion service…");
+        torProgressRow.setManaged(true);
+        torProgressRow.setVisible(true);
+    }
+
+    void torReady(String onionAddress) {
+        torProgressRow.setVisible(false);
+        torProgressRow.setManaged(false);
+        statusText.setText("Onion server ready: http://" + onionAddress + "/");
+    }
+
+    void torFailed(String message) {
+        torProgressRow.setVisible(false);
+        torProgressRow.setManaged(false);
+        statusText.setText("Tor could not start. See console for details.");
+    }
 
     void setManager(ContactManager manager) {
         this.manager = manager;
@@ -32,7 +57,14 @@ public class HelloController {
 
     void contactEvent(ContactManager.Event event) {
         Platform.runLater(() -> {
-            if (event.link().equals(selectedLink)) importStatus.setText(event.message());
+            if (event.link().equals(selectedLink)) {
+                importStatus.setText(event.message());
+                boolean waiting = !event.message().startsWith("Acknowledged")
+                        && !event.message().startsWith("Contact already acknowledged")
+                        && !event.message().startsWith("Contact did not respond");
+                pairingProgress.setManaged(waiting);
+                pairingProgress.setVisible(waiting);
+            }
         });
         refreshContacts();
     }
@@ -43,12 +75,21 @@ public class HelloController {
         Thread.ofPlatform().daemon().name("contact-list").start(() -> {
             try {
                 var contacts = current.contacts();
-                Platform.runLater(() -> savedContacts.getItems().setAll(contacts.stream()
-                        .map(c -> c.onion() + "  — saved").toList()));
+                Platform.runLater(() -> {
+                    savedContacts.getItems().setAll(contacts.stream().map(c -> c.onion() + "  — saved").toList());
+                    contactsProgress.setVisible(false);
+                    contactsProgress.setManaged(false);
+                });
             } catch (Exception e) {
-                Platform.runLater(() -> importStatus.setText("Could not read the saved contacts database."));
+                Platform.runLater(() -> {
+                    contactsProgress.setVisible(false);
+                    contactsProgress.setManaged(false);
+                    importStatus.setText("Could not read the saved contacts database.");
+                });
             }
         });
+        contactsProgress.setManaged(true);
+        contactsProgress.setVisible(true);
     }
 
     @FXML
@@ -57,10 +98,14 @@ public class HelloController {
         String input = importLink.getText();
         selectedLink = input.strip();
         importButton.setDisable(true);
+        var importSpinner = spinner(18);
+        importButton.setGraphic(importSpinner);
         addressPanel.setVisible(false);
         addressPanel.setManaged(false);
         importedAddress.clear();
         importStatus.setText("Importing contact link…");
+        pairingProgress.setManaged(true);
+        pairingProgress.setVisible(true);
         Thread.ofPlatform().daemon().name("contact-import").start(() -> {
             try {
                 var addresses = manager == null ? ContactRendezvous.importLink(AppData.directory(), input) : manager.add(input);
@@ -69,15 +114,26 @@ public class HelloController {
                     importedAddress.setText("http://" + addresses.remote() + "/");
                     addressPanel.setManaged(true);
                     addressPanel.setVisible(true);
-                    if (manager == null) importStatus.setText("Contact service is not ready. Import again after startup.");
+                    if (manager == null) {
+                        importStatus.setText("Contact service is not ready. Import again after startup.");
+                        pairingProgress.setVisible(false);
+                        pairingProgress.setManaged(false);
+                    } else {
+                        pairingProgress.setManaged(true);
+                        pairingProgress.setVisible(true);
+                    }
                     importButton.setDisable(false);
+                    importButton.setGraphic(null);
                 });
             } catch (Exception e) {
                 System.err.println("Contact import failed: " + e.getMessage());
                 Platform.runLater(() -> {
                     importStatus.setText(e instanceof IllegalArgumentException ? e.getMessage()
                             : "Could not import the link. Check the console and try again.");
+                    pairingProgress.setVisible(false);
+                    pairingProgress.setManaged(false);
                     importButton.setDisable(false);
+                    importButton.setGraphic(null);
                 });
             }
         });
@@ -86,6 +142,7 @@ public class HelloController {
     @FXML
     protected void onGenerateLink() {
         generateButton.setDisable(true);
+        generateButton.setGraphic(spinner(18));
         statusText.setText("Generating your link…");
         Thread.ofPlatform().daemon().name("contact-key").start(() -> {
             try {
@@ -96,16 +153,25 @@ public class HelloController {
                     linkPanel.setVisible(true);
                     generateButton.setText("Show my public-key link");
                     generateButton.setDisable(false);
+                    generateButton.setGraphic(null);
                     statusText.setText("Share this link with your contact.");
                 });
             } catch (Exception e) {
                 System.err.println("Contact link failed: " + e.getMessage());
                 Platform.runLater(() -> {
                     generateButton.setDisable(false);
+                    generateButton.setGraphic(null);
                     statusText.setText("Could not load or save your key. Check the console and try again.");
                 });
             }
         });
+    }
+
+    private static ProgressIndicator spinner(double size) {
+        var indicator = new ProgressIndicator();
+        indicator.setPrefSize(size, size);
+        indicator.setMaxSize(size, size);
+        return indicator;
     }
 
     @FXML

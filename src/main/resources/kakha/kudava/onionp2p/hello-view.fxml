@@ -7,6 +7,8 @@
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.TextField?>
 <?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.layout.HBox?>
 <VBox alignment="CENTER" spacing="20.0" xmlns:fx="http://javafx.com/fxml"
       fx:controller="kakha.kudava.onionp2p.HelloController">
     <padding>
@@ -16,6 +18,10 @@
     <Label text="Your public-key link" style="-fx-font-size: 22px; -fx-font-weight: bold;"/>
     <Label text="Generate a link to share your public key with a contact." wrapText="true"/>
     <Button fx:id="generateButton" text="Generate public-key link" onAction="#onGenerateLink"/>
+    <HBox fx:id="torProgressRow" alignment="CENTER" spacing="8" visible="false" managed="false">
+        <ProgressIndicator fx:id="torProgress" prefWidth="20" prefHeight="20" maxWidth="20" maxHeight="20"/>
+        <Label fx:id="torStatus" text="Starting Tor…"/>
+    </HBox>
     <VBox fx:id="linkPanel" spacing="10" visible="false" managed="false">
         <Label text="Public-key link" labelFor="$contactLink"/>
         <TextField fx:id="contactLink" editable="false"/>
@@ -30,8 +36,14 @@
             <Label text="Contact rendezvous address"/>
             <TextField fx:id="importedAddress" editable="false"/>
         </VBox>
-        <Label fx:id="importStatus" wrapText="true"/>
+        <HBox alignment="CENTER_LEFT" spacing="8">
+            <ProgressIndicator fx:id="pairingProgress" prefWidth="18" prefHeight="18" maxWidth="18" maxHeight="18" visible="false" managed="false"/>
+            <Label fx:id="importStatus" wrapText="true"/>
+        </HBox>
     </VBox>
-    <Label text="Saved contacts"/>
+    <HBox alignment="CENTER" spacing="8">
+        <ProgressIndicator fx:id="contactsProgress" prefWidth="18" prefHeight="18" maxWidth="18" maxHeight="18" visible="false" managed="false"/>
+        <Label text="Saved contacts"/>
+    </HBox>
     <ListView fx:id="savedContacts" prefHeight="120" VBox.vgrow="ALWAYS"/>
 </VBox>
