@@ -1,4 +1,6 @@
-# Onion-P2P hello world
+# Onion-P2P
+
+Onion based Peer to Peer messenger. Currently implements a hello world onion server.
 
 Windows x64 / Java 21+. Tor is bundled in the application resources; no Tor install or runtime download is needed.
 
