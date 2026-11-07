@@ -24,10 +24,7 @@ public final class OnionServer implements AutoCloseable {
                 || !System.getProperty("os.arch").matches("amd64|x86_64")) {
             throw new IOException("The bundled Tor runtime requires Windows x64.");
         }
-        String local = System.getenv("LOCALAPPDATA");
-        Path data = Path.of(System.getProperty("onion.dataDir",
-                (local == null ? System.getProperty("user.home") : local) + "/Onion-P2P"))
-                .toAbsolutePath().normalize();
+        Path data = AppData.directory();
         CompletableFuture<Void> bootstrapped = new CompletableFuture<>();
         synchronized (this) {
             if (closed) return;

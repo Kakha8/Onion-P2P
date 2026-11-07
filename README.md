@@ -14,6 +14,12 @@ Open that URL in Tor Browser to see `Hello world!`. Initial Tor connection and o
 
 The persistent identity and Tor state live under `%LOCALAPPDATA%/Onion-P2P` (home directory fallback). Keep the `service` directory private and back it up to retain the same address. Do not commit it. Only one app instance can use a data directory. For development, override it with the JVM option `-Donion.dataDir=C:/some/private/path`.
 
+## Public-key links
+
+Click **Generate public-key link** to display your link, then **Copy link** to copy it. The same X25519 key is reused on subsequent clicks and app launches, including when Tor is offline. The private key is stored in `contact-x25519.pk8` in the app data directory with owner-only access; it is never included in the link. Back up this file privately to keep your contact key. A damaged key produces an error rather than silently replacing your identity.
+
+Link format: `onionp2p://contact/v1/x25519/<public-key>`, where the public key is the 32-byte little-endian X25519 public coordinate encoded as unpadded Base64url. This is our app's format, not a Briar link. It currently shares a public key only: it does not include an onion address, add a contact, or perform a messaging handshake. X25519 is not post-quantum cryptography.
+
 ## Bundled runtime
 
 `src/main/resources/tor/windows-x64.zip` repackages the official Tor Expert Bundle 16.0 for Windows x86_64, including its `docs` license notices. Source:

@@ -14,8 +14,10 @@ public class HelloApplication extends Application {
     public void start(Stage stage) throws IOException {
         Runtime.getRuntime().addShutdownHook(new Thread(onionServer::close, "onion-shutdown"));
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
-        Scene scene = new Scene(fxmlLoader.load(), 320, 240);
-        stage.setTitle("Hello!");
+        Scene scene = new Scene(fxmlLoader.load(), 640, 360);
+        stage.setTitle("Onion-P2P");
+        stage.setMinWidth(480);
+        stage.setMinHeight(360);
         stage.setScene(scene);
         stage.show();
         Thread.ofPlatform().daemon().name("onion-startup").start(() -> {
