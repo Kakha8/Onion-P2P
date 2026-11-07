@@ -18,7 +18,13 @@ The persistent identity and Tor state live under `%LOCALAPPDATA%/Onion-P2P` (hom
 
 Click **Generate public-key link** to display your link, then **Copy link** to copy it. The same X25519 key is reused on subsequent clicks and app launches, including when Tor is offline. The private key is stored in `contact-x25519.pk8` in the app data directory with owner-only access; it is never included in the link. Back up this file privately to keep your contact key. A damaged key produces an error rather than silently replacing your identity.
 
-Link format: `onionp2p://contact/v1/x25519/<public-key>`, where the public key is the 32-byte little-endian X25519 public coordinate encoded as unpadded Base64url. This is our app's format, not a Briar link. It currently shares a public key only: it does not include an onion address, add a contact, or perform a messaging handshake. X25519 is not post-quantum cryptography.
+Link format: `onionp2p://contact/v1/x25519/<public-key>`, where the public key is the 32-byte little-endian X25519 public coordinate encoded as unpadded Base64url. This is our app's format, not a Briar link. X25519 is not post-quantum cryptography.
+
+Paste another user's link into **Import a contact's public-key link** and click **Import link**. The app displays and prints the derived contact onion address. Import also works before you generate your own link: it creates or loads your local key automatically. Wrong formats, noncanonical keys, unusable low-order keys, and your own link are rejected.
+
+This currently derives addresses only. It does not publish a Tor service at the derived address, save a contact list, connect to the contact, or perform an authenticated messaging handshake. The existing hello-world Tor service retains its separate address.
+
+Our experimental rendezvous v1 calculation is X25519(local private key, remote public key), then HKDF-SHA256 with ASCII salt `Onion-P2P/rendezvous/v1` and info `endpoint owner's raw public key || peer's raw public key` (32 bytes each), yielding a 32-byte Ed25519 seed. The resulting Ed25519 public key is encoded using Tor's v3 onion address formula. Reversing the owner/peer order gives the other endpoint. Both participants can derive both endpoint keys, so these are rendezvous addresses, not independently authenticated identities. This is not Briar-compatible and is not an audited messaging protocol.
 
 ## Bundled runtime
 

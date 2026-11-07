@@ -21,4 +21,14 @@
         <Button text="Copy link" onAction="#onCopyLink"/>
     </VBox>
     <Label fx:id="statusText" wrapText="true"/>
+    <VBox spacing="10">
+        <Label text="Import a contact's public-key link"/>
+        <TextField fx:id="importLink" promptText="onionp2p://contact/v1/x25519/…" onAction="#onImportLink"/>
+        <Button fx:id="importButton" text="Import link" onAction="#onImportLink"/>
+        <VBox fx:id="addressPanel" spacing="8" visible="false" managed="false">
+            <Label text="Derived contact onion address"/>
+            <TextField fx:id="importedAddress" editable="false"/>
+        </VBox>
+        <Label fx:id="importStatus" wrapText="true"/>
+    </VBox>
 </VBox>

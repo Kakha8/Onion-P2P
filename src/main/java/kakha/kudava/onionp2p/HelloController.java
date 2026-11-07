@@ -15,6 +15,42 @@ public class HelloController {
     @FXML private Button generateButton;
     @FXML private TextField contactLink;
     @FXML private VBox linkPanel;
+    @FXML private TextField importLink;
+    @FXML private Button importButton;
+    @FXML private TextField importedAddress;
+    @FXML private VBox addressPanel;
+    @FXML private Label importStatus;
+
+    @FXML
+    protected void onImportLink() {
+        if (importButton.isDisabled()) return;
+        String input = importLink.getText();
+        importButton.setDisable(true);
+        addressPanel.setVisible(false);
+        addressPanel.setManaged(false);
+        importedAddress.clear();
+        importStatus.setText("Importing contact link…");
+        Thread.ofPlatform().daemon().name("contact-import").start(() -> {
+            try {
+                var addresses = ContactRendezvous.importLink(AppData.directory(), input);
+                System.out.println("Derived contact onion address (not published): http://" + addresses.remote() + "/");
+                Platform.runLater(() -> {
+                    importedAddress.setText("http://" + addresses.remote() + "/");
+                    addressPanel.setManaged(true);
+                    addressPanel.setVisible(true);
+                    importStatus.setText("Address derived. A Tor service has not been started at this address.");
+                    importButton.setDisable(false);
+                });
+            } catch (Exception e) {
+                System.err.println("Contact import failed: " + e.getMessage());
+                Platform.runLater(() -> {
+                    importStatus.setText(e instanceof IllegalArgumentException ? e.getMessage()
+                            : "Could not import the link. Check the console and try again.");
+                    importButton.setDisable(false);
+                });
+            }
+        });
+    }
 
     @FXML
     protected void onGenerateLink() {

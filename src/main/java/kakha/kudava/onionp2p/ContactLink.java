@@ -17,6 +17,10 @@ final class ContactLink {
     private ContactLink() {}
 
     static synchronized String loadOrCreate(Path directory) throws IOException, GeneralSecurityException {
+        return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(publicKey(loadKey(directory)));
+    }
+
+    static synchronized PrivateKey loadKey(Path directory) throws IOException, GeneralSecurityException {
         Files.createDirectories(directory);
         // Separate from the Tor lock: links can be displayed even when Tor is offline.
         try (var channel = FileChannel.open(directory.resolve("contact.lock"),
@@ -38,19 +42,44 @@ final class ContactLink {
             if (Files.size(keyFile) > 4096) throw new IOException("Contact key file is invalid.");
             byte[] encoded = Files.readAllBytes(keyFile);
             try {
-                PrivateKey key = KeyFactory.getInstance("X25519")
+                return KeyFactory.getInstance("X25519")
                         .generatePrivate(new PKCS8EncodedKeySpec(encoded));
-                // Scalar multiplication by the standard base point derives the public key.
-                PublicKey basePoint = KeyFactory.getInstance("X25519").generatePublic(
-                        new XECPublicKeySpec(NamedParameterSpec.X25519, BigInteger.valueOf(9)));
-                var agreement = KeyAgreement.getInstance("X25519");
-                agreement.init(key);
-                agreement.doPhase(basePoint, true);
-                return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(agreement.generateSecret());
             } finally {
                 Arrays.fill(encoded, (byte) 0);
             }
         }
+    }
+
+    static byte[] publicKey(PrivateKey key) throws GeneralSecurityException {
+        PublicKey basePoint = KeyFactory.getInstance("X25519").generatePublic(
+                new XECPublicKeySpec(NamedParameterSpec.X25519, BigInteger.valueOf(9)));
+        var agreement = KeyAgreement.getInstance("X25519");
+        agreement.init(key);
+        agreement.doPhase(basePoint, true);
+        return agreement.generateSecret();
+    }
+
+    static byte[] parse(String input) {
+        String link = input.strip();
+        if (!link.startsWith(PREFIX)) throw new IllegalArgumentException("Use an onionp2p X25519 v1 contact link.");
+        String encoded = link.substring(PREFIX.length());
+        if (!encoded.matches("[A-Za-z0-9_-]{43}"))
+            throw new IllegalArgumentException("The link must contain a 32-byte public key.");
+        byte[] raw = Base64.getUrlDecoder().decode(encoded);
+        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(raw).equals(encoded)
+                || coordinate(raw).compareTo(BigInteger.ONE.shiftLeft(255).subtract(BigInteger.valueOf(19))) >= 0)
+            throw new IllegalArgumentException("The public key encoding is not canonical.");
+        return raw;
+    }
+
+    static BigInteger coordinate(byte[] raw) {
+        byte[] reversed = raw.clone();
+        for (int i = 0; i < reversed.length / 2; i++) {
+            byte b = reversed[i];
+            reversed[i] = reversed[reversed.length - 1 - i];
+            reversed[reversed.length - 1 - i] = b;
+        }
+        return new BigInteger(1, reversed);
     }
 
     private static void restrictToOwner(Path file) throws IOException {

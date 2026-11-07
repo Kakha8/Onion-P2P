@@ -16,6 +16,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <!-- 1.83's module descriptor references JDK-25-only packages and breaks Java 21 jlink. -->
+            <version>1.81</version>
+        </dependency>
+        <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-controls</artifactId>
             <version>21</version>
@@ -71,6 +77,8 @@
                             <jlinkImageName>app</jlinkImageName>
                             <noManPages>true</noManPages>
                             <stripDebug>true</stripDebug>
+                            <!-- jlink removes JAR packaging; signed BC classes use the lightweight API. -->
+                            <ignoreSigningInformation>true</ignoreSigningInformation>
                             <noHeaderFiles>true</noHeaderFiles>
                         </configuration>
                     </execution>
