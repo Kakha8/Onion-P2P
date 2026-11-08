@@ -44,7 +44,7 @@ final class ContactManager implements AutoCloseable {
 
     MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress) throws Exception {
         if (java.nio.file.Files.size(file) > ContactMessaging.MAX_FILE_BYTES)
-            throw new IllegalArgumentException("Files must be 10 MiB or smaller.");
+            throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
         return withMessageSession(link, (entry, session, canonical) ->
                 ContactMessaging.sendFile(session.socket, entry.material, messageStore, canonical, file,
                         session.firstMessage, progress));

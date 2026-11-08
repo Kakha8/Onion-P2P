@@ -29,7 +29,7 @@ import java.util.function.LongConsumer;
 final class ContactMessaging {
     static final int MAGIC = 0x4f503034; // OP04 adds encrypted file frames
     private static final int MAX_BODY_BYTES = 4096;
-    static final long MAX_FILE_BYTES = 10L * 1024 * 1024;
+    static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     private static final int CHUNK_BYTES = 64 * 1024;
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -66,7 +66,7 @@ final class ContactMessaging {
                                          String link, Path file, boolean newConnection, LongConsumer progress) throws Exception {
         long fileSize = Files.size(file);
         if (fileSize < 0 || fileSize > MAX_FILE_BYTES)
-            throw new IllegalArgumentException("Files must be 10 MiB or smaller.");
+            throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
         String fileName = safeFileName(file.getFileName().toString());
         byte[] nameBytes = fileName.getBytes(StandardCharsets.UTF_8);
         if (nameBytes.length > 255) throw new IllegalArgumentException("File name is too long.");
@@ -97,6 +97,7 @@ final class ContactMessaging {
         byte[] buffer = new byte[CHUNK_BYTES];
         long transferred = 0;
         progress.accept(0);
+        long lastReported = 0;
         try (InputStream source = Files.newInputStream(file)) {
             while (transferred < fileSize) {
                 int count = source.read(buffer, 0, (int) Math.min(buffer.length, fileSize - transferred));
@@ -104,7 +105,10 @@ final class ContactMessaging {
                 byte[] encrypted = cipher.update(buffer, 0, count);
                 if (encrypted != null) output.write(encrypted);
                 transferred += count;
-                progress.accept(transferred);
+                if (transferred - lastReported >= 1024 * 1024 || transferred == fileSize) {
+                    progress.accept(transferred);
+                    lastReported = transferred;
+                }
             }
             if (source.read() != -1) throw new IOException("File changed while it was being sent.");
         } finally { Arrays.fill(buffer, (byte) 0); Arrays.fill(nameBytes, (byte) 0); }
@@ -168,7 +172,7 @@ final class ContactMessaging {
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(messageKey, "AES"), new GCMParameterSpec(128, nonce));
         cipher.updateAAD(aad);
         Arrays.fill(messageKey, (byte) 0);
-        Path downloads = AppData.directory().resolve("downloads");
+        Path downloads = DownloadLocation.get();
         Files.createDirectories(downloads);
         Path temporary = Files.createTempFile(downloads, ".onion-incoming-", ".part");
         String fileName = null;
@@ -182,7 +186,7 @@ final class ContactMessaging {
                 catch (java.nio.charset.CharacterCodingException e) { throw new IOException("Invalid attachment name.", e); }
                 finally { Arrays.fill(nameBytes, (byte) 0); }
                 expectedSize = decrypted.readLong();
-                if (expectedSize < 0 || expectedSize > MAX_FILE_BYTES) throw new IOException("Attachment exceeds the 10 MiB limit.");
+                if (expectedSize < 0 || expectedSize > MAX_FILE_BYTES) throw new IOException("Attachment exceeds the 1 GiB limit.");
                 try (var target = Files.newOutputStream(temporary)) {
                     byte[] buffer = new byte[CHUNK_BYTES];
                     long written = 0;

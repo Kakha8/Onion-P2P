@@ -7,7 +7,9 @@ import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.layout.FlowPane;
 import javafx.stage.FileChooser;
+import javafx.stage.DirectoryChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -35,6 +37,8 @@ final class MessengerWindow {
     private final Button attachButton = new Button("Attach file");
     private final ProgressBar transferProgress = new ProgressBar(0);
     private final Label status = new Label("Select a saved contact to open a conversation.");
+    private final Hyperlink chooseDownloadFolder = new Hyperlink("Choose download folder");
+    private final Label downloadFolder = new Label();
     private final AtomicBoolean loading = new AtomicBoolean();
     private final Timeline poll;
     private ContactStore.Contact selected;
@@ -66,6 +70,7 @@ final class MessengerWindow {
         composer.setOnAction(event -> send());
         sendButton.setOnAction(event -> send());
         attachButton.setOnAction(event -> chooseFile());
+        chooseDownloadFolder.setOnAction(event -> chooseDownloadFolder());
         setTransferControls(false);
         transferProgress.setMaxWidth(Double.MAX_VALUE);
         transferProgress.setVisible(false);
@@ -73,9 +78,12 @@ final class MessengerWindow {
         HBox inputRow = new HBox(8, composer, attachButton, sendButton);
         HBox.setHgrow(composer, Priority.ALWAYS);
 
-        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 10 MiB save under the app's downloads folder. Local chat history is unencrypted.");
+        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Local chat history is unencrypted.");
         securityNote.setWrapText(true);
-        VBox conversation = new VBox(8, transcript, status, inputRow, transferProgress, securityNote);
+        downloadFolder.setWrapText(true);
+        FlowPane folderRow = new FlowPane(6, 4, chooseDownloadFolder, downloadFolder);
+        updateDownloadFolder();
+        VBox conversation = new VBox(8, transcript, status, inputRow, transferProgress, folderRow, securityNote);
         conversation.setPadding(new Insets(12));
         VBox.setVgrow(transcript, Priority.ALWAYS);
         BorderPane root = new BorderPane(conversation, null, null, null, contactList);
@@ -188,7 +196,7 @@ final class MessengerWindow {
             return;
         }
         var chooser = new FileChooser();
-        chooser.setTitle("Choose a file to send (10 MiB maximum)");
+        chooser.setTitle("Choose a file to send (1 GiB maximum)");
         File file = chooser.showOpenDialog(stage);
         if (file == null) return;
         sending = true;
@@ -220,6 +228,29 @@ final class MessengerWindow {
                 });
             }
         });
+    }
+
+    private void chooseDownloadFolder() {
+        var chooser = new DirectoryChooser();
+        chooser.setTitle("Choose where received files are saved");
+        try {
+            var current = DownloadLocation.get();
+            if (java.nio.file.Files.isDirectory(current)) chooser.setInitialDirectory(current.toFile());
+        } catch (Exception ignored) {}
+        File folder = chooser.showDialog(stage);
+        if (folder == null) return;
+        try {
+            DownloadLocation.set(folder.toPath());
+            updateDownloadFolder();
+            status.setText("Received files will be saved in the selected folder.");
+        } catch (Exception e) {
+            status.setText("Could not save the download folder: " + safe(e));
+        }
+    }
+
+    private void updateDownloadFolder() {
+        try { downloadFolder.setText(DownloadLocation.get().toString()); }
+        catch (Exception e) { downloadFolder.setText("The saved folder is unavailable; choose another folder."); }
     }
 
     private void setTransferControls(boolean busy) {
