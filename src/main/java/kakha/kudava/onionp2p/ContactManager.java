@@ -49,16 +49,22 @@ final class ContactManager implements AutoCloseable {
     }
 
     synchronized ContactRendezvous.Addresses add(String input) throws Exception {
+        return add(input, false);
+    }
+
+    private synchronized ContactRendezvous.Addresses add(String input, boolean previouslyAcknowledged) throws Exception {
         if (closed) throw new IllegalStateException("Contact service is stopped.");
         String link = canonicalLink(input);
         Pending existing = pending.get(link);
         if (existing != null) {
+            if (previouslyAcknowledged) existing.saved = true;
             event(link, existing.saved ? "Contact already acknowledged and saved." : "Waiting for contact—both users must import each other's links.");
             return existing.material.addresses();
         }
         if (pending.size() >= 100) throw new IllegalArgumentException("Contact limit reached (100).");
         var material = ContactRendezvous.derive(directory, link, localUsername);
         Pending entry = new Pending(link, material);
+        entry.saved = previouslyAcknowledged;
         pending.put(link, entry);
         event(link, "Waiting for Tor, then for your contact to import your link…");
         entry.task = retries.scheduleWithFixedDelay(() -> attempt(entry), 0, 10, TimeUnit.SECONDS);
@@ -74,12 +80,12 @@ final class ContactManager implements AutoCloseable {
     }
 
     void restore() throws Exception {
-        for (var contact : store.all()) add(contact.link());
+        for (var contact : store.all()) add(contact.link(), true);
     }
 
     private void attempt(Pending entry) {
-        if (closed || entry.saved) return;
-        if (System.nanoTime() - entry.created > TimeUnit.MINUTES.toNanos(10)) {
+        if (closed || entry.stopped) return;
+        if (!entry.saved && System.nanoTime() - entry.created > TimeUnit.MINUTES.toNanos(10)) {
             event(entry.link, "Contact did not respond. Import the link again to retry.");
             remove(entry); return;
         }
@@ -98,6 +104,8 @@ final class ContactManager implements AutoCloseable {
                     event(entry.link, "Waiting for contact—both users must import each other's links.");
                 }
             }
+            // A previously acknowledged contact only needs its onion listener restored.
+            if (entry.saved) return;
             try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 20000)) {
                 connections.add(socket);
                 try { ContactHandshake.client(socket, entry.material, () -> save(entry)); }
