@@ -18,16 +18,18 @@ public final class OnionServer implements AutoCloseable {
     private FileChannel lockChannel;
     private FileLock lock;
     private boolean closed;
+    private final Path data;
+    private final CompletableFuture<Integer> socksReady = new CompletableFuture<>();
+
+    public OnionServer() { this(AppData.directory()); }
+    OnionServer(Path data) { this.data = data.toAbsolutePath(); }
+    CompletableFuture<Integer> socksReady() { return socksReady; }
 
     public void start() throws Exception {
         if (!System.getProperty("os.name").startsWith("Windows")
                 || !System.getProperty("os.arch").matches("amd64|x86_64")) {
             throw new IOException("The bundled Tor runtime requires Windows x64.");
         }
-        String local = System.getenv("LOCALAPPDATA");
-        Path data = Path.of(System.getProperty("onion.dataDir",
-                (local == null ? System.getProperty("user.home") : local) + "/Onion-P2P"))
-                .toAbsolutePath().normalize();
         CompletableFuture<Void> bootstrapped = new CompletableFuture<>();
         synchronized (this) {
             if (closed) return;
@@ -41,12 +43,15 @@ public final class OnionServer implements AutoCloseable {
             http = createHttpServer();
             http.start();
             Path config = data.resolve("torrc");
+            Files.deleteIfExists(data.resolve("control-port"));
             Files.writeString(config, "DataDirectory " + quoted(data.resolve("tor-data")) + "\n"
                     + "GeoIPFile " + quoted(runtime.resolve("data/geoip")) + "\n"
                     + "GeoIPv6File " + quoted(runtime.resolve("data/geoip6")) + "\n"
                     + "HiddenServiceDir " + quoted(data.resolve("service")) + "\n"
                     + "HiddenServicePort 80 127.0.0.1:" + http.getAddress().getPort() + "\n"
-                    + "SocksPort 0\nLog notice stdout\n", UTF_8);
+                    + "SocksPort auto\nControlPort auto\nCookieAuthentication 1\n"
+                    + "ControlPortWriteToFile " + quoted(data.resolve("control-port")) + "\n"
+                    + "CookieAuthFile " + quoted(data.resolve("control-cookie")) + "\nLog notice stdout\n", UTF_8);
             tor = new ProcessBuilder(runtime.resolve("tor/tor.exe").toString(), "-f", config.toString())
                     .directory(runtime.resolve("tor").toFile()).redirectErrorStream(true).start();
             Process child = tor;
@@ -85,6 +90,7 @@ public final class OnionServer implements AutoCloseable {
         }
         String address = Files.readString(hostname, UTF_8).trim();
         if (!address.matches("[a-z2-7]{56}\\.onion")) throw new IOException("Invalid onion hostname.");
+        try (var control = new TorControl(data)) { socksReady.complete(control.socksPort()); }
         synchronized (this) {
             if (!closed) System.out.println("\nOnion address: http://" + address + "/\n"
                     + "Open in Tor Browser. Publication may take a little longer.\n");
@@ -133,6 +139,7 @@ public final class OnionServer implements AutoCloseable {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        socksReady.completeExceptionally(new IOException("Tor is stopped."));
         if (tor != null) {
             tor.destroy();
             try {
