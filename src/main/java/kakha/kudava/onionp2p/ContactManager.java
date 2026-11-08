@@ -38,6 +38,19 @@ final class ContactManager implements AutoCloseable {
     }
 
     MessageStore.Message send(String link, String body) throws Exception {
+        return withMessageSession(link, (entry, session, canonical) ->
+                ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage));
+    }
+
+    MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress) throws Exception {
+        if (java.nio.file.Files.size(file) > ContactMessaging.MAX_FILE_BYTES)
+            throw new IllegalArgumentException("Files must be 10 MiB or smaller.");
+        return withMessageSession(link, (entry, session, canonical) ->
+                ContactMessaging.sendFile(session.socket, entry.material, messageStore, canonical, file,
+                        session.firstMessage, progress));
+    }
+
+    private MessageStore.Message withMessageSession(String link, SessionSend action) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
         if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
@@ -51,7 +64,7 @@ final class ContactManager implements AutoCloseable {
                 connections.add(session.socket);
             }
             try {
-                var message = ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage);
+                var message = action.send(entry, session, canonical);
                 session.firstMessage = false;
                 return message;
             } catch (Exception e) {
@@ -62,6 +75,10 @@ final class ContactManager implements AutoCloseable {
                 throw e;
             }
         }
+    }
+
+    @FunctionalInterface private interface SessionSend {
+        MessageStore.Message send(Pending entry, MessageSession session, String canonical) throws Exception;
     }
 
     synchronized ContactRendezvous.Addresses add(String input) throws Exception {

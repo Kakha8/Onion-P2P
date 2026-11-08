@@ -7,6 +7,7 @@ import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.stage.FileChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -18,6 +19,7 @@ import javafx.util.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.io.File;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -30,6 +32,8 @@ final class MessengerWindow {
     private final TextArea transcript = new TextArea();
     private final TextField composer = new TextField();
     private final Button sendButton = new Button("Send");
+    private final Button attachButton = new Button("Attach file");
+    private final ProgressBar transferProgress = new ProgressBar(0);
     private final Label status = new Label("Select a saved contact to open a conversation.");
     private final AtomicBoolean loading = new AtomicBoolean();
     private final Timeline poll;
@@ -52,6 +56,7 @@ final class MessengerWindow {
         contactList.getSelectionModel().selectedItemProperty().addListener((obs, old, value) -> {
             selected = value;
             transcript.clear();
+            setTransferControls(false);
             refreshMessages();
         });
 
@@ -60,13 +65,17 @@ final class MessengerWindow {
         composer.setPromptText("Write a message…");
         composer.setOnAction(event -> send());
         sendButton.setOnAction(event -> send());
-        sendButton.setDisable(true);
-        HBox inputRow = new HBox(8, composer, sendButton);
+        attachButton.setOnAction(event -> chooseFile());
+        setTransferControls(false);
+        transferProgress.setMaxWidth(Double.MAX_VALUE);
+        transferProgress.setVisible(false);
+        transferProgress.setManaged(false);
+        HBox inputRow = new HBox(8, composer, attachButton, sendButton);
         HBox.setHgrow(composer, Priority.ALWAYS);
 
-        Label securityNote = new Label("Messages are encrypted between contacts. Local chat history is currently unencrypted.");
+        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 10 MiB save under the app's downloads folder. Local chat history is unencrypted.");
         securityNote.setWrapText(true);
-        VBox conversation = new VBox(8, transcript, status, inputRow, securityNote);
+        VBox conversation = new VBox(8, transcript, status, inputRow, transferProgress, securityNote);
         conversation.setPadding(new Insets(12));
         VBox.setVgrow(transcript, Priority.ALWAYS);
         BorderPane root = new BorderPane(conversation, null, null, null, contactList);
@@ -118,8 +127,13 @@ final class MessengerWindow {
                     StringBuilder text = new StringBuilder();
                     for (var message : messages) {
                         text.append('[').append(TIME.format(Instant.ofEpochMilli(message.timestamp()))).append("] ")
-                                .append(message.outgoing() ? "You" : contact.username()).append(": ")
-                                .append(message.body()).append('\n');
+                                .append(message.outgoing() ? "You" : contact.username()).append(": ");
+                        if (message.attachmentName() != null) {
+                            text.append("📎 ").append(message.attachmentName()).append(" (")
+                                    .append(formatBytes(message.attachmentSize())).append(')');
+                            if (!message.outgoing()) text.append(" — saved to ").append(message.attachmentPath());
+                            text.append('\n');
+                        } else text.append(message.body()).append('\n');
                     }
                     String rendered = text.toString();
                     if (!transcript.getText().equals(rendered)) {
@@ -140,7 +154,7 @@ final class MessengerWindow {
         String body = composer.getText();
         if (contact == null || body == null || body.isBlank() || sending) return;
         sending = true;
-        sendButton.setDisable(true);
+        setTransferControls(true);
         composer.setDisable(true);
         status.setText("Sending message…");
         Thread.ofPlatform().daemon().name("messenger-send").start(() -> {
@@ -151,19 +165,73 @@ final class MessengerWindow {
                         composer.clear();
                     composer.setDisable(false);
                     sending = false;
+                    setTransferControls(false);
                     status.setText("Message delivered and saved.");
-                    sendButton.setDisable(false);
                     refreshMessages();
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     composer.setDisable(false);
                     sending = false;
-                    sendButton.setDisable(false);
+                    setTransferControls(false);
                     status.setText("Message was not delivered: " + safe(e));
                 });
             }
         });
+    }
+
+    private void chooseFile() {
+        if (sending) return;
+        ContactStore.Contact contact = selected;
+        if (contact == null) {
+            status.setText("Select a saved contact before attaching a file.");
+            return;
+        }
+        var chooser = new FileChooser();
+        chooser.setTitle("Choose a file to send (10 MiB maximum)");
+        File file = chooser.showOpenDialog(stage);
+        if (file == null) return;
+        sending = true;
+        setTransferControls(true);
+        transferProgress.setProgress(0);
+        transferProgress.setManaged(true);
+        transferProgress.setVisible(true);
+        status.setText("Sending " + file.getName() + "…");
+        Thread.ofPlatform().daemon().name("messenger-file-send").start(() -> {
+            try {
+                long size = file.length();
+                manager.sendFile(contact.link(), file.toPath(), transferred -> Platform.runLater(() ->
+                        transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size)));
+                Platform.runLater(() -> {
+                    sending = false;
+                    setTransferControls(false);
+                    transferProgress.setManaged(false);
+                    transferProgress.setVisible(false);
+                    status.setText("File delivered and saved by " + contact.username() + ".");
+                    refreshMessages();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    sending = false;
+                    setTransferControls(false);
+                    transferProgress.setManaged(false);
+                    transferProgress.setVisible(false);
+                    status.setText("File was not delivered: " + safe(e));
+                });
+            }
+        });
+    }
+
+    private void setTransferControls(boolean busy) {
+        sendButton.setDisable(busy || selected == null);
+        attachButton.setDisable(busy || selected == null);
+        composer.setDisable(busy || selected == null);
+    }
+
+    private static String formatBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format(java.util.Locale.ROOT, "%.1f KiB", bytes / 1024.0);
+        return String.format(java.util.Locale.ROOT, "%.1f MiB", bytes / (1024.0 * 1024));
     }
 
     private static String safe(Exception e) {
