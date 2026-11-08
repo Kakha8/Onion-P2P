@@ -1,6 +1,7 @@
 package kakha.kudava.onionp2p;
 
 import java.net.*;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
@@ -38,28 +39,48 @@ final class ContactManager implements AutoCloseable {
     }
 
     MessageStore.Message send(String link, String body) throws Exception {
-        return withMessageSession(link, (entry, session, canonical) ->
+        return send(link, body, ignored -> {});
+    }
+
+    MessageStore.Message send(String link, String body, java.util.function.Consumer<String> status) throws Exception {
+        return withMessageSession(link, status, (entry, session, canonical) ->
                 ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage));
     }
 
     MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress) throws Exception {
+        return sendFile(link, file, progress, ignored -> {});
+    }
+
+    MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress,
+                                  java.util.function.Consumer<String> status) throws Exception {
         if (java.nio.file.Files.size(file) > ContactMessaging.MAX_FILE_BYTES)
             throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
-        return withMessageSession(link, (entry, session, canonical) ->
+        return withMessageSession(link, status, (entry, session, canonical) ->
                 ContactMessaging.sendFile(session.socket, entry.material, messageStore, canonical, file,
                         session.firstMessage, progress));
     }
 
-    private MessageStore.Message withMessageSession(String link, SessionSend action) throws Exception {
+    private MessageStore.Message withMessageSession(String link, java.util.function.Consumer<String> status,
+                                                    SessionSend action) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
         if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
         MessageSession session = messageSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
         synchronized (session) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
+            if (session.socket != null && !session.socket.isClosed() && !session.firstMessage) {
+                try { ContactMessaging.ping(session.socket, entry.material); }
+                catch (Exception stale) {
+                    connections.remove(session.socket);
+                    try { session.socket.close(); } catch (Exception ignored) {}
+                    session.socket = null;
+                    session.firstMessage = true;
+                    status.accept("The previous Tor connection closed; reconnecting…");
+                }
+            }
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 30000);
+                session.socket = connectWithRetry(socksPort, entry.material.addresses().remote(), status);
                 session.firstMessage = true;
                 connections.add(session.socket);
             }
@@ -75,6 +96,23 @@ final class ContactManager implements AutoCloseable {
                 throw e;
             }
         }
+    }
+
+    private Socket connectWithRetry(int socksPort, String onion, java.util.function.Consumer<String> status) throws Exception {
+        IOException last = null;
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            if (closed) throw new IllegalStateException("Contact service is stopped.");
+            try { return TorControl.connect(socksPort, onion, 12000); }
+            catch (IOException e) {
+                last = e;
+                if (attempt == 5) break;
+                status.accept("Tor is still locating the contact service; retry " + (attempt + 1) + " of 5…");
+                try { Thread.sleep(2000); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw interrupted; }
+            }
+        }
+        throw new IOException("Tor could not reach the contact after five attempts: "
+                + (last == null ? "connection unavailable" : safeMessage(last)), last);
     }
 
     @FunctionalInterface private interface SessionSend {
@@ -156,8 +194,10 @@ final class ContactManager implements AutoCloseable {
 
     private void accept(Pending entry) {
         while (!closed && !entry.stopped) {
+            ServerSocket listener = entry.listener;
+            if (listener == null) return;
             try {
-                Socket socket = entry.listener.accept();
+                Socket socket = listener.accept();
                 if (!incoming.tryAcquire()) { socket.close(); continue; }
                 connections.add(socket);
                 Thread.ofPlatform().daemon().name("contact-handshake").start(() -> {
@@ -173,7 +213,20 @@ final class ContactManager implements AutoCloseable {
                         else if (!closed && !(e instanceof java.io.EOFException)) System.err.println("Incoming message failed: " + safeMessage(e));
                     } finally { connections.remove(socket); incoming.release(); }
                 });
-            } catch (Exception e) { return; }
+            } catch (Exception e) {
+                if (!closed && !entry.stopped) {
+                    synchronized (entry) {
+                        if (entry.listener == listener) {
+                            entry.listener = null;
+                            try { listener.close(); } catch (Exception ignored) {}
+                            try (var control = new TorControl(directory)) { control.unpublish(entry.material.addresses().local()); }
+                            catch (Exception unpublishError) { System.err.println("Could not reset contact listener: " + safeMessage(unpublishError)); }
+                        }
+                    }
+                    System.err.println("Contact listener stopped; it will be republished: " + safeMessage(e));
+                }
+                return;
+            }
         }
     }
 

@@ -132,7 +132,7 @@ final class MessengerWindow {
                     transcript.setItems(FXCollections.observableArrayList(messages));
                     if (!messages.isEmpty()) transcript.scrollTo(messages.size() - 1);
                     sendButton.setDisable(sending);
-                    status.setText("Paired with " + contact.username());
+                    if (!sending) status.setText("Paired with " + contact.username());
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status.setText("Could not load conversation: " + safe(e)));
@@ -150,7 +150,9 @@ final class MessengerWindow {
         status.setText("Sending message…");
         Thread.ofPlatform().daemon().name("messenger-send").start(() -> {
             try {
-                manager.send(contact.link(), body);
+                manager.send(contact.link(), body, message -> Platform.runLater(() -> {
+                    if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
+                }));
                 Platform.runLater(() -> {
                     if (selected != null && selected.link().equals(contact.link()) && composer.getText().equals(body))
                         composer.clear();
@@ -192,7 +194,10 @@ final class MessengerWindow {
             try {
                 long size = file.length();
                 manager.sendFile(contact.link(), file.toPath(), transferred -> Platform.runLater(() ->
-                        transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size)));
+                                transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size)),
+                        message -> Platform.runLater(() -> {
+                            if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
+                        }));
                 Platform.runLater(() -> {
                     sending = false;
                     setTransferControls(false);

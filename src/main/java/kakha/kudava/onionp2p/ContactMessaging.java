@@ -62,6 +62,25 @@ final class ContactMessaging {
         return saved;
     }
 
+    static void ping(Socket socket, ContactRendezvous.Material material) throws Exception {
+        socket.setSoTimeout(12000);
+        String id = UUID.randomUUID().toString();
+        long timestamp = System.currentTimeMillis();
+        byte[] idBytes = uuidBytes(id);
+        byte[] nonce = new byte[12]; RANDOM.nextBytes(nonce);
+        byte type = 2;
+        byte[] aad = aad(idBytes, timestamp, type, material.localPublic(), material.remotePublic());
+        byte[] messageKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "message");
+        byte[] ciphertext;
+        try { ciphertext = crypt(Cipher.ENCRYPT_MODE, messageKey, nonce, aad, "PING".getBytes(StandardCharsets.US_ASCII)); }
+        finally { Arrays.fill(messageKey, (byte) 0); }
+        var output = new DataOutputStream(socket.getOutputStream());
+        var input = new DataInputStream(socket.getInputStream());
+        output.write(idBytes); output.writeLong(timestamp); output.write(nonce); output.writeByte(type);
+        output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
+        awaitReceipt(input, material, nonce, aad);
+    }
+
     static MessageStore.Message sendFile(Socket socket, ContactRendezvous.Material material, MessageStore store,
                                          String link, Path file, boolean newConnection, LongConsumer progress) throws Exception {
         long fileSize = Files.size(file);
@@ -114,6 +133,7 @@ final class ContactMessaging {
         } finally { Arrays.fill(buffer, (byte) 0); Arrays.fill(nameBytes, (byte) 0); }
         output.write(cipher.doFinal());
         output.flush();
+        socket.setSoTimeout(10 * 60 * 1000);
         awaitReceipt(input, material, nonce, aad);
         store.saveFile(link, id, true, fileName, file.toAbsolutePath().toString(), fileSize, timestamp);
         return new MessageStore.Message(id, link, true, "", fileName, file.toAbsolutePath().toString(), fileSize, timestamp);
@@ -139,10 +159,24 @@ final class ContactMessaging {
         int length = input.readInt();
         long maxLength = type == 1 ? MAX_FILE_BYTES + 281 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type != 0 && type != 1) throw new IOException("Unsupported message type.");
+        if (type != 0 && type != 1 && type != 2) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
         if (type == 1) {
             receiveFile(input, output, material, store, link, id, timestamp, nonce, aad, length);
+            return;
+        }
+        if (type == 2) {
+            if (length != 20) throw new IOException("Invalid connection-check message.");
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] plaintext;
+            try { plaintext = crypt(Cipher.DECRYPT_MODE, messageKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            try {
+                if (!MessageDigest.isEqual(plaintext, "PING".getBytes(StandardCharsets.US_ASCII)))
+                    throw new GeneralSecurityException("Invalid connection check.");
+            } finally { Arrays.fill(plaintext, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad);
             return;
         }
         byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
