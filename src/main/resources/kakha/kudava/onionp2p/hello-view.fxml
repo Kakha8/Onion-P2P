@@ -59,6 +59,7 @@
         <ProgressIndicator fx:id="contactsProgress" prefWidth="18" prefHeight="18" maxWidth="18" maxHeight="18" visible="false" managed="false"/>
         <Label text="Saved contacts"/>
     </HBox>
+    <Button fx:id="messengerButton" text="Open Messenger" onAction="#onOpenMessenger"/>
     <ListView fx:id="savedContacts" prefHeight="120" VBox.vgrow="ALWAYS"/>
     </VBox>
 </StackPane>

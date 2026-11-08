@@ -12,6 +12,7 @@ final class ContactManager implements AutoCloseable {
     private final Path directory;
     private final OnionServer tor;
     private final ContactStore store;
+    private final MessageStore messageStore;
     private final String localUsername;
     private final Consumer<Event> events;
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
@@ -25,19 +26,31 @@ final class ContactManager implements AutoCloseable {
     ContactManager(Path directory, OnionServer tor, Consumer<Event> events) throws Exception {
         this.directory = directory; this.tor = tor; this.events = events;
         store = new ContactStore(directory);
+        messageStore = new MessageStore(directory);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
     }
 
     List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
+    List<MessageStore.Message> messages(String link) throws Exception {
+        return messageStore.all(canonicalLink(link));
+    }
+
+    MessageStore.Message send(String link, String body) throws Exception {
+        String canonical = canonicalLink(link);
+        Pending entry = pending.get(canonical);
+        if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
+        int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
+        try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 30000)) {
+            connections.add(socket);
+            try { return ContactMessaging.send(socket, entry.material, messageStore, canonical, body); }
+            finally { connections.remove(socket); }
+        }
+    }
 
     synchronized ContactRendezvous.Addresses add(String input) throws Exception {
         if (closed) throw new IllegalStateException("Contact service is stopped.");
-        var parsed = ContactLink.parseLink(input);
-        String link = parsed.username().equals("Unknown")
-                ? ContactLink.PREFIX_V1 + Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.publicKey())
-                : ContactLink.PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.username().getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                    + "/" + Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.publicKey());
+        String link = canonicalLink(input);
         Pending existing = pending.get(link);
         if (existing != null) {
             event(link, existing.saved ? "Contact already acknowledged and saved." : "Waiting for contact—both users must import each other's links.");
@@ -50,6 +63,14 @@ final class ContactManager implements AutoCloseable {
         event(link, "Waiting for Tor, then for your contact to import your link…");
         entry.task = retries.scheduleWithFixedDelay(() -> attempt(entry), 0, 10, TimeUnit.SECONDS);
         return material.addresses();
+    }
+
+    private static String canonicalLink(String input) {
+        var parsed = ContactLink.parseLink(input);
+        var key = Base64.getUrlEncoder().withoutPadding().encodeToString(parsed.publicKey());
+        if (parsed.username().equals("Unknown")) return ContactLink.PREFIX_V1 + key;
+        return ContactLink.PREFIX + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(parsed.username().getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "/" + key;
     }
 
     void restore() throws Exception {
@@ -99,9 +120,16 @@ final class ContactManager implements AutoCloseable {
                 if (!incoming.tryAcquire()) { socket.close(); continue; }
                 connections.add(socket);
                 Thread.ofPlatform().daemon().name("contact-handshake").start(() -> {
-                    try (socket) { ContactHandshake.server(socket, entry.material, () -> save(entry)); }
+                    try (socket) {
+                        socket.setSoTimeout(20000);
+                        int protocol = new java.io.DataInputStream(socket.getInputStream()).readInt();
+                        if (protocol == ContactHandshake.MAGIC) ContactHandshake.server(socket, entry.material, protocol, () -> save(entry));
+                        else if (protocol == ContactMessaging.MAGIC) ContactMessaging.receive(socket, entry.material, messageStore, entry.link);
+                        else throw new java.io.IOException("Unsupported contact protocol.");
+                    }
                     catch (Exception e) {
                         if (!closed && !entry.saved) event(entry.link, "Contact verification incomplete; waiting for a valid acknowledgment.");
+                        else if (!closed) System.err.println("Incoming message failed: " + safeMessage(e));
                     } finally { connections.remove(socket); incoming.release(); }
                 });
             } catch (Exception e) { return; }

@@ -14,7 +14,7 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 /** Pairing-only v2: fresh challenges, role-bound HMAC proofs and encrypted acknowledgments.
  * Not a messaging protocol and does not claim forward secrecy. */
 final class ContactHandshake {
-    private static final int MAGIC = 0x4f503032; // OP02; adds authenticated usernames
+    static final int MAGIC = 0x4f503032; // OP02; adds authenticated usernames
     private static final SecureRandom RANDOM = new SecureRandom();
     @FunctionalInterface interface Save { void run() throws Exception; }
 
@@ -38,7 +38,14 @@ final class ContactHandshake {
         socket.setSoTimeout(20000);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
-        if (input.readInt() != MAGIC) throw new IOException("Unsupported contact protocol.");
+        server(socket, material, input.readInt(), save);
+    }
+
+    static void server(Socket socket, ContactRendezvous.Material material, int magic, Save save) throws Exception {
+        socket.setSoTimeout(20000);
+        var input = new DataInputStream(socket.getInputStream());
+        var output = new DataOutputStream(socket.getOutputStream());
+        if (magic != MAGIC) throw new IOException("Unsupported contact protocol.");
         byte[] clientNonce = read(input, 32);
         byte[] hello = join(material.remotePublic(), material.localPublic(), name(material.remoteUsername()), clientNonce);
         verify(read(input, 32), proof(material.sharedSecret(), "client-hello", hello));

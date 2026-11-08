@@ -32,11 +32,17 @@ Both users must import each other's links and keep their apps running. Once Tor 
 
 The status changes to **Acknowledged—contact saved locally** only after a fresh authenticated acknowledgment and a successful SQLite write. Confirmed contacts appear in **Saved contacts** and reload on restart. “Saved” means paired previously, not currently online. The existing hello-world website retains its separate address; rendezvous endpoints speak the pairing protocol, not HTTP.
 
+## Basic messenger
+
+Click **Open Messenger** to open a separate window with saved contacts, conversation history, and a text composer. Messages are sent to the contact-specific onion service over Tor and protected end to end with AES-256-GCM using keys derived from the pair's X25519 shared secret. The receiver stores a message before returning an authenticated receipt; retries with the same message ID do not create duplicate rows. Both apps must be running and the contact service available to send; offline message queuing and attachments are not implemented. Message text is limited to 4096 UTF-8 bytes.
+
+Conversation history is stored locally in `contacts.sqlite` as plaintext, with the database file restricted to the current OS user. The account password does not encrypt this history yet. This experimental transport has not been independently audited and does not provide forward secrecy; treat it as a prototype, not as a production secure messenger.
+
 ## Acknowledgment and storage
 
 Pairing v1 binds the ordered X25519 public keys and two fresh 32-byte nonces into HMAC-SHA256 proofs. HKDF-SHA256 derives independent authentication and acknowledgment keys under the `Onion-P2P/pairing/v1/` namespace. AES-256-GCM protects the client acknowledgment and the server's saved receipt. Every phase/direction uses a separate key derived from the fresh nonce pair and authenticates the transcript. Old acknowledgments cannot be replayed into a new session.
 
-The receiver commits after validating the client acknowledgment, then sends its saved receipt. The initiating app commits only after validating that receipt. A dropped connection can temporarily leave only one side saved; retries are idempotent and finish the other side. This prototype protocol is not audited, is not post-quantum, and does not provide forward secrecy or implement chat encryption/history yet. Verify contact links through a trusted channel.
+The receiver commits after validating the client acknowledgment, then sends its saved receipt. The initiating app commits only after validating that receipt. A dropped connection can temporarily leave only one side saved; retries are idempotent and finish the other side. This prototype protocol is not audited, is not post-quantum, and does not provide forward secrecy. Verify contact links through a trusted channel.
 
 Acknowledged contacts are stored in `%LOCALAPPDATA%/Onion-P2P/contacts.sqlite` (or your configured `onion.dataDir`). Each row contains the public-key link, remote rendezvous address, advertised username, and first acknowledgment timestamp. The public-key link is unique, so repeat handshakes do not duplicate contacts. Private keys and handshake secrets are not written to this database. **The SQLite database is not encrypted at rest**; it has owner-only file access. Password-protected storage is a separate feature.
 

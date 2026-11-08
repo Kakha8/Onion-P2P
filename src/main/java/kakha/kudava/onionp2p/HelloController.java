@@ -11,6 +11,7 @@ import javafx.scene.control.PasswordField;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.stage.Window;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 
@@ -27,6 +28,7 @@ public class HelloController {
     @FXML private Label importStatus;
     @FXML private ProgressIndicator pairingProgress;
     @FXML private ListView<String> savedContacts;
+    @FXML private Button messengerButton;
     @FXML private ProgressIndicator contactsProgress;
     @FXML private HBox torProgressRow;
     @FXML private ProgressIndicator torProgress;
@@ -198,6 +200,17 @@ public class HelloController {
         });
         contactsProgress.setManaged(true);
         contactsProgress.setVisible(true);
+    }
+
+    @FXML
+    protected void onOpenMessenger() {
+        ContactManager current = manager;
+        if (current == null) {
+            statusText.setText("Messenger is starting. Try again in a moment.");
+            return;
+        }
+        Window owner = appPane.getScene() == null ? null : appPane.getScene().getWindow();
+        MessengerWindow.show(owner, current);
     }
 
     @FXML
