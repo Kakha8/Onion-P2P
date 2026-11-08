@@ -7,9 +7,7 @@ import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.layout.FlowPane;
 import javafx.stage.FileChooser;
-import javafx.stage.DirectoryChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -22,6 +20,11 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -31,14 +34,12 @@ final class MessengerWindow {
     private final ContactManager manager;
     private final Stage stage = new Stage();
     private final ListView<ContactStore.Contact> contactList = new ListView<>();
-    private final TextArea transcript = new TextArea();
+    private final ListView<MessageStore.Message> transcript = new ListView<>();
     private final TextField composer = new TextField();
     private final Button sendButton = new Button("Send");
     private final Button attachButton = new Button("Attach file");
     private final ProgressBar transferProgress = new ProgressBar(0);
     private final Label status = new Label("Select a saved contact to open a conversation.");
-    private final Hyperlink chooseDownloadFolder = new Hyperlink("Choose download folder");
-    private final Label downloadFolder = new Label();
     private final AtomicBoolean loading = new AtomicBoolean();
     private final Timeline poll;
     private ContactStore.Contact selected;
@@ -59,18 +60,17 @@ final class MessengerWindow {
         });
         contactList.getSelectionModel().selectedItemProperty().addListener((obs, old, value) -> {
             selected = value;
-            transcript.clear();
+            transcript.getItems().clear();
             setTransferControls(false);
             refreshMessages();
         });
 
-        transcript.setEditable(false);
-        transcript.setWrapText(true);
+        transcript.setPlaceholder(new Label("No messages yet."));
+        transcript.setCellFactory(list -> new MessageCell());
         composer.setPromptText("Write a message…");
         composer.setOnAction(event -> send());
         sendButton.setOnAction(event -> send());
         attachButton.setOnAction(event -> chooseFile());
-        chooseDownloadFolder.setOnAction(event -> chooseDownloadFolder());
         setTransferControls(false);
         transferProgress.setMaxWidth(Double.MAX_VALUE);
         transferProgress.setVisible(false);
@@ -78,12 +78,9 @@ final class MessengerWindow {
         HBox inputRow = new HBox(8, composer, attachButton, sendButton);
         HBox.setHgrow(composer, Priority.ALWAYS);
 
-        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Local chat history is unencrypted.");
+        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Received files save in the app downloads folder; use Export… to choose another location. Local chat history is unencrypted.");
         securityNote.setWrapText(true);
-        downloadFolder.setWrapText(true);
-        FlowPane folderRow = new FlowPane(6, 4, chooseDownloadFolder, downloadFolder);
-        updateDownloadFolder();
-        VBox conversation = new VBox(8, transcript, status, inputRow, transferProgress, folderRow, securityNote);
+        VBox conversation = new VBox(8, transcript, status, inputRow, transferProgress, securityNote);
         conversation.setPadding(new Insets(12));
         VBox.setVgrow(transcript, Priority.ALWAYS);
         BorderPane root = new BorderPane(conversation, null, null, null, contactList);
@@ -132,22 +129,8 @@ final class MessengerWindow {
                 var messages = manager.messages(contact.link());
                 Platform.runLater(() -> {
                     if (selected == null || !selected.link().equals(contact.link())) return;
-                    StringBuilder text = new StringBuilder();
-                    for (var message : messages) {
-                        text.append('[').append(TIME.format(Instant.ofEpochMilli(message.timestamp()))).append("] ")
-                                .append(message.outgoing() ? "You" : contact.username()).append(": ");
-                        if (message.attachmentName() != null) {
-                            text.append("📎 ").append(message.attachmentName()).append(" (")
-                                    .append(formatBytes(message.attachmentSize())).append(')');
-                            if (!message.outgoing()) text.append(" — saved to ").append(message.attachmentPath());
-                            text.append('\n');
-                        } else text.append(message.body()).append('\n');
-                    }
-                    String rendered = text.toString();
-                    if (!transcript.getText().equals(rendered)) {
-                        transcript.setText(rendered);
-                        transcript.positionCaret(rendered.length());
-                    }
+                    transcript.setItems(FXCollections.observableArrayList(messages));
+                    if (!messages.isEmpty()) transcript.scrollTo(messages.size() - 1);
                     sendButton.setDisable(sending);
                     status.setText("Paired with " + contact.username());
                 });
@@ -230,27 +213,69 @@ final class MessengerWindow {
         });
     }
 
-    private void chooseDownloadFolder() {
-        var chooser = new DirectoryChooser();
-        chooser.setTitle("Choose where received files are saved");
-        try {
-            var current = DownloadLocation.get();
-            if (java.nio.file.Files.isDirectory(current)) chooser.setInitialDirectory(current.toFile());
-        } catch (Exception ignored) {}
-        File folder = chooser.showDialog(stage);
-        if (folder == null) return;
-        try {
-            DownloadLocation.set(folder.toPath());
-            updateDownloadFolder();
-            status.setText("Received files will be saved in the selected folder.");
-        } catch (Exception e) {
-            status.setText("Could not save the download folder: " + safe(e));
+    private void export(MessageStore.Message message) {
+        if (sending || message.attachmentPath() == null) return;
+        Path source = Path.of(message.attachmentPath());
+        var chooser = new FileChooser();
+        chooser.setTitle("Export received attachment");
+        chooser.setInitialFileName(message.attachmentName());
+        File chosen = chooser.showSaveDialog(stage);
+        if (chosen == null) return;
+        Path destination = chosen.toPath().toAbsolutePath().normalize();
+        if (Files.exists(destination)) {
+            status.setText("That file already exists. Choose a different export name.");
+            return;
         }
-    }
-
-    private void updateDownloadFolder() {
-        try { downloadFolder.setText(DownloadLocation.get().toString()); }
-        catch (Exception e) { downloadFolder.setText("The saved folder is unavailable; choose another folder."); }
+        sending = true;
+        setTransferControls(true);
+        transferProgress.setProgress(0);
+        transferProgress.setManaged(true);
+        transferProgress.setVisible(true);
+        status.setText("Exporting " + message.attachmentName() + "…");
+        Thread.ofPlatform().daemon().name("messenger-file-export").start(() -> {
+            Path temporary = null;
+            try {
+                Path parent = destination.getParent();
+                if (parent == null || !Files.isDirectory(parent)) throw new java.io.IOException("Choose an existing folder.");
+                temporary = Files.createTempFile(parent, ".onion-export-", ".part");
+                long copied = 0;
+                try (InputStream input = Files.newInputStream(source); OutputStream output = Files.newOutputStream(temporary)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    long lastReported = 0;
+                    int count;
+                    while ((count = input.read(buffer)) >= 0) {
+                        output.write(buffer, 0, count);
+                        copied += count;
+                        if (copied - lastReported >= 1024 * 1024 || copied == message.attachmentSize()) {
+                            long total = copied;
+                            Platform.runLater(() -> transferProgress.setProgress(message.attachmentSize() == 0
+                                    ? 1 : (double) total / message.attachmentSize()));
+                            lastReported = copied;
+                        }
+                    }
+                }
+                if (copied != message.attachmentSize()) throw new java.io.IOException("The received file size changed or is incomplete.");
+                Files.move(temporary, destination);
+                temporary = null;
+                Platform.runLater(() -> {
+                    sending = false;
+                    setTransferControls(false);
+                    transferProgress.setManaged(false);
+                    transferProgress.setVisible(false);
+                    status.setText("Exported to " + destination);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    sending = false;
+                    setTransferControls(false);
+                    transferProgress.setManaged(false);
+                    transferProgress.setVisible(false);
+                    status.setText("Could not export the file: " + safe(e));
+                });
+            } finally {
+                if (temporary != null) try { Files.deleteIfExists(temporary); } catch (Exception ignored) {}
+            }
+        });
     }
 
     private void setTransferControls(boolean busy) {
@@ -267,5 +292,32 @@ final class MessengerWindow {
 
     private static String safe(Exception e) {
         return e.getMessage() == null ? "connection unavailable" : e.getMessage();
+    }
+
+    private final class MessageCell extends ListCell<MessageStore.Message> {
+        @Override protected void updateItem(MessageStore.Message message, boolean empty) {
+            super.updateItem(message, empty);
+            if (empty || message == null) { setText(null); setGraphic(null); return; }
+            String who = message.outgoing() ? "You" : selected == null ? "Contact" : selected.username();
+            Label heading = new Label("[" + TIME.format(Instant.ofEpochMilli(message.timestamp())) + "] " + who);
+            Label content;
+            if (message.attachmentName() != null) {
+                content = new Label("📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
+                content.setWrapText(true);
+                if (!message.outgoing()) {
+                    Hyperlink exportLink = new Hyperlink("Export…");
+                    exportLink.setOnAction(event -> export(message));
+                    VBox rows = new VBox(4, heading, content, exportLink);
+                    rows.setPadding(new Insets(6));
+                    setText(null); setGraphic(rows); return;
+                }
+            } else {
+                content = new Label(message.body());
+                content.setWrapText(true);
+            }
+            VBox rows = new VBox(4, heading, content);
+            rows.setPadding(new Insets(6));
+            setText(null); setGraphic(rows);
+        }
     }
 }

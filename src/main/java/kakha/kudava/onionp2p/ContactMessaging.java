@@ -172,7 +172,7 @@ final class ContactMessaging {
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(messageKey, "AES"), new GCMParameterSpec(128, nonce));
         cipher.updateAAD(aad);
         Arrays.fill(messageKey, (byte) 0);
-        Path downloads = DownloadLocation.get();
+        Path downloads = AppData.directory().resolve("downloads");
         Files.createDirectories(downloads);
         Path temporary = Files.createTempFile(downloads, ".onion-incoming-", ".part");
         String fileName = null;
