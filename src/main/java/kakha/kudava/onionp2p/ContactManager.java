@@ -16,11 +16,12 @@ final class ContactManager implements AutoCloseable {
     private final String localUsername;
     private final Consumer<Event> events;
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
         Thread thread = new Thread(r, "contact-retry"); thread.setDaemon(true); return thread;
     });
     private final Set<Socket> connections = ConcurrentHashMap.newKeySet();
-    private final Semaphore incoming = new Semaphore(4);
+    private final Semaphore incoming = new Semaphore(256);
     private volatile boolean closed;
 
     ContactManager(Path directory, OnionServer tor, Consumer<Event> events) throws Exception {
@@ -40,11 +41,26 @@ final class ContactManager implements AutoCloseable {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
         if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
-        int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-        try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 30000)) {
-            connections.add(socket);
-            try { return ContactMessaging.send(socket, entry.material, messageStore, canonical, body); }
-            finally { connections.remove(socket); }
+        MessageSession session = messageSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
+        synchronized (session) {
+            if (closed) throw new IllegalStateException("Contact service is stopped.");
+            if (session.socket == null || session.socket.isClosed()) {
+                int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
+                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 30000);
+                session.firstMessage = true;
+                connections.add(session.socket);
+            }
+            try {
+                var message = ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage);
+                session.firstMessage = false;
+                return message;
+            } catch (Exception e) {
+                connections.remove(session.socket);
+                try { session.socket.close(); } catch (Exception ignored) {}
+                session.socket = null;
+                session.firstMessage = true;
+                throw e;
+            }
         }
     }
 
@@ -137,7 +153,7 @@ final class ContactManager implements AutoCloseable {
                     }
                     catch (Exception e) {
                         if (!closed && !entry.saved) event(entry.link, "Contact verification incomplete; waiting for a valid acknowledgment.");
-                        else if (!closed) System.err.println("Incoming message failed: " + safeMessage(e));
+                        else if (!closed && !(e instanceof java.io.EOFException)) System.err.println("Incoming message failed: " + safeMessage(e));
                     } finally { connections.remove(socket); incoming.release(); }
                 });
             } catch (Exception e) { return; }
@@ -178,6 +194,7 @@ final class ContactManager implements AutoCloseable {
         closed = true;
         retries.shutdownNow();
         for (var socket : connections) try { socket.close(); } catch (Exception ignored) {}
+        messageSessions.clear();
         for (var entry : pending.values()) remove(entry);
     }
 
@@ -189,5 +206,10 @@ final class ContactManager implements AutoCloseable {
         volatile ServerSocket listener;
         ScheduledFuture<?> task;
         Pending(String link, ContactRendezvous.Material material) { this.link = link; this.material = material; }
+    }
+
+    private static final class MessageSession {
+        Socket socket;
+        boolean firstMessage = true;
     }
 }

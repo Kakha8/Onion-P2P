@@ -28,7 +28,7 @@ final class ContactMessaging {
     private ContactMessaging() {}
 
     static MessageStore.Message send(Socket socket, ContactRendezvous.Material material,
-                                     MessageStore store, String link, String body) throws Exception {
+                                     MessageStore store, String link, String body, boolean newConnection) throws Exception {
         byte[] plaintext = body.getBytes(StandardCharsets.UTF_8);
         if (plaintext.length == 0 || plaintext.length > MAX_BODY_BYTES)
             throw new IllegalArgumentException("Message must be between 1 and 4096 UTF-8 bytes.");
@@ -42,10 +42,11 @@ final class ContactMessaging {
         try { ciphertext = crypt(Cipher.ENCRYPT_MODE, messageKey, nonce, aad, plaintext); }
         finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(plaintext, (byte) 0); }
 
-        socket.setSoTimeout(20000);
+        socket.setSoTimeout(45000);
         var output = new DataOutputStream(socket.getOutputStream());
         var input = new DataInputStream(socket.getInputStream());
-        output.writeInt(MAGIC); output.write(idBytes); output.writeLong(timestamp);
+        if (newConnection) output.writeInt(MAGIC);
+        output.write(idBytes); output.writeLong(timestamp);
         output.write(nonce); output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
         byte[] receipt = new byte[21]; input.readFully(receipt);
         byte[] ackKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "receipt");
@@ -59,10 +60,17 @@ final class ContactMessaging {
     }
 
     static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, String link) throws Exception {
-        socket.setSoTimeout(20000);
+        socket.setSoTimeout(0);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
-        byte[] idBytes = new byte[16]; input.readFully(idBytes);
+        while (true) receiveOne(input, output, material, store, link);
+    }
+
+    private static void receiveOne(DataInputStream input, DataOutputStream output,
+                                   ContactRendezvous.Material material, MessageStore store, String link) throws Exception {
+        byte[] idBytes = new byte[16];
+        try { input.readFully(idBytes); }
+        catch (java.io.EOFException disconnected) { throw disconnected; }
         String id = uuidString(idBytes);
         long timestamp = input.readLong();
         long now = System.currentTimeMillis();
