@@ -3,9 +3,15 @@ package kakha.kudava.onionp2p;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.SimpleDoubleProperty;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.scene.Scene;
+import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -76,6 +82,7 @@ final class MessengerPane extends BorderPane {
     });
     private final java.util.Set<String> checkingPresence = ConcurrentHashMap.newKeySet();
     private final Map<String, Presence> presence = new ConcurrentHashMap<>();
+    private final Map<String, ActiveTransfer> activeTransfers = new ConcurrentHashMap<>();
     private final Timeline poll;
     private final Timeline presencePoll;
     private final Timeline voiceDurationPoll;
@@ -319,12 +326,17 @@ final class MessengerPane extends BorderPane {
                 try { online = manager.isOnline(contact.link()); }
                 catch (Exception ignored) { /* Unreachable and Tor errors both mean not reachable now. */ }
                 boolean result = online;
-                presence.put(contact.link(), new Presence(result, System.currentTimeMillis()));
+                Presence oldState = presence.get(contact.link());
+                Presence newState = new Presence(result, System.currentTimeMillis());
+                presence.put(contact.link(), newState);
                 checkingPresence.remove(contact.link());
-                Platform.runLater(() -> { contactList.refresh(); updateConversationHeader(); });
+                boolean stateChanged = oldState == null || oldState.checkedAt() == 0 || oldState.online() != result;
+                if (stateChanged) Platform.runLater(() -> {
+                    contactList.refresh();
+                    if (selected != null && selected.link().equals(contact.link())) updateConversationHeader();
+                });
             });
         }
-        contactList.refresh();
     }
 
     private record Presence(boolean online, long checkedAt) {
@@ -353,9 +365,23 @@ final class MessengerPane extends BorderPane {
                 var messages = manager.messages(contact.link());
                 Platform.runLater(() -> {
                     if (selected == null || !selected.link().equals(contact.link())) return;
-                    transcript.setItems(FXCollections.observableArrayList(messages));
-                    if (!messages.isEmpty()) transcript.scrollTo(messages.size() - 1);
-                    updateConversationHeader();
+                    List<MessageStore.Message> visibleMessages = new ArrayList<>(messages);
+                    activeTransfers.values().stream()
+                            .filter(transfer -> transfer.message.contactLink().equals(contact.link()))
+                            .map(transfer -> transfer.message)
+                            .forEach(visibleMessages::add);
+                    visibleMessages.sort(java.util.Comparator.comparingLong(MessageStore.Message::timestamp));
+                    if (!transcript.getItems().equals(visibleMessages)) {
+                        boolean wasAtBottom = isTranscriptAtBottom();
+                        List<MessageStore.Message> current = List.copyOf(transcript.getItems());
+                        if (visibleMessages.size() >= current.size()
+                                && visibleMessages.subList(0, current.size()).equals(current)) {
+                            transcript.getItems().addAll(visibleMessages.subList(current.size(), visibleMessages.size()));
+                        } else {
+                            transcript.getItems().setAll(visibleMessages);
+                        }
+                        if (!visibleMessages.isEmpty() && wasAtBottom) transcript.scrollTo(visibleMessages.size() - 1);
+                    }
                     sendButton.setDisable(sending);
                     if (!sending) status.setText("Paired with " + contact.username());
                 });
@@ -363,6 +389,47 @@ final class MessengerPane extends BorderPane {
                 Platform.runLater(() -> status.setText("Could not load conversation: " + safe(e)));
             } finally { loading.set(false); }
         });
+    }
+
+    private boolean isTranscriptAtBottom() {
+        if (transcript.getItems().isEmpty()) return true;
+        for (Node node : transcript.lookupAll(".scroll-bar")) {
+            if (node instanceof ScrollBar bar && bar.getOrientation() == Orientation.VERTICAL)
+                return bar.getMax() <= bar.getMin() || bar.getValue() >= bar.getMax() - 0.02;
+        }
+        return true;
+    }
+
+    private ActiveTransfer beginTransferBubble(ContactStore.Contact contact, Path path, String caption) throws java.io.IOException {
+        long size = Files.size(path);
+        String id = "upload-" + java.util.UUID.randomUUID();
+        MessageStore.Message message = new MessageStore.Message(id, contact.link(), true,
+                caption == null ? "" : caption, path.getFileName().toString(), path.toAbsolutePath().toString(),
+                size, System.currentTimeMillis());
+        ActiveTransfer transfer = new ActiveTransfer(message);
+        activeTransfers.put(id, transfer);
+        Platform.runLater(() -> {
+            if (selected == null || !selected.link().equals(contact.link())) return;
+            if (transcript.getItems().stream().noneMatch(existing -> existing.id().equals(id))) {
+                transcript.getItems().add(message);
+                transcript.scrollTo(transcript.getItems().size() - 1);
+            }
+        });
+        return transfer;
+    }
+
+    private void finishTransferBubble(ActiveTransfer transfer) {
+        if (transfer == null) return;
+        activeTransfers.remove(transfer.message.id());
+        Platform.runLater(this::refreshMessages);
+    }
+
+    private static final class ActiveTransfer {
+        final MessageStore.Message message;
+        final DoubleProperty progress = new SimpleDoubleProperty(0);
+        final StringProperty speed = new SimpleStringProperty("0 B/s");
+
+        ActiveTransfer(MessageStore.Message message) { this.message = message; }
     }
 
     private void send() {
@@ -426,12 +493,10 @@ final class MessengerPane extends BorderPane {
         var cancellation = new AtomicBoolean();
         activeFileCancellation = cancellation;
         setTransferControls(true);
-        transferProgress.setProgress(0);
-        transferProgress.setManaged(true);
-        transferProgress.setVisible(true);
-        transferRate.setText("0 B/s");
-        transferRate.setManaged(true);
-        transferRate.setVisible(true);
+        transferProgress.setManaged(false);
+        transferProgress.setVisible(false);
+        transferRate.setManaged(false);
+        transferRate.setVisible(false);
         cancelFileButton.setTooltip(new Tooltip("Cancel file batch"));
         cancelFileButton.setDisable(false);
         cancelFileButton.setManaged(true);
@@ -440,11 +505,14 @@ final class MessengerPane extends BorderPane {
         Thread.ofPlatform().daemon().name("messenger-file-batch").start(() -> {
             int sentCount = 0;
             long sentBytes = 0;
+            ActiveTransfer currentBubble = null;
             SpeedMeter speed = new SpeedMeter();
             try {
                 for (int index = 0; index < files.size(); index++) {
                     Path path = files.get(index);
                     long fileSize = Files.size(path);
+                    currentBubble = beginTransferBubble(contact, path, index == 0 ? caption : "");
+                    ActiveTransfer bubble = currentBubble;
                     int completedFiles = sentCount;
                     long completedBytes = sentBytes;
                     Platform.runLater(() -> status.setText("Sending file " + (completedFiles + 1) + " of " + files.size()
@@ -452,12 +520,14 @@ final class MessengerPane extends BorderPane {
                     manager.sendFile(contact.link(), path, index == 0 ? caption : "", cancellation,
                             transferred -> Platform.runLater(() -> {
                                 double fileFraction = fileSize == 0 ? 1 : (double) transferred / fileSize;
-                                transferProgress.setProgress((completedFiles + fileFraction) / files.size());
-                                transferRate.setText(formatSpeed(speed.update(completedBytes + transferred, totalBytes, System.nanoTime())));
+                                bubble.progress.set(fileFraction);
+                                bubble.speed.set(formatSpeed(speed.update(completedBytes + transferred, totalBytes, System.nanoTime())));
                             }),
                             message -> Platform.runLater(() -> {
                                 if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
                             }));
+                    finishTransferBubble(currentBubble);
+                    currentBubble = null;
                     sentCount++;
                     sentBytes += fileSize;
                     int completed = sentCount;
@@ -477,6 +547,7 @@ final class MessengerPane extends BorderPane {
                     refreshMessages();
                 });
             } catch (Exception e) {
+                finishTransferBubble(currentBubble);
                 int sent = sentCount;
                 Platform.runLater(() -> {
                     finishBatchTransfer();
@@ -515,12 +586,10 @@ final class MessengerPane extends BorderPane {
         activeVoiceTransfer = voiceMessage;
         cancelFileButton.setTooltip(new Tooltip(voiceMessage ? "Cancel voice message" : "Cancel file transfer"));
         setTransferControls(true);
-        transferProgress.setProgress(0);
-        transferProgress.setManaged(true);
-        transferProgress.setVisible(true);
-        transferRate.setText("0 B/s");
-        transferRate.setManaged(true);
-        transferRate.setVisible(true);
+        transferProgress.setManaged(false);
+        transferProgress.setVisible(false);
+        transferRate.setManaged(false);
+        transferRate.setVisible(false);
         cancelFileButton.setDisable(false);
         cancelFileButton.setManaged(!voiceMessage);
         cancelFileButton.setVisible(!voiceMessage);
@@ -531,16 +600,21 @@ final class MessengerPane extends BorderPane {
         }
         status.setText(voiceMessage ? "Sending voice message…" : "Sending " + path.getFileName() + "…");
         Thread.ofPlatform().daemon().name("messenger-file-send").start(() -> {
+            ActiveTransfer bubble = null;
             try {
                 long size = Files.size(path);
+                bubble = beginTransferBubble(contact, path, caption);
+                ActiveTransfer activeBubble = bubble;
                 SpeedMeter speed = new SpeedMeter();
                 manager.sendFile(contact.link(), path, caption, cancellation, transferred -> Platform.runLater(() -> {
-                            transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size);
-                            transferRate.setText(formatSpeed(speed.update(transferred, size, System.nanoTime())));
+                            activeBubble.progress.set(size == 0 ? 1.0 : (double) transferred / size);
+                            activeBubble.speed.set(formatSpeed(speed.update(transferred, size, System.nanoTime())));
                         }),
                         message -> Platform.runLater(() -> {
                             if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
                         }));
+                finishTransferBubble(bubble);
+                bubble = null;
                 Platform.runLater(() -> {
                     sending = false;
                     activeFileCancellation = null;
@@ -561,6 +635,7 @@ final class MessengerPane extends BorderPane {
                     refreshMessages();
                 });
             } catch (Exception e) {
+                finishTransferBubble(bubble);
                 if (voiceMessage) try { Files.deleteIfExists(path); } catch (Exception ignored) {}
                 Platform.runLater(() -> {
                     sending = false;
@@ -1214,6 +1289,19 @@ final class MessengerPane extends BorderPane {
                     caption.getStyleClass().add("message-content");
                     rows.getChildren().add(caption);
                 }
+                ActiveTransfer transfer = activeTransfers.get(message.id());
+                if (transfer != null) {
+                    ProgressBar progress = new ProgressBar();
+                    progress.setMaxWidth(Double.MAX_VALUE);
+                    progress.progressProperty().bind(transfer.progress);
+                    Label rate = new Label();
+                    rate.textProperty().bind(transfer.speed);
+                    rate.getStyleClass().add("message-transfer-rate");
+                    HBox progressRow = new HBox(8, progress, rate);
+                    progressRow.getStyleClass().add("message-transfer-row");
+                    HBox.setHgrow(progress, Priority.ALWAYS);
+                    rows.getChildren().add(progressRow);
+                }
                 HBox actions = new HBox(8);
                 if (voice) {
                     Button play = new Button(isPlaying(message.attachmentPath()) ? "■ Stop" : "▶ Play");
@@ -1231,7 +1319,7 @@ final class MessengerPane extends BorderPane {
                     actions.getChildren().add(exportButton);
                 }
                 if (!actions.getChildren().isEmpty()) rows.getChildren().add(actions);
-                setText(null); setGraphic(rows); return;
+                setText(null); setGraphic(wrapMessageCard(rows, message.outgoing())); return;
             } else {
                 content = new Label(message.body());
                 content.setWrapText(true);
@@ -1240,7 +1328,16 @@ final class MessengerPane extends BorderPane {
             VBox rows = new VBox(4, heading, content);
             rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
             rows.setPadding(new Insets(6));
-            setText(null); setGraphic(rows);
+            setText(null); setGraphic(wrapMessageCard(rows, message.outgoing()));
+        }
+
+        private HBox wrapMessageCard(VBox card, boolean outgoing) {
+            HBox alignment = new HBox(card);
+            alignment.setAlignment(outgoing ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
+            alignment.setMaxWidth(Double.MAX_VALUE);
+            alignment.prefWidthProperty().bind(transcript.widthProperty().subtract(34));
+            card.setMaxWidth(680);
+            return alignment;
         }
     }
 

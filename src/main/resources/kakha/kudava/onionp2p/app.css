@@ -59,13 +59,15 @@
 .conversation-presence { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
 .chat-transcript { -fx-background-color: #171c23; -fx-background-insets: 0; -fx-border-color: #29313b; -fx-border-radius: 8; -fx-background-radius: 8; }
 .chat-transcript .list-cell { -fx-background-color: transparent; -fx-padding: 4 6 4 6; }
-.chat-transcript .list-cell:filled:even { -fx-background-color: #171c23; }
-.chat-transcript .list-cell:filled:odd { -fx-background-color: #1a2028; }
-.message-card { -fx-padding: 9 12 9 12; -fx-background-radius: 9; -fx-max-width: 680px; }
-.message-card.outgoing { -fx-background-color: #1c2a38; }
-.message-card.incoming { -fx-background-color: #202832; }
+.chat-transcript .list-cell:filled:even, .chat-transcript .list-cell:filled:odd { -fx-background-color: transparent; }
+.message-card { -fx-padding: 9 12 9 12; -fx-background-radius: 16; -fx-max-width: 680px; }
+.message-card.outgoing { -fx-background-color: #2369ad; }
+.message-card.incoming { -fx-background-color: #293746; }
 .message-heading { -fx-text-fill: #7db3f4; -fx-font-size: 11px; }
 .message-content { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; }
+.message-transfer-row { -fx-alignment: center; -fx-padding: 3 0 0 0; }
+.message-transfer-row .progress-bar { -fx-pref-height: 7; -fx-min-height: 7; -fx-max-height: 7; }
+.message-transfer-rate { -fx-text-fill: #d7e4f2; -fx-font-size: 11px; }
 .hyperlink { -fx-text-fill: #8bbcf7; }
 .chat-status { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
 .chat-input-row { -fx-alignment: center; -fx-spacing: 4; -fx-padding: 4 8 4 8; -fx-background-color: #202832; -fx-background-radius: 26; -fx-border-color: #2b323d; -fx-border-radius: 26; }
