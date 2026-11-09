@@ -47,7 +47,9 @@ final class ContactManager implements AutoCloseable {
     boolean isOnline(String link) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
-        if (entry == null || !entry.saved || entry.stopped || entry.listener == null) return false;
+        // The local listener is only needed to receive connections. An outgoing presence
+        // probe can be sent as soon as Tor is ready, even while that listener is publishing.
+        if (entry == null || !entry.saved || entry.stopped) return false;
         int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
         try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000)) {
             ContactMessaging.ping(socket, entry.material, true);

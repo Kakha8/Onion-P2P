@@ -320,7 +320,9 @@ final class MessengerPane extends BorderPane {
         long now = System.currentTimeMillis();
         for (ContactStore.Contact contact : contacts) {
             Presence previous = presence.get(contact.link());
-            if (previous != null && now - previous.checkedAt() < TimeUnit.SECONDS.toMillis(30)) continue;
+            // Presence changes are also pushed over authenticated PINGs. This is the
+            // fallback for missed announcements and matches the 15-second poll cadence.
+            if (previous != null && now - previous.checkedAt() < TimeUnit.SECONDS.toMillis(15)) continue;
             if (!checkingPresence.add(contact.link())) continue;
             long requestStartedAt = System.currentTimeMillis();
             presence.putIfAbsent(contact.link(), Presence.checking());
