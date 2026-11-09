@@ -112,6 +112,7 @@ final class MessengerPane extends BorderPane {
 
     MessengerPane(ContactManager manager) {
         this.manager = manager;
+        manager.setPresenceListener(this::contactCameOnline);
 
         contactList.setPlaceholder(new Label("No saved contacts yet."));
         contactList.setCellFactory(list -> new ListCell<>() {
@@ -321,6 +322,7 @@ final class MessengerPane extends BorderPane {
             Presence previous = presence.get(contact.link());
             if (previous != null && now - previous.checkedAt() < TimeUnit.SECONDS.toMillis(30)) continue;
             if (!checkingPresence.add(contact.link())) continue;
+            long requestStartedAt = System.currentTimeMillis();
             presence.putIfAbsent(contact.link(), Presence.checking());
             presenceWorkers.execute(() -> {
                 boolean online = false;
@@ -328,6 +330,10 @@ final class MessengerPane extends BorderPane {
                 catch (Exception ignored) { /* Unreachable and Tor errors both mean not reachable now. */ }
                 boolean result = online;
                 Presence oldState = presence.get(contact.link());
+                if (oldState != null && oldState.checkedAt() > requestStartedAt) {
+                    checkingPresence.remove(contact.link());
+                    return;
+                }
                 Presence newState = new Presence(result, System.currentTimeMillis());
                 presence.put(contact.link(), newState);
                 checkingPresence.remove(contact.link());
@@ -338,6 +344,15 @@ final class MessengerPane extends BorderPane {
                 });
             });
         }
+    }
+
+    private void contactCameOnline(String link) {
+        long now = System.currentTimeMillis();
+        presence.compute(link, (ignored, old) -> new Presence(true, now));
+        Platform.runLater(() -> {
+            contactList.refresh();
+            if (selected != null && selected.link().equals(link)) updateConversationHeader();
+        });
     }
 
     private record Presence(boolean online, long checkedAt) {

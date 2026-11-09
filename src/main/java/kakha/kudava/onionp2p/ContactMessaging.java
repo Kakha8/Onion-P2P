@@ -168,16 +168,16 @@ final class ContactMessaging {
     }
 
     static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, String link,
-                        boolean captionFrames) throws Exception {
+                        boolean captionFrames, Runnable onlineSignal) throws Exception {
         socket.setSoTimeout(0);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
-        while (true) receiveOne(input, output, material, store, link, captionFrames);
+        while (true) receiveOne(input, output, material, store, link, captionFrames, onlineSignal);
     }
 
     private static void receiveOne(DataInputStream input, DataOutputStream output,
                                    ContactRendezvous.Material material, MessageStore store, String link,
-                                   boolean captionFrames) throws Exception {
+                                   boolean captionFrames, Runnable onlineSignal) throws Exception {
         byte[] idBytes = new byte[16]; input.readFully(idBytes);
         String id = uuidString(idBytes);
         long timestamp = input.readLong();
@@ -206,6 +206,7 @@ final class ContactMessaging {
                 if (!MessageDigest.isEqual(plaintext, "PING".getBytes(StandardCharsets.US_ASCII)))
                     throw new GeneralSecurityException("Invalid connection check.");
             } finally { Arrays.fill(plaintext, (byte) 0); }
+            if (onlineSignal != null) onlineSignal.run();
             awaitReceiptSend(output, material, nonce, aad);
             return;
         }

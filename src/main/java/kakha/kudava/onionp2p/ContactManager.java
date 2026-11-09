@@ -16,6 +16,7 @@ final class ContactManager implements AutoCloseable {
     private final MessageStore messageStore;
     private final String localUsername;
     private final Consumer<Event> events;
+    private volatile Consumer<String> presenceListener = ignored -> {};
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
@@ -34,6 +35,15 @@ final class ContactManager implements AutoCloseable {
     }
 
     List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
+    void setPresenceListener(Consumer<String> listener) {
+        presenceListener = listener == null ? ignored -> {} : listener;
+    }
+
+    private void signalContactOnline(String link) {
+        try { presenceListener.accept(link); }
+        catch (RuntimeException e) { System.err.println("Presence update failed: " + safeMessage(e)); }
+    }
+
     boolean isOnline(String link) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
@@ -251,7 +261,8 @@ final class ContactManager implements AutoCloseable {
                         int protocol = new java.io.DataInputStream(socket.getInputStream()).readInt();
                         if (protocol == ContactHandshake.MAGIC) ContactHandshake.server(socket, entry.material, protocol, () -> save(entry));
                         else if (protocol == ContactMessaging.MAGIC || protocol == ContactMessaging.LEGACY_MAGIC)
-                            ContactMessaging.receive(socket, entry.material, messageStore, entry.link, protocol == ContactMessaging.MAGIC);
+                            ContactMessaging.receive(socket, entry.material, messageStore, entry.link,
+                                    protocol == ContactMessaging.MAGIC, () -> signalContactOnline(entry.link));
                         else throw new java.io.IOException("Unsupported contact protocol.");
                     }
                     catch (Exception e) {
