@@ -74,7 +74,22 @@
 .attach-icon-button { -fx-background-color: transparent; -fx-border-color: transparent; -fx-font-size: 19px; -fx-padding: 5 8 5 8; -fx-text-fill: #bdc8d7; }
 .attach-icon-button:hover { -fx-background-color: #303b49; -fx-background-radius: 18; }
 .attach-icon-button.recording { -fx-background-color: #493128; -fx-text-fill: #f3aa88; -fx-background-radius: 18; }
-.chat-input-row .primary-button { -fx-background-radius: 20; -fx-padding: 8 16 8 16; }
+.voice-icon-button { -fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 7; -fx-min-width: 36; -fx-min-height: 36; -fx-pref-width: 36; -fx-pref-height: 36; -fx-background-radius: 18; }
+.voice-icon-button:hover { -fx-background-color: #2b323d; }
+.voice-icon-button.recording { -fx-background-color: transparent; }
+.voice-icon-button .mic-glyph { -fx-fill: #bdc8d7; -fx-scale-x: 0.82; -fx-scale-y: 0.82; }
+.voice-icon-button.recording .mic-glyph { -fx-fill: #c68b72; }
+.send-icon-button { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-background-radius: 50%; -fx-min-width: 42; -fx-min-height: 42; -fx-pref-width: 42; -fx-pref-height: 42; -fx-padding: 0; }
+.send-icon-button:hover { -fx-background-color: #4b91ff; }
+.send-icon-button:disabled { -fx-opacity: 0.5; }
+.send-icon-button .send-glyph { -fx-fill: white; -fx-stroke: transparent; -fx-scale-x: 0.82; -fx-scale-y: 0.82; }
+.voice-controls { -fx-alignment: center; -fx-spacing: 12; -fx-padding: 5 9 5 9; -fx-min-height: 54; -fx-background-color: #202832; -fx-background-radius: 28; -fx-border-color: #2b323d; -fx-border-radius: 28; }
+.voice-duration { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; -fx-min-width: 38; }
+.voice-waveform { -fx-background-color: transparent; }
+.voice-trash-button, .voice-control-button { -fx-background-color: transparent; -fx-border-color: transparent; -fx-background-radius: 22; -fx-min-width: 38; -fx-min-height: 38; -fx-pref-width: 38; -fx-pref-height: 38; -fx-padding: 8; }
+.voice-trash-button:hover, .voice-control-button:hover { -fx-background-color: #303b49; }
+.voice-trash-button .trash-glyph { -fx-fill: transparent; -fx-stroke: #aeb7c2; -fx-stroke-width: 1.8; -fx-scale-x: 0.8; -fx-scale-y: 0.8; }
+.voice-control-button .voice-control-glyph { -fx-fill: #aeb7c2; -fx-stroke: transparent; -fx-scale-x: 0.8; -fx-scale-y: 0.8; }
 .voice-play-button, .export-button { -fx-background-color: #253244; -fx-border-color: #344153; -fx-text-fill: #8bbcf7; -fx-padding: 5 10 5 10; }
 .transfer-row { -fx-alignment: center; }
 .transfer-rate { -fx-text-fill: #9aa3af; -fx-font-size: 11px; }

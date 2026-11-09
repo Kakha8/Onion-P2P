@@ -7,10 +7,12 @@ import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.shape.SVGPath;
 import javafx.stage.FileChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 
@@ -45,9 +47,14 @@ final class MessengerPane extends BorderPane {
     private final Label conversationTitle = new Label("Select a contact");
     private final Label conversationPresence = new Label();
     private final TextField composer = new TextField();
-    private final Button sendButton = new Button("Send");
+    private final Button sendButton = new Button();
     private final Button attachButton = new Button("📎");
-    private final Button voiceButton = new Button("🎙");
+    private final Button voiceButton = new Button();
+    private final Button discardVoiceButton = new Button();
+    private final Button pauseVoiceButton = new Button();
+    private final Button voiceSendButton = new Button();
+    private final Label voiceDurationLabel = new Label("0:00");
+    private final WaveformView voiceWaveform = new WaveformView();
     private final ProgressBar transferProgress = new ProgressBar(0);
     private final Label transferRate = new Label();
     private final Button cancelFileButton = new Button("×");
@@ -61,14 +68,22 @@ final class MessengerPane extends BorderPane {
     private final Timeline poll;
     private final Timeline presencePoll;
     private final Timeline voiceDurationPoll;
+    private HBox normalInputRow;
+    private HBox voiceControls;
     private ContactStore.Contact selected;
     private ContactStore.Contact activeTransferContact;
     private java.util.concurrent.atomic.AtomicBoolean activeFileCancellation;
     private VoiceRecorder voiceRecorder;
     private ContactStore.Contact recordingContact;
     private long voiceRecordingStarted;
+    private long voiceAccumulatedNanos;
+    private boolean voicePaused;
+    private boolean voiceDiscardRequested;
+    private boolean sendAfterRecording;
+    private Path completedVoiceRecording;
     private Clip activeVoiceClip;
     private Path activeVoicePath;
+    private boolean activeVoiceTransfer;
     private boolean sending;
 
     private boolean loaded;
@@ -115,16 +130,34 @@ final class MessengerPane extends BorderPane {
         conversationHeader.getStyleClass().add("conversation-header");
         composer.setPromptText("Write a message…");
         composer.getStyleClass().add("chat-composer");
+        composer.textProperty().addListener((obs, oldText, newText) -> updateComposerMode());
         attachButton.setTooltip(new Tooltip("Attach file"));
         attachButton.getStyleClass().add("attach-icon-button");
         voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
-        voiceButton.getStyleClass().add("attach-icon-button");
-        sendButton.getStyleClass().add("primary-button");
+        voiceButton.getStyleClass().add("voice-icon-button");
+        voiceButton.setGraphic(microphoneGlyph());
+        sendButton.getStyleClass().add("send-icon-button");
+        sendButton.setGraphic(envelopeGlyph());
+        sendButton.setTooltip(new Tooltip("Send message"));
         attachButton.getStyleClass().add("secondary-button");
         composer.setOnAction(event -> send());
         sendButton.setOnAction(event -> send());
         attachButton.setOnAction(event -> chooseFile());
         voiceButton.setOnAction(event -> toggleVoiceRecording());
+        discardVoiceButton.setGraphic(trashGlyph());
+        discardVoiceButton.setTooltip(new Tooltip("Discard voice message"));
+        discardVoiceButton.getStyleClass().add("voice-trash-button");
+        discardVoiceButton.setOnAction(event -> discardVoiceMessage());
+        pauseVoiceButton.setGraphic(pauseGlyph());
+        pauseVoiceButton.setTooltip(new Tooltip("Pause recording"));
+        pauseVoiceButton.getStyleClass().add("voice-control-button");
+        pauseVoiceButton.setOnAction(event -> toggleVoicePause());
+        voiceSendButton.setGraphic(sendGlyph());
+        voiceSendButton.setTooltip(new Tooltip("Send voice message"));
+        voiceSendButton.getStyleClass().add("send-icon-button");
+        voiceSendButton.setOnAction(event -> sendVoiceMessage());
+        voiceDurationLabel.getStyleClass().add("voice-duration");
+        voiceWaveform.getStyleClass().add("voice-waveform");
         setTransferControls(false);
         transferProgress.setMaxWidth(Double.MAX_VALUE);
         transferProgress.setVisible(false);
@@ -135,20 +168,30 @@ final class MessengerPane extends BorderPane {
         cancelFileButton.setStyle("-fx-padding: 0 7 0 7; -fx-font-size: 15px; -fx-font-weight: bold;");
         cancelFileButton.setVisible(false);
         cancelFileButton.setManaged(false);
-        cancelFileButton.setOnAction(event -> cancelFileTransfer());
+        cancelFileButton.setOnAction(event -> {
+            cancelFileTransfer();
+        });
         HBox transferRow = new HBox(8, transferProgress, transferRate, cancelFileButton);
         transferRow.getStyleClass().add("transfer-row");
         transferRate.getStyleClass().add("transfer-rate");
         HBox.setHgrow(transferProgress, Priority.ALWAYS);
-        HBox inputRow = new HBox(8, attachButton, composer, sendButton, voiceButton);
-        inputRow.getStyleClass().add("chat-input-row");
+        normalInputRow = new HBox(8, attachButton, composer, sendButton, voiceButton);
+        normalInputRow.getStyleClass().add("chat-input-row");
+        voiceControls = new HBox(12, discardVoiceButton, voiceDurationLabel, voiceWaveform, pauseVoiceButton, voiceSendButton);
+        voiceControls.getStyleClass().add("voice-controls");
+        voiceControls.setVisible(false);
+        voiceControls.setManaged(false);
+        HBox.setHgrow(voiceWaveform, Priority.ALWAYS);
+        StackPane composerArea = new StackPane(normalInputRow, voiceControls);
+        composerArea.getStyleClass().add("composer-area");
         HBox.setHgrow(composer, Priority.ALWAYS);
+        updateComposerMode();
 
         Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Received files save in the app downloads folder; use Export… to choose another location. Local chat history and saved voice recordings are unencrypted.");
         securityNote.setWrapText(true);
         securityNote.getStyleClass().add("security-note");
         status.getStyleClass().add("chat-status");
-        VBox conversation = new VBox(8, conversationHeader, transcript, status, inputRow, transferRow, securityNote);
+        VBox conversation = new VBox(8, conversationHeader, transcript, status, composerArea, transferRow, securityNote);
         conversation.getStyleClass().add("conversation-pane");
         conversation.setPadding(new Insets(8));
         VBox.setVgrow(transcript, Priority.ALWAYS);
@@ -165,7 +208,7 @@ final class MessengerPane extends BorderPane {
         poll.setCycleCount(Timeline.INDEFINITE);
         presencePoll = new Timeline(new KeyFrame(Duration.seconds(15), e -> checkContactsPresence()));
         presencePoll.setCycleCount(Timeline.INDEFINITE);
-        voiceDurationPoll = new Timeline(new KeyFrame(Duration.seconds(1), e -> updateVoiceDuration()));
+        voiceDurationPoll = new Timeline(new KeyFrame(Duration.millis(100), e -> updateVoiceDuration()));
         voiceDurationPoll.setCycleCount(Timeline.INDEFINITE);
         sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene == null) { poll.stop(); presencePoll.stop(); }
@@ -314,6 +357,8 @@ final class MessengerPane extends BorderPane {
         activeTransferContact = contact;
         var cancellation = new java.util.concurrent.atomic.AtomicBoolean();
         activeFileCancellation = cancellation;
+        activeVoiceTransfer = voiceMessage;
+        cancelFileButton.setTooltip(new Tooltip(voiceMessage ? "Cancel voice message" : "Cancel file transfer"));
         setTransferControls(true);
         transferProgress.setProgress(0);
         transferProgress.setManaged(true);
@@ -322,8 +367,13 @@ final class MessengerPane extends BorderPane {
         transferRate.setManaged(true);
         transferRate.setVisible(true);
         cancelFileButton.setDisable(false);
-        cancelFileButton.setManaged(true);
-        cancelFileButton.setVisible(true);
+        cancelFileButton.setManaged(!voiceMessage);
+        cancelFileButton.setVisible(!voiceMessage);
+        if (voiceMessage) {
+            discardVoiceButton.setDisable(false);
+            pauseVoiceButton.setDisable(true);
+            voiceSendButton.setDisable(true);
+        }
         status.setText(voiceMessage ? "Sending voice message…" : "Sending " + path.getFileName() + "…");
         Thread.ofPlatform().daemon().name("messenger-file-send").start(() -> {
             try {
@@ -340,6 +390,7 @@ final class MessengerPane extends BorderPane {
                     sending = false;
                     activeFileCancellation = null;
                     activeTransferContact = null;
+                    activeVoiceTransfer = false;
                     setTransferControls(false);
                     transferProgress.setManaged(false);
                     transferProgress.setVisible(false);
@@ -350,6 +401,7 @@ final class MessengerPane extends BorderPane {
                     status.setText(cancellation.get() ? (voiceMessage ? "Voice message cancelled." : "File transfer cancelled.")
                             : (voiceMessage ? "Voice message delivered." : "File delivered and saved by " + contact.username())
                             + " Average speed: " + formatSpeed(speed.average()) + ".");
+                    if (voiceMessage) resetVoiceComposer(cancellation.get() ? "Voice message cancelled." : status.getText());
                     refreshMessages();
                 });
             } catch (Exception e) {
@@ -358,6 +410,7 @@ final class MessengerPane extends BorderPane {
                     sending = false;
                     activeFileCancellation = null;
                     activeTransferContact = null;
+                    activeVoiceTransfer = false;
                     setTransferControls(false);
                     transferProgress.setManaged(false);
                     transferProgress.setVisible(false);
@@ -367,17 +420,14 @@ final class MessengerPane extends BorderPane {
                     cancelFileButton.setVisible(false);
                     status.setText(cancellation.get() ? (voiceMessage ? "Voice message cancelled." : "File transfer cancelled.")
                             : (voiceMessage ? "Voice message was not delivered: " : "File was not delivered: ") + safe(e));
+                    if (voiceMessage) resetVoiceComposer(status.getText());
                 });
             }
         });
     }
 
     private void toggleVoiceRecording() {
-        if (voiceRecorder != null) {
-            stopVoiceRecording();
-            return;
-        }
-        if (sending) return;
+        if (sending || voiceRecorder != null) return;
         ContactStore.Contact contact = selected;
         if (contact == null) {
             status.setText("Select a saved contact before recording a voice message.");
@@ -390,8 +440,16 @@ final class MessengerPane extends BorderPane {
 
         sending = true;
         setTransferControls(true);
-        voiceButton.setText("…");
-        voiceButton.setDisable(true);
+        showVoiceControls(true);
+        completedVoiceRecording = null;
+        voicePaused = false;
+        voiceDiscardRequested = false;
+        voiceAccumulatedNanos = 0;
+        voiceWaveform.clear();
+        voiceDurationLabel.setText("0:00");
+        discardVoiceButton.setDisable(false);
+        pauseVoiceButton.setDisable(true);
+        voiceSendButton.setDisable(true);
         status.setText("Preparing microphone…");
         recordingContact = contact;
         VoiceRecorder recorder = new VoiceRecorder(output);
@@ -400,13 +458,12 @@ final class MessengerPane extends BorderPane {
                 () -> Platform.runLater(() -> {
                     if (voiceRecorder != recorder) return;
                     voiceRecordingStarted = System.nanoTime();
-                    voiceButton.setText("■");
-                    voiceButton.setTooltip(new Tooltip("Stop and send voice message"));
-                    voiceButton.setDisable(false);
-                    voiceButton.getStyleClass().add("recording");
+                    pauseVoiceButton.setDisable(false);
+                    voiceSendButton.setDisable(false);
                     status.setText("Recording voice message… 0:00 / 0:30");
                     voiceDurationPoll.playFromStart();
                 }),
+                level -> Platform.runLater(() -> voiceWaveform.addLevel(level)),
                 recorded -> {
                     final long recordedBytes;
                     try { recordedBytes = Files.size(recorded); }
@@ -414,12 +471,8 @@ final class MessengerPane extends BorderPane {
                         Platform.runLater(() -> {
                             voiceRecorder = null;
                             recordingContact = null;
-                            voiceDurationPoll.stop();
                             try { Files.deleteIfExists(recorded); } catch (Exception ignored) {}
-                            voiceButton.setText("🎙");
-                            voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
-                            voiceButton.getStyleClass().remove("recording");
-                            finishVoiceOperation("Could not prepare voice message: " + safe(e));
+                            resetVoiceComposer("Could not prepare voice message: " + safe(e));
                         });
                         return;
                     }
@@ -427,15 +480,24 @@ final class MessengerPane extends BorderPane {
                         if (voiceRecorder != recorder) { try { Files.deleteIfExists(recorded); } catch (Exception ignored) {} return; }
                         voiceDurationPoll.stop();
                         voiceRecorder = null;
-                        voiceButton.setText("🎙");
-                        voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
-                        voiceButton.getStyleClass().remove("recording");
-                        ContactStore.Contact destination = recordingContact;
-                        recordingContact = null;
+                        if (voiceDiscardRequested) {
+                            try { Files.deleteIfExists(recorded); } catch (Exception ignored) {}
+                            resetVoiceComposer("Voice recording discarded.");
+                            return;
+                        }
                         if (recordedBytes <= 44) {
                             try { Files.deleteIfExists(recorded); } catch (Exception ignored) {}
-                            finishVoiceOperation("No audio was recorded. Check microphone access and try again.");
-                        } else sendFile(destination, recorded, true);
+                            resetVoiceComposer("No audio was recorded. Check microphone access and try again.");
+                        } else if (sendAfterRecording) {
+                            completedVoiceRecording = recorded;
+                            sendAfterRecording = false;
+                            sendVoiceMessage();
+                        } else {
+                            completedVoiceRecording = recorded;
+                            pauseVoiceButton.setDisable(true);
+                            voiceSendButton.setDisable(false);
+                            status.setText("Voice message ready to send.");
+                        }
                     });
                 },
                 error -> Platform.runLater(() -> {
@@ -444,46 +506,121 @@ final class MessengerPane extends BorderPane {
                     voiceRecorder = null;
                     recordingContact = null;
                     try { Files.deleteIfExists(output); } catch (Exception ignored) {}
-                    voiceButton.setText("🎙");
-                    voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
-                    voiceButton.getStyleClass().remove("recording");
-                    finishVoiceOperation("Could not record audio: " + safe(error));
+                    resetVoiceComposer("Could not record audio: " + safe(error));
+                }),
+                () -> Platform.runLater(() -> {
+                    if (voiceRecorder != recorder) return;
+                    voiceDurationPoll.stop();
+                    voiceRecorder = null;
+                    recordingContact = null;
+                    try { Files.deleteIfExists(output); } catch (Exception ignored) {}
+                    resetVoiceComposer("Voice recording discarded.");
                 }));
     }
 
     private void updateVoiceDuration() {
         if (voiceRecorder == null) { voiceDurationPoll.stop(); return; }
-        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - voiceRecordingStarted);
+        long elapsedNanos = voiceAccumulatedNanos + (voicePaused ? 0 : System.nanoTime() - voiceRecordingStarted);
+        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(elapsedNanos);
         long minutes = elapsedSeconds / 60;
         long seconds = elapsedSeconds % 60;
-        status.setText(String.format(java.util.Locale.ROOT, "Recording voice message… %d:%02d / 0:30", minutes, seconds));
-        if (elapsedSeconds >= 30) stopVoiceRecording();
+        voiceDurationLabel.setText(String.format(java.util.Locale.ROOT, "%d:%02d", minutes, seconds));
+        status.setText(String.format(java.util.Locale.ROOT, "%s voice message… %d:%02d / 0:30",
+                voicePaused ? "Paused" : "Recording", minutes, seconds));
+        if (elapsedSeconds >= 30) finishVoiceRecording(false);
     }
 
-    private void stopVoiceRecording() {
+    private void finishVoiceRecording(boolean sendWhenReady) {
         VoiceRecorder recorder = voiceRecorder;
         if (recorder == null) return;
+        sendAfterRecording = sendWhenReady;
         voiceDurationPoll.stop();
-        voiceButton.setDisable(true);
-        voiceButton.setText("…");
-        voiceButton.setTooltip(new Tooltip("Preparing voice message"));
-        voiceButton.getStyleClass().remove("recording");
+        pauseVoiceButton.setDisable(true);
+        voiceSendButton.setDisable(true);
         status.setText("Preparing voice message…");
         recorder.stop();
     }
 
-    private void finishVoiceOperation(String message) {
+    private void toggleVoicePause() {
+        VoiceRecorder recorder = voiceRecorder;
+        if (recorder == null || completedVoiceRecording != null) return;
+        if (voicePaused) {
+            voiceRecordingStarted = System.nanoTime();
+            voicePaused = false;
+            recorder.resume();
+            pauseVoiceButton.setGraphic(pauseGlyph());
+            pauseVoiceButton.setTooltip(new Tooltip("Pause recording"));
+        } else {
+            voiceAccumulatedNanos += System.nanoTime() - voiceRecordingStarted;
+            voicePaused = true;
+            recorder.pause();
+            pauseVoiceButton.setGraphic(playGlyph());
+            pauseVoiceButton.setTooltip(new Tooltip("Resume recording"));
+        }
+        updateVoiceDuration();
+    }
+
+    private void sendVoiceMessage() {
+        if (voiceRecorder != null) { finishVoiceRecording(true); return; }
+        if (completedVoiceRecording == null || activeVoiceTransfer) return;
+        Path recording = completedVoiceRecording;
+        ContactStore.Contact contact = recordingContact;
+        if (contact == null) { status.setText("Choose a contact before sending the voice message."); return; }
+        voiceSendButton.setDisable(true);
+        sendFile(contact, recording, true);
+    }
+
+    private void discardVoiceMessage() {
+        if (voiceRecorder != null) { cancelVoiceRecording(); return; }
+        if (activeVoiceTransfer) { cancelFileTransfer(); return; }
+        Path recording = completedVoiceRecording;
+        if (recording != null) try { Files.deleteIfExists(recording); } catch (Exception ignored) {}
+        completedVoiceRecording = null;
+        recordingContact = null;
+        resetVoiceComposer("Voice message discarded.");
+    }
+
+    private void resetVoiceComposer(String message) {
+        voiceDurationPoll.stop();
+        completedVoiceRecording = null;
+        recordingContact = null;
+        sendAfterRecording = false;
         sending = false;
         setTransferControls(false);
+        transferProgress.setManaged(false);
+        transferProgress.setVisible(false);
+        transferRate.setManaged(false);
+        transferRate.setVisible(false);
+        cancelFileButton.setManaged(false);
+        cancelFileButton.setVisible(false);
+        voiceWaveform.clear();
+        showVoiceControls(false);
         status.setText(message);
+    }
+
+    private void showVoiceControls(boolean visible) {
+        voiceControls.setVisible(visible);
+        voiceControls.setManaged(visible);
+        normalInputRow.setVisible(!visible);
+        normalInputRow.setManaged(!visible);
+    }
+
+    private void cancelVoiceRecording() {
+        VoiceRecorder recorder = voiceRecorder;
+        if (recorder == null) return;
+        voiceDiscardRequested = true;
+        discardVoiceButton.setDisable(true);
+        status.setText("Discarding voice recording…");
+        recorder.cancel();
     }
 
     private void cancelFileTransfer() {
         var cancellation = activeFileCancellation;
         ContactStore.Contact contact = activeTransferContact;
         if (cancellation == null || contact == null || !cancellation.compareAndSet(false, true)) return;
-        cancelFileButton.setDisable(true);
-        status.setText("Cancelling file transfer…");
+        if (activeVoiceTransfer) discardVoiceButton.setDisable(true);
+        else cancelFileButton.setDisable(true);
+        status.setText(activeVoiceTransfer ? "Cancelling voice message…" : "Cancelling file transfer…");
         manager.cancelTransfer(contact.link());
     }
 
@@ -569,10 +706,19 @@ final class MessengerPane extends BorderPane {
     }
 
     private void setTransferControls(boolean busy) {
-        sendButton.setDisable(busy || selected == null);
+        sendButton.setDisable(busy || selected == null || composer.getText().isBlank());
         attachButton.setDisable(busy || selected == null);
         voiceButton.setDisable(busy || selected == null);
         composer.setDisable(busy || selected == null);
+    }
+
+    private void updateComposerMode() {
+        boolean hasText = !composer.getText().isBlank();
+        sendButton.setVisible(hasText);
+        sendButton.setManaged(hasText);
+        voiceButton.setVisible(!hasText);
+        voiceButton.setManaged(!hasText);
+        sendButton.setDisable(sending || selected == null || !hasText);
     }
 
     private static String formatBytes(long bytes) {
@@ -587,6 +733,50 @@ final class MessengerPane extends BorderPane {
         if (bytesPerSecond < 1_000_000) return String.format(java.util.Locale.ROOT, "%.1f KB/s", bytesPerSecond / 1_000);
         if (bytesPerSecond < 1_000_000_000) return String.format(java.util.Locale.ROOT, "%.1f MB/s", bytesPerSecond / 1_000_000);
         return String.format(java.util.Locale.ROOT, "%.1f GB/s", bytesPerSecond / 1_000_000_000);
+    }
+
+    private static SVGPath microphoneGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11z");
+        icon.getStyleClass().add("mic-glyph");
+        return icon;
+    }
+
+    private static SVGPath stopGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M6 6h12v12H6z");
+        icon.getStyleClass().add("mic-glyph");
+        return icon;
+    }
+
+    private static SVGPath envelopeGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M3 3l18 9-18 9v-7l12-2L3 10V3z");
+        icon.getStyleClass().add("send-glyph");
+        return icon;
+    }
+
+    private static SVGPath sendGlyph() { return envelopeGlyph(); }
+
+    private static SVGPath trashGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M4 7h16 M10 4h4 M6 7l1 14h10l1-14 M10 10v8 M14 10v8");
+        icon.getStyleClass().add("trash-glyph");
+        return icon;
+    }
+
+    private static SVGPath pauseGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M7 5h4v14H7z M13 5h4v14h-4z");
+        icon.getStyleClass().add("voice-control-glyph");
+        return icon;
+    }
+
+    private static SVGPath playGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M7 4l13 8-13 8z");
+        icon.getStyleClass().add("voice-control-glyph");
+        return icon;
     }
 
     /** Rolling three-second rate during transfer, plus an average over the actual data-copy interval. */
