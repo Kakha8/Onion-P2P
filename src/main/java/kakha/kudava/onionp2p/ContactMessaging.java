@@ -24,6 +24,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.function.LongConsumer;
+import java.util.function.BooleanSupplier;
 
 /** One-message, authenticated end-to-end encrypted transport over a contact's Tor service. */
 final class ContactMessaging {
@@ -63,6 +64,10 @@ final class ContactMessaging {
     }
 
     static void ping(Socket socket, ContactRendezvous.Material material) throws Exception {
+        ping(socket, material, false);
+    }
+
+    static void ping(Socket socket, ContactRendezvous.Material material, boolean newConnection) throws Exception {
         socket.setSoTimeout(12000);
         String id = UUID.randomUUID().toString();
         long timestamp = System.currentTimeMillis();
@@ -76,13 +81,15 @@ final class ContactMessaging {
         finally { Arrays.fill(messageKey, (byte) 0); }
         var output = new DataOutputStream(socket.getOutputStream());
         var input = new DataInputStream(socket.getInputStream());
+        if (newConnection) output.writeInt(MAGIC);
         output.write(idBytes); output.writeLong(timestamp); output.write(nonce); output.writeByte(type);
         output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
         awaitReceipt(input, material, nonce, aad);
     }
 
     static MessageStore.Message sendFile(Socket socket, ContactRendezvous.Material material, MessageStore store,
-                                         String link, Path file, boolean newConnection, LongConsumer progress) throws Exception {
+                                         String link, Path file, boolean newConnection, LongConsumer progress,
+                                         BooleanSupplier cancelled) throws Exception {
         long fileSize = Files.size(file);
         if (fileSize < 0 || fileSize > MAX_FILE_BYTES)
             throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
@@ -117,26 +124,36 @@ final class ContactMessaging {
         long transferred = 0;
         progress.accept(0);
         long lastReported = 0;
+        long lastReportedAt = System.nanoTime();
         try (InputStream source = Files.newInputStream(file)) {
             while (transferred < fileSize) {
+                checkCancelled(cancelled);
                 int count = source.read(buffer, 0, (int) Math.min(buffer.length, fileSize - transferred));
                 if (count < 0) throw new IOException("File changed while it was being sent.");
                 byte[] encrypted = cipher.update(buffer, 0, count);
                 if (encrypted != null) output.write(encrypted);
                 transferred += count;
-                if (transferred - lastReported >= 1024 * 1024 || transferred == fileSize) {
+                long now = System.nanoTime();
+                if (transferred - lastReported >= 256 * 1024 || now - lastReportedAt >= 250_000_000L || transferred == fileSize) {
                     progress.accept(transferred);
                     lastReported = transferred;
+                    lastReportedAt = now;
                 }
             }
             if (source.read() != -1) throw new IOException("File changed while it was being sent.");
         } finally { Arrays.fill(buffer, (byte) 0); Arrays.fill(nameBytes, (byte) 0); }
+        checkCancelled(cancelled);
         output.write(cipher.doFinal());
         output.flush();
         socket.setSoTimeout(10 * 60 * 1000);
+        checkCancelled(cancelled);
         awaitReceipt(input, material, nonce, aad);
         store.saveFile(link, id, true, fileName, file.toAbsolutePath().toString(), fileSize, timestamp);
         return new MessageStore.Message(id, link, true, "", fileName, file.toAbsolutePath().toString(), fileSize, timestamp);
+    }
+
+    private static void checkCancelled(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()) throw new java.util.concurrent.CancellationException("File transfer cancelled.");
     }
 
     static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, String link) throws Exception {

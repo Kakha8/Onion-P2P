@@ -5,13 +5,11 @@ import javafx.application.Platform;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
-import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.PasswordField;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
-import javafx.stage.Window;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 
@@ -27,9 +25,7 @@ public class HelloController {
     @FXML private VBox addressPanel;
     @FXML private Label importStatus;
     @FXML private ProgressIndicator pairingProgress;
-    @FXML private ListView<String> savedContacts;
-    @FXML private Button messengerButton;
-    @FXML private ProgressIndicator contactsProgress;
+    @FXML private VBox messengerHost;
     @FXML private HBox torProgressRow;
     @FXML private ProgressIndicator torProgress;
     @FXML private Label torStatus;
@@ -161,56 +157,9 @@ public class HelloController {
 
     void setManager(ContactManager manager) {
         this.manager = manager;
-        refreshContacts();
-    }
-
-    void contactEvent(ContactManager.Event event) {
-        Platform.runLater(() -> {
-            if (event.link().equals(selectedLink)) {
-                importStatus.setText(event.message());
-                boolean waiting = !event.message().startsWith("Acknowledged")
-                        && !event.message().startsWith("Contact already acknowledged")
-                        && !event.message().startsWith("Contact did not respond");
-                pairingProgress.setManaged(waiting);
-                pairingProgress.setVisible(waiting);
-            }
-        });
-        refreshContacts();
-    }
-
-    private void refreshContacts() {
-        ContactManager current = manager;
-        if (current == null) return;
-        Thread.ofPlatform().daemon().name("contact-list").start(() -> {
-            try {
-                var contacts = current.contacts();
-                Platform.runLater(() -> {
-                    savedContacts.getItems().setAll(contacts.stream()
-                            .map(c -> c.username() + "  —  " + c.onion() + "  (saved)").toList());
-                    contactsProgress.setVisible(false);
-                    contactsProgress.setManaged(false);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    contactsProgress.setVisible(false);
-                    contactsProgress.setManaged(false);
-                    importStatus.setText("Could not read the saved contacts database.");
-                });
-            }
-        });
-        contactsProgress.setManaged(true);
-        contactsProgress.setVisible(true);
-    }
-
-    @FXML
-    protected void onOpenMessenger() {
-        ContactManager current = manager;
-        if (current == null) {
-            statusText.setText("Messenger is starting. Try again in a moment.");
-            return;
-        }
-        Window owner = appPane.getScene() == null ? null : appPane.getScene().getWindow();
-        MessengerWindow.show(owner, current);
+        var pane = new MessengerPane(manager);
+        messengerHost.getChildren().setAll(pane);
+        VBox.setVgrow(pane, javafx.scene.layout.Priority.ALWAYS);
     }
 
     @FXML
@@ -257,6 +206,19 @@ public class HelloController {
                     importButton.setDisable(false);
                     importButton.setGraphic(null);
                 });
+            }
+        });
+    }
+
+    void contactEvent(ContactManager.Event event) {
+        Platform.runLater(() -> {
+            if (event.link().equals(selectedLink)) {
+                importStatus.setText(event.message());
+                boolean waiting = !event.message().startsWith("Acknowledged")
+                        && !event.message().startsWith("Contact already acknowledged")
+                        && !event.message().startsWith("Contact did not respond");
+                pairingProgress.setManaged(waiting);
+                pairingProgress.setVisible(waiting);
             }
         });
     }
