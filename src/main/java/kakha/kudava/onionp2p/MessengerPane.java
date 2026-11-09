@@ -7,6 +7,7 @@ import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -400,13 +401,14 @@ final class MessengerPane extends BorderPane {
         return true;
     }
 
-    private ActiveTransfer beginTransferBubble(ContactStore.Contact contact, Path path, String caption) throws java.io.IOException {
+    private ActiveTransfer beginTransferBubble(ContactStore.Contact contact, Path path, String caption,
+                                               AtomicBoolean cancellation) throws java.io.IOException {
         long size = Files.size(path);
         String id = "upload-" + java.util.UUID.randomUUID();
         MessageStore.Message message = new MessageStore.Message(id, contact.link(), true,
                 caption == null ? "" : caption, path.getFileName().toString(), path.toAbsolutePath().toString(),
                 size, System.currentTimeMillis());
-        ActiveTransfer transfer = new ActiveTransfer(message);
+        ActiveTransfer transfer = new ActiveTransfer(message, cancellation);
         activeTransfers.put(id, transfer);
         Platform.runLater(() -> {
             if (selected == null || !selected.link().equals(contact.link())) return;
@@ -426,10 +428,14 @@ final class MessengerPane extends BorderPane {
 
     private static final class ActiveTransfer {
         final MessageStore.Message message;
+        final AtomicBoolean cancellation;
         final DoubleProperty progress = new SimpleDoubleProperty(0);
         final StringProperty speed = new SimpleStringProperty("0 B/s");
 
-        ActiveTransfer(MessageStore.Message message) { this.message = message; }
+        ActiveTransfer(MessageStore.Message message, AtomicBoolean cancellation) {
+            this.message = message;
+            this.cancellation = cancellation;
+        }
     }
 
     private void send() {
@@ -499,8 +505,8 @@ final class MessengerPane extends BorderPane {
         transferRate.setVisible(false);
         cancelFileButton.setTooltip(new Tooltip("Cancel file batch"));
         cancelFileButton.setDisable(false);
-        cancelFileButton.setManaged(true);
-        cancelFileButton.setVisible(true);
+        cancelFileButton.setManaged(false);
+        cancelFileButton.setVisible(false);
         status.setText("Sending " + files.size() + " files…");
         Thread.ofPlatform().daemon().name("messenger-file-batch").start(() -> {
             int sentCount = 0;
@@ -511,7 +517,7 @@ final class MessengerPane extends BorderPane {
                 for (int index = 0; index < files.size(); index++) {
                     Path path = files.get(index);
                     long fileSize = Files.size(path);
-                    currentBubble = beginTransferBubble(contact, path, index == 0 ? caption : "");
+                    currentBubble = beginTransferBubble(contact, path, index == 0 ? caption : "", cancellation);
                     ActiveTransfer bubble = currentBubble;
                     int completedFiles = sentCount;
                     long completedBytes = sentBytes;
@@ -531,12 +537,7 @@ final class MessengerPane extends BorderPane {
                     sentCount++;
                     sentBytes += fileSize;
                     int completed = sentCount;
-                    Platform.runLater(() -> {
-                        pendingAttachments.remove(path);
-                        if (completed == 1) attachmentCaption.clear();
-                        renderAttachmentRows();
-                        if (completed < files.size()) status.setText("Sent " + completed + " of " + files.size() + " files…");
-                    });
+                    Platform.runLater(() -> status.setText("Sent " + completed + " of " + files.size() + " files…"));
                 }
                 int sent = sentCount;
                 Platform.runLater(() -> {
@@ -551,13 +552,8 @@ final class MessengerPane extends BorderPane {
                 int sent = sentCount;
                 Platform.runLater(() -> {
                     finishBatchTransfer();
-                    if (cancellation.get()) status.setText("Transfer cancelled after " + sent + " of " + files.size()
-                            + " files. Remaining files stay selected.");
+                    if (cancellation.get()) status.setText("Transfer cancelled after " + sent + " of " + files.size() + " files.");
                     else status.setText("Transfer stopped after " + sent + " of " + files.size() + " files: " + safe(e));
-                    attachmentCaption.setDisable(false);
-                    attachmentAddButton.setDisable(false);
-                    attachmentSendButton.setDisable(pendingAttachments.isEmpty());
-                    renderAttachmentRows();
                     refreshMessages();
                 });
             }
@@ -591,8 +587,8 @@ final class MessengerPane extends BorderPane {
         transferRate.setManaged(false);
         transferRate.setVisible(false);
         cancelFileButton.setDisable(false);
-        cancelFileButton.setManaged(!voiceMessage);
-        cancelFileButton.setVisible(!voiceMessage);
+        cancelFileButton.setManaged(false);
+        cancelFileButton.setVisible(false);
         if (voiceMessage) {
             discardVoiceButton.setDisable(false);
             pauseVoiceButton.setDisable(true);
@@ -603,7 +599,7 @@ final class MessengerPane extends BorderPane {
             ActiveTransfer bubble = null;
             try {
                 long size = Files.size(path);
-                bubble = beginTransferBubble(contact, path, caption);
+                bubble = beginTransferBubble(contact, path, caption, cancellation);
                 ActiveTransfer activeBubble = bubble;
                 SpeedMeter speed = new SpeedMeter();
                 manager.sendFile(contact.link(), path, caption, cancellation, transferred -> Platform.runLater(() -> {
@@ -818,9 +814,7 @@ final class MessengerPane extends BorderPane {
             return;
         }
         var files = List.copyOf(pendingAttachments);
-        attachmentCaption.setDisable(true);
-        attachmentSendButton.setDisable(true);
-        attachmentAddButton.setDisable(true);
+        clearAttachmentComposer();
         sendAttachments(selected, files, caption);
     }
 
@@ -1292,12 +1286,28 @@ final class MessengerPane extends BorderPane {
                 ActiveTransfer transfer = activeTransfers.get(message.id());
                 if (transfer != null) {
                     ProgressBar progress = new ProgressBar();
+                    progress.setMinWidth(110);
                     progress.setMaxWidth(Double.MAX_VALUE);
                     progress.progressProperty().bind(transfer.progress);
+                    Label percent = new Label();
+                    percent.textProperty().bind(Bindings.createStringBinding(
+                            () -> String.format(java.util.Locale.ROOT, "%.0f%%", transfer.progress.get() * 100), transfer.progress));
+                    percent.getStyleClass().add("message-transfer-rate");
                     Label rate = new Label();
                     rate.textProperty().bind(transfer.speed);
                     rate.getStyleClass().add("message-transfer-rate");
-                    HBox progressRow = new HBox(8, progress, rate);
+                    Button cancel = new Button("×");
+                    cancel.getStyleClass().add("message-transfer-cancel");
+                    cancel.setTooltip(new Tooltip("Cancel this file transfer"));
+                    cancel.setOnAction(event -> {
+                        if (transfer.cancellation.compareAndSet(false, true)) {
+                            cancel.setDisable(true);
+                            cancel.setText("…");
+                            status.setText("Cancelling " + message.attachmentName() + "…");
+                            manager.cancelTransfer(message.contactLink());
+                        }
+                    });
+                    HBox progressRow = new HBox(8, progress, percent, rate, cancel);
                     progressRow.getStyleClass().add("message-transfer-row");
                     HBox.setHgrow(progress, Priority.ALWAYS);
                     rows.getChildren().add(progressRow);
