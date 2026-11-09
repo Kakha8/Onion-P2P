@@ -44,7 +44,12 @@ final class MessageStore {
 
     synchronized void saveFile(String contactLink, String id, boolean outgoing, String name,
                                String path, long size, long timestamp) throws SQLException {
-        save(contactLink, id, outgoing, "", name, path, size, timestamp);
+        saveFile(contactLink, id, outgoing, "", name, path, size, timestamp);
+    }
+
+    synchronized void saveFile(String contactLink, String id, boolean outgoing, String caption, String name,
+                               String path, long size, long timestamp) throws SQLException {
+        save(contactLink, id, outgoing, caption, name, path, size, timestamp);
     }
 
     private void save(String contactLink, String id, boolean outgoing, String body, String fileName,

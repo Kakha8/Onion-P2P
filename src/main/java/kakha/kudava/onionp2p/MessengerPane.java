@@ -7,13 +7,18 @@ import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.shape.SVGPath;
 import javafx.stage.FileChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.Region;
+import javafx.scene.control.ScrollPane;
 import javafx.util.Duration;
 
 import javax.sound.sampled.AudioSystem;
@@ -29,6 +34,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -53,6 +59,11 @@ final class MessengerPane extends BorderPane {
     private final Button discardVoiceButton = new Button();
     private final Button pauseVoiceButton = new Button();
     private final Button voiceSendButton = new Button();
+    private final TextArea attachmentCaption = new TextArea();
+    private final HBox attachmentFilesList = new HBox(10);
+    private final ScrollPane attachmentFilesViewport = new ScrollPane(attachmentFilesList);
+    private final Button attachmentAddButton = new Button();
+    private final Button attachmentSendButton = new Button();
     private final Label voiceDurationLabel = new Label("0:00");
     private final WaveformView voiceWaveform = new WaveformView();
     private final ProgressBar transferProgress = new ProgressBar(0);
@@ -70,6 +81,9 @@ final class MessengerPane extends BorderPane {
     private final Timeline voiceDurationPoll;
     private HBox normalInputRow;
     private HBox voiceControls;
+    private BorderPane attachmentComposer;
+    private StackPane composerArea;
+    private final List<Path> pendingAttachments = new ArrayList<>();
     private ContactStore.Contact selected;
     private ContactStore.Contact activeTransferContact;
     private java.util.concurrent.atomic.AtomicBoolean activeFileCancellation;
@@ -115,6 +129,8 @@ final class MessengerPane extends BorderPane {
         });
         contactList.getSelectionModel().selectedItemProperty().addListener((obs, old, value) -> {
             selected = value;
+            if (!pendingAttachments.isEmpty() && old != null && value != null && !old.link().equals(value.link()))
+                clearAttachmentComposer();
             transcript.getItems().clear();
             setTransferControls(false);
             updateConversationHeader();
@@ -156,6 +172,32 @@ final class MessengerPane extends BorderPane {
         voiceSendButton.setTooltip(new Tooltip("Send voice message"));
         voiceSendButton.getStyleClass().add("send-icon-button");
         voiceSendButton.setOnAction(event -> sendVoiceMessage());
+        attachmentCaption.setPromptText("Add a message to this file (optional)…");
+        attachmentCaption.setWrapText(true);
+        attachmentCaption.setPrefRowCount(2);
+        attachmentCaption.getStyleClass().add("attachment-caption");
+        attachmentCaption.setOnKeyPressed(event -> {
+            if (event.getCode() == javafx.scene.input.KeyCode.ENTER && event.isControlDown()) {
+                event.consume();
+                sendPendingAttachment();
+            }
+        });
+        attachmentFilesList.getStyleClass().add("attachment-files-list");
+        attachmentFilesViewport.setFitToHeight(true);
+        attachmentFilesViewport.setFitToWidth(false);
+        attachmentFilesViewport.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        attachmentFilesViewport.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        attachmentFilesViewport.setPannable(false);
+        attachmentFilesViewport.getStyleClass().add("attachment-files-viewport");
+        enableAttachmentDragScroll();
+        attachmentAddButton.setGraphic(plusGlyph());
+        attachmentAddButton.setTooltip(new Tooltip("Add files (up to 5 total, 1 GiB combined)"));
+        attachmentAddButton.getStyleClass().add("attachment-add-button");
+        attachmentAddButton.setOnAction(event -> addMoreAttachments());
+        attachmentSendButton.setGraphic(sendGlyph());
+        attachmentSendButton.setTooltip(new Tooltip("Send file and message"));
+        attachmentSendButton.getStyleClass().add("send-icon-button");
+        attachmentSendButton.setOnAction(event -> sendPendingAttachment());
         voiceDurationLabel.getStyleClass().add("voice-duration");
         voiceWaveform.getStyleClass().add("voice-waveform");
         setTransferControls(false);
@@ -182,7 +224,24 @@ final class MessengerPane extends BorderPane {
         voiceControls.setVisible(false);
         voiceControls.setManaged(false);
         HBox.setHgrow(voiceWaveform, Priority.ALWAYS);
-        StackPane composerArea = new StackPane(normalInputRow, voiceControls);
+        Region attachmentActionsSpacer = new Region();
+        HBox.setHgrow(attachmentActionsSpacer, Priority.ALWAYS);
+        HBox attachmentActions = new HBox(10, attachmentAddButton, attachmentActionsSpacer, attachmentSendButton);
+        attachmentActions.getStyleClass().add("attachment-actions");
+        attachmentComposer = new BorderPane();
+        attachmentComposer.setTop(attachmentFilesViewport);
+        attachmentComposer.setCenter(attachmentCaption);
+        attachmentComposer.setBottom(attachmentActions);
+        attachmentComposer.getStyleClass().add("attachment-composer");
+        attachmentComposer.setMinHeight(250);
+        attachmentComposer.setPrefHeight(300);
+        attachmentComposer.setMaxHeight(Double.MAX_VALUE);
+        BorderPane.setMargin(attachmentFilesViewport, new Insets(0, 0, 8, 0));
+        BorderPane.setMargin(attachmentCaption, new Insets(2, 6, 4, 6));
+        BorderPane.setMargin(attachmentActions, new Insets(8, 0, 0, 0));
+        attachmentComposer.setVisible(false);
+        attachmentComposer.setManaged(false);
+        composerArea = new StackPane(normalInputRow, voiceControls, attachmentComposer);
         composerArea.getStyleClass().add("composer-area");
         HBox.setHgrow(composer, Priority.ALWAYS);
         updateComposerMode();
@@ -195,6 +254,7 @@ final class MessengerPane extends BorderPane {
         conversation.getStyleClass().add("conversation-pane");
         conversation.setPadding(new Insets(8));
         VBox.setVgrow(transcript, Priority.ALWAYS);
+        VBox.setVgrow(composerArea, Priority.NEVER);
         setCenter(conversation);
         setLeft(contactList);
         getStyleClass().add("messenger-pane");
@@ -346,13 +406,108 @@ final class MessengerPane extends BorderPane {
             return;
         }
         var chooser = new FileChooser();
-        chooser.setTitle("Choose a file to send (1 GiB maximum)");
-        File file = chooser.showOpenDialog(getScene() == null ? null : getScene().getWindow());
-        if (file == null) return;
-        sendFile(contact, file.toPath(), false);
+        chooser.setTitle("Choose up to 5 files to send (1 GiB combined maximum)");
+        List<File> files = chooser.showOpenMultipleDialog(getScene() == null ? null : getScene().getWindow());
+        if (files == null || files.isEmpty()) return;
+        showAttachmentComposer(contact, files.stream().map(File::toPath).toList());
     }
 
     private void sendFile(ContactStore.Contact contact, Path path, boolean voiceMessage) {
+        sendFile(contact, path, voiceMessage, "");
+    }
+
+    private void sendAttachments(ContactStore.Contact contact, List<Path> files, String caption) {
+        final long totalBytes;
+        try { totalBytes = totalAttachmentBytes(files); }
+        catch (Exception e) { status.setText("Could not read selected files: " + safe(e)); return; }
+        sending = true;
+        activeTransferContact = contact;
+        activeVoiceTransfer = false;
+        var cancellation = new AtomicBoolean();
+        activeFileCancellation = cancellation;
+        setTransferControls(true);
+        transferProgress.setProgress(0);
+        transferProgress.setManaged(true);
+        transferProgress.setVisible(true);
+        transferRate.setText("0 B/s");
+        transferRate.setManaged(true);
+        transferRate.setVisible(true);
+        cancelFileButton.setTooltip(new Tooltip("Cancel file batch"));
+        cancelFileButton.setDisable(false);
+        cancelFileButton.setManaged(true);
+        cancelFileButton.setVisible(true);
+        status.setText("Sending " + files.size() + " files…");
+        Thread.ofPlatform().daemon().name("messenger-file-batch").start(() -> {
+            int sentCount = 0;
+            long sentBytes = 0;
+            SpeedMeter speed = new SpeedMeter();
+            try {
+                for (int index = 0; index < files.size(); index++) {
+                    Path path = files.get(index);
+                    long fileSize = Files.size(path);
+                    int completedFiles = sentCount;
+                    long completedBytes = sentBytes;
+                    Platform.runLater(() -> status.setText("Sending file " + (completedFiles + 1) + " of " + files.size()
+                            + ": " + path.getFileName() + "…"));
+                    manager.sendFile(contact.link(), path, index == 0 ? caption : "", cancellation,
+                            transferred -> Platform.runLater(() -> {
+                                double fileFraction = fileSize == 0 ? 1 : (double) transferred / fileSize;
+                                transferProgress.setProgress((completedFiles + fileFraction) / files.size());
+                                transferRate.setText(formatSpeed(speed.update(completedBytes + transferred, totalBytes, System.nanoTime())));
+                            }),
+                            message -> Platform.runLater(() -> {
+                                if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
+                            }));
+                    sentCount++;
+                    sentBytes += fileSize;
+                    int completed = sentCount;
+                    Platform.runLater(() -> {
+                        pendingAttachments.remove(path);
+                        if (completed == 1) attachmentCaption.clear();
+                        renderAttachmentRows();
+                        if (completed < files.size()) status.setText("Sent " + completed + " of " + files.size() + " files…");
+                    });
+                }
+                int sent = sentCount;
+                Platform.runLater(() -> {
+                    finishBatchTransfer();
+                    clearAttachmentComposer();
+                    status.setText("Delivered " + sent + " files to " + contact.username() + ". Average speed: "
+                            + formatSpeed(speed.average()) + ".");
+                    refreshMessages();
+                });
+            } catch (Exception e) {
+                int sent = sentCount;
+                Platform.runLater(() -> {
+                    finishBatchTransfer();
+                    if (cancellation.get()) status.setText("Transfer cancelled after " + sent + " of " + files.size()
+                            + " files. Remaining files stay selected.");
+                    else status.setText("Transfer stopped after " + sent + " of " + files.size() + " files: " + safe(e));
+                    attachmentCaption.setDisable(false);
+                    attachmentAddButton.setDisable(false);
+                    attachmentSendButton.setDisable(pendingAttachments.isEmpty());
+                    renderAttachmentRows();
+                    refreshMessages();
+                });
+            }
+        });
+    }
+
+    private void finishBatchTransfer() {
+        sending = false;
+        activeFileCancellation = null;
+        activeTransferContact = null;
+        activeVoiceTransfer = false;
+        setTransferControls(false);
+        transferProgress.setManaged(false);
+        transferProgress.setVisible(false);
+        transferRate.setManaged(false);
+        transferRate.setVisible(false);
+        cancelFileButton.setManaged(false);
+        cancelFileButton.setVisible(false);
+    }
+
+    private void sendFile(ContactStore.Contact contact, Path path, boolean voiceMessage, String caption) {
         sending = true;
         activeTransferContact = contact;
         var cancellation = new java.util.concurrent.atomic.AtomicBoolean();
@@ -379,7 +534,7 @@ final class MessengerPane extends BorderPane {
             try {
                 long size = Files.size(path);
                 SpeedMeter speed = new SpeedMeter();
-                manager.sendFile(contact.link(), path, cancellation, transferred -> Platform.runLater(() -> {
+                manager.sendFile(contact.link(), path, caption, cancellation, transferred -> Platform.runLater(() -> {
                             transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size);
                             transferRate.setText(formatSpeed(speed.update(transferred, size, System.nanoTime())));
                         }),
@@ -402,6 +557,7 @@ final class MessengerPane extends BorderPane {
                             : (voiceMessage ? "Voice message delivered." : "File delivered and saved by " + contact.username())
                             + " Average speed: " + formatSpeed(speed.average()) + ".");
                     if (voiceMessage) resetVoiceComposer(cancellation.get() ? "Voice message cancelled." : status.getText());
+                    else if (!cancellation.get()) clearAttachmentComposer();
                     refreshMessages();
                 });
             } catch (Exception e) {
@@ -421,9 +577,220 @@ final class MessengerPane extends BorderPane {
                     status.setText(cancellation.get() ? (voiceMessage ? "Voice message cancelled." : "File transfer cancelled.")
                             : (voiceMessage ? "Voice message was not delivered: " : "File was not delivered: ") + safe(e));
                     if (voiceMessage) resetVoiceComposer(status.getText());
+                    else attachmentSendButton.setDisable(false);
                 });
             }
         });
+    }
+
+    private void showAttachmentComposer(ContactStore.Contact contact, List<Path> files) {
+        if (selected == null || !selected.link().equals(contact.link())) return;
+        try {
+            var combined = new ArrayList<>(pendingAttachments);
+            for (Path path : files) if (!combined.contains(path)) combined.add(path);
+            if (combined.size() > 5) {
+                status.setText("You can attach up to 5 files at a time.");
+                return;
+            }
+            long total = totalAttachmentBytes(combined);
+            if (total > ContactMessaging.MAX_FILE_BYTES) {
+                status.setText("The combined size of attachments must be 1 GiB or less.");
+                return;
+            }
+            boolean firstSelection = pendingAttachments.isEmpty();
+            pendingAttachments.clear();
+            pendingAttachments.addAll(combined);
+            renderAttachmentRows();
+            if (firstSelection) attachmentCaption.clear();
+            normalInputRow.setVisible(false);
+            normalInputRow.setManaged(false);
+            voiceControls.setVisible(false);
+            voiceControls.setManaged(false);
+            attachmentComposer.setVisible(true);
+            attachmentComposer.setManaged(true);
+            VBox.setVgrow(transcript, Priority.SOMETIMES);
+            VBox.setVgrow(composerArea, Priority.ALWAYS);
+            attachmentSendButton.setDisable(false);
+            attachmentCaption.setDisable(false);
+            status.setText(pendingAttachments.size() + " file" + (pendingAttachments.size() == 1 ? "" : "s")
+                    + " ready · " + formatBytes(total) + " total. Add an optional message, then send.");
+            if (firstSelection) attachmentCaption.requestFocus();
+        } catch (Exception e) {
+            status.setText("Could not open the selected file: " + safe(e));
+        }
+    }
+
+    private void addMoreAttachments() {
+        if (sending || selected == null) return;
+        if (pendingAttachments.size() >= 5) {
+            status.setText("You can attach up to 5 files at a time.");
+            return;
+        }
+        var chooser = new FileChooser();
+        chooser.setTitle("Add files (up to 5 total, 1 GiB combined)");
+        List<File> files = chooser.showOpenMultipleDialog(getScene() == null ? null : getScene().getWindow());
+        if (files != null && !files.isEmpty())
+            showAttachmentComposer(selected, files.stream().map(File::toPath).toList());
+    }
+
+    private void renderAttachmentRows() {
+        attachmentFilesList.getChildren().clear();
+        for (Path path : pendingAttachments) {
+            try {
+                Label typeIcon = new Label(fileTypeLabel(path));
+                typeIcon.getStyleClass().addAll("attachment-type-icon", "compact", fileTypeClass(path));
+                Label name = new Label(path.getFileName().toString());
+                name.setWrapText(true);
+                name.setMaxWidth(Double.MAX_VALUE);
+                name.setTooltip(new Tooltip(path.getFileName().toString()));
+                name.getStyleClass().add("attachment-name");
+                Label size = new Label(formatBytes(Files.size(path)));
+                size.getStyleClass().add("attachment-size");
+                VBox details = new VBox(2, name, size);
+                HBox.setHgrow(details, Priority.ALWAYS);
+                Button remove = new Button("×");
+                remove.getStyleClass().add("attachment-remove-button");
+                remove.setMinSize(28, 28);
+                remove.setPrefSize(28, 28);
+                remove.setMaxSize(28, 28);
+                remove.setPadding(Insets.EMPTY);
+                remove.setTooltip(new Tooltip("Remove " + path.getFileName()));
+                remove.setOnAction(event -> removeAttachment(path));
+                HBox row = new HBox(10, typeIcon, details, remove);
+                row.getStyleClass().add("attachment-file-row");
+                HBox.setHgrow(typeIcon, Priority.NEVER);
+                HBox.setHgrow(remove, Priority.NEVER);
+                HBox.setHgrow(details, Priority.ALWAYS);
+                remove.setMinWidth(28);
+                remove.setPrefWidth(28);
+                remove.setMaxWidth(28);
+                name.setMinWidth(0);
+                attachmentFilesList.getChildren().add(row);
+            } catch (Exception e) {
+                status.setText("Could not read an attachment: " + safe(e));
+            }
+        }
+    }
+
+    private void enableAttachmentDragScroll() {
+        final double[] dragStart = new double[2];
+        final boolean[] dragging = new boolean[1];
+        final boolean[] suppressClick = new boolean[1];
+        attachmentFilesViewport.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            dragStart[0] = event.getSceneX();
+            dragStart[1] = attachmentFilesViewport.getHvalue();
+            dragging[0] = false;
+        });
+        attachmentFilesViewport.addEventFilter(MouseEvent.MOUSE_DRAGGED, event -> {
+            if (!event.isPrimaryButtonDown()) return;
+            double delta = event.getSceneX() - dragStart[0];
+            if (Math.abs(delta) > 3 && !dragging[0]) {
+                dragging[0] = true;
+                suppressClick[0] = true;
+                attachmentFilesViewport.pseudoClassStateChanged(javafx.css.PseudoClass.getPseudoClass("dragging"), true);
+            }
+            double range = attachmentFilesList.getWidth() - attachmentFilesViewport.getViewportBounds().getWidth();
+            if (dragging[0] && range > 0) {
+                attachmentFilesViewport.setHvalue(clamp(dragStart[1] - delta / range));
+                event.consume();
+            }
+        });
+        attachmentFilesViewport.addEventFilter(MouseEvent.MOUSE_RELEASED, event -> {
+            if (dragging[0]) {
+                attachmentFilesViewport.pseudoClassStateChanged(javafx.css.PseudoClass.getPseudoClass("dragging"), false);
+                dragging[0] = false;
+            }
+        });
+        attachmentFilesViewport.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
+            if (suppressClick[0]) {
+                event.consume();
+                suppressClick[0] = false;
+            }
+        });
+    }
+
+    private static double clamp(double value) {
+        return Math.max(0, Math.min(1, value));
+    }
+
+    private void removeAttachment(Path path) {
+        pendingAttachments.remove(path);
+        if (pendingAttachments.isEmpty()) {
+            clearAttachmentComposer();
+            return;
+        }
+        renderAttachmentRows();
+        try { status.setText(pendingAttachments.size() + " files · " + formatBytes(totalAttachmentBytes(pendingAttachments)) + " total."); }
+        catch (Exception e) { status.setText("Could not read attachment sizes: " + safe(e)); }
+    }
+
+    private static long totalAttachmentBytes(List<Path> files) throws java.io.IOException {
+        long total = 0;
+        for (Path file : files) {
+            long size = Files.size(file);
+            if (size > ContactMessaging.MAX_FILE_BYTES - total) return ContactMessaging.MAX_FILE_BYTES + 1;
+            total += size;
+        }
+        return total;
+    }
+
+    private void sendPendingAttachment() {
+        if (sending || pendingAttachments.isEmpty() || selected == null) return;
+        String caption = attachmentCaption.getText() == null ? "" : attachmentCaption.getText().strip();
+        if (caption.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 4096) {
+            status.setText("Attachment message must be 4096 UTF-8 bytes or fewer.");
+            return;
+        }
+        var files = List.copyOf(pendingAttachments);
+        attachmentCaption.setDisable(true);
+        attachmentSendButton.setDisable(true);
+        attachmentAddButton.setDisable(true);
+        sendAttachments(selected, files, caption);
+    }
+
+    private void clearAttachmentComposer() {
+        pendingAttachments.clear();
+        attachmentFilesList.getChildren().clear();
+        attachmentCaption.clear();
+        attachmentCaption.setDisable(false);
+        attachmentAddButton.setDisable(false);
+        attachmentComposer.setVisible(false);
+        attachmentComposer.setManaged(false);
+        VBox.setVgrow(transcript, Priority.ALWAYS);
+        VBox.setVgrow(composerArea, Priority.NEVER);
+        normalInputRow.setVisible(true);
+        normalInputRow.setManaged(true);
+        updateComposerMode();
+    }
+
+    private static String fileTypeLabel(Path path) {
+        String ext = extension(path);
+        if (List.of("png", "jpg", "jpeg", "gif", "webp", "bmp", "heic").contains(ext)) return "IMG";
+        if (List.of("mp4", "mov", "mkv", "avi", "webm").contains(ext)) return "VID";
+        if (List.of("mp3", "wav", "m4a", "ogg", "flac", "aac").contains(ext)) return "AUD";
+        if (List.of("zip", "7z", "rar", "tar", "gz").contains(ext)) return "ZIP";
+        if (ext.equals("pdf")) return "PDF";
+        if (List.of("doc", "docx", "txt", "md", "rtf").contains(ext)) return "DOC";
+        return ext.isBlank() ? "FILE" : ext.substring(0, Math.min(ext.length(), 4)).toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private static String fileTypeClass(Path path) {
+        return switch (fileTypeLabel(path)) {
+            case "IMG" -> "image";
+            case "VID" -> "video";
+            case "AUD" -> "audio";
+            case "ZIP" -> "archive";
+            case "PDF" -> "pdf";
+            case "DOC" -> "document";
+            default -> "generic";
+        };
+    }
+
+    private static String extension(Path path) {
+        String name = path.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
     }
 
     private void toggleVoiceRecording() {
@@ -710,6 +1077,9 @@ final class MessengerPane extends BorderPane {
         attachButton.setDisable(busy || selected == null);
         voiceButton.setDisable(busy || selected == null);
         composer.setDisable(busy || selected == null);
+        attachmentCaption.setDisable(busy);
+        attachmentSendButton.setDisable(busy || pendingAttachments.isEmpty() || selected == null);
+        attachmentAddButton.setDisable(busy || pendingAttachments.size() >= 5 || selected == null);
     }
 
     private void updateComposerMode() {
@@ -739,6 +1109,13 @@ final class MessengerPane extends BorderPane {
         SVGPath icon = new SVGPath();
         icon.setContent("M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11z");
         icon.getStyleClass().add("mic-glyph");
+        return icon;
+    }
+
+    private static SVGPath plusGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M11 2h2v9h9v2h-9v9h-2v-9H2v-2h9z");
+        icon.getStyleClass().add("plus-glyph");
         return icon;
     }
 
@@ -831,6 +1208,12 @@ final class MessengerPane extends BorderPane {
                 content.getStyleClass().add("message-content");
                 VBox rows = new VBox(5, heading, content);
                 rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
+                if (message.body() != null && !message.body().isBlank()) {
+                    Label caption = new Label(message.body());
+                    caption.setWrapText(true);
+                    caption.getStyleClass().add("message-content");
+                    rows.getChildren().add(caption);
+                }
                 HBox actions = new HBox(8);
                 if (voice) {
                     Button play = new Button(isPlaying(message.attachmentPath()) ? "■ Stop" : "▶ Play");

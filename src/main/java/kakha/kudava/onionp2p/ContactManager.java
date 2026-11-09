@@ -69,10 +69,17 @@ final class ContactManager implements AutoCloseable {
     MessageStore.Message sendFile(String link, Path file, java.util.concurrent.atomic.AtomicBoolean cancelled,
                                   java.util.function.LongConsumer progress,
                                   java.util.function.Consumer<String> status) throws Exception {
+        return sendFile(link, file, "", cancelled, progress, status);
+    }
+
+    MessageStore.Message sendFile(String link, Path file, String caption,
+                                  java.util.concurrent.atomic.AtomicBoolean cancelled,
+                                  java.util.function.LongConsumer progress,
+                                  java.util.function.Consumer<String> status) throws Exception {
         if (java.nio.file.Files.size(file) > ContactMessaging.MAX_FILE_BYTES)
             throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
         return withMessageSession(link, status, cancelled::get, (entry, session, canonical) ->
-                ContactMessaging.sendFile(session.socket, entry.material, messageStore, canonical, file,
+                ContactMessaging.sendFile(session.socket, entry.material, messageStore, canonical, file, caption,
                         session.firstMessage, progress, cancelled::get));
     }
 
@@ -243,7 +250,8 @@ final class ContactManager implements AutoCloseable {
                         socket.setSoTimeout(20000);
                         int protocol = new java.io.DataInputStream(socket.getInputStream()).readInt();
                         if (protocol == ContactHandshake.MAGIC) ContactHandshake.server(socket, entry.material, protocol, () -> save(entry));
-                        else if (protocol == ContactMessaging.MAGIC) ContactMessaging.receive(socket, entry.material, messageStore, entry.link);
+                        else if (protocol == ContactMessaging.MAGIC || protocol == ContactMessaging.LEGACY_MAGIC)
+                            ContactMessaging.receive(socket, entry.material, messageStore, entry.link, protocol == ContactMessaging.MAGIC);
                         else throw new java.io.IOException("Unsupported contact protocol.");
                     }
                     catch (Exception e) {
