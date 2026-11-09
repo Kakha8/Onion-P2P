@@ -39,6 +39,8 @@ final class MessengerPane extends BorderPane {
     private final ContactManager manager;
     private final ListView<ContactStore.Contact> contactList = new ListView<>();
     private final ListView<MessageStore.Message> transcript = new ListView<>();
+    private final Label conversationTitle = new Label("Select a contact");
+    private final Label conversationPresence = new Label();
     private final TextField composer = new TextField();
     private final Button sendButton = new Button("Send");
     private final Button attachButton = new Button("Attach file");
@@ -71,11 +73,12 @@ final class MessengerPane extends BorderPane {
                 if (empty || contact == null) { setText(null); setGraphic(null); setTooltip(null); return; }
                 Presence state = presence.getOrDefault(contact.link(), Presence.checking());
                 Label dot = new Label("●");
-                dot.setStyle("-fx-text-fill: " + (state.online() ? "#248a3d" : state.checkedAt() == 0 ? "#888888" : "#b33a3a") + "; -fx-font-size: 12px;");
+                dot.getStyleClass().addAll("presence-dot", state.online() ? "online" : state.checkedAt() == 0 ? "checking" : "offline");
                 Label name = new Label(contact.username());
+                name.getStyleClass().add("contact-name");
                 HBox heading = new HBox(6, dot, name);
                 Label address = new Label(contact.onion());
-                address.setStyle("-fx-font-size: 10px; -fx-text-fill: #666666;");
+                address.getStyleClass().add("contact-address");
                 VBox cell = new VBox(2, heading, address);
                 setText(null); setGraphic(cell);
                 String message = state.checkedAt() == 0 ? "Checking availability through Tor…"
@@ -89,12 +92,21 @@ final class MessengerPane extends BorderPane {
             selected = value;
             transcript.getItems().clear();
             setTransferControls(false);
+            updateConversationHeader();
             refreshMessages();
         });
 
         transcript.setPlaceholder(new Label("No messages yet."));
+        transcript.getStyleClass().add("chat-transcript");
         transcript.setCellFactory(list -> new MessageCell());
+        conversationTitle.getStyleClass().add("conversation-title");
+        conversationPresence.getStyleClass().add("conversation-presence");
+        HBox conversationHeader = new HBox(10, conversationTitle, conversationPresence);
+        conversationHeader.getStyleClass().add("conversation-header");
         composer.setPromptText("Write a message…");
+        composer.getStyleClass().add("chat-composer");
+        sendButton.getStyleClass().add("primary-button");
+        attachButton.getStyleClass().add("secondary-button");
         composer.setOnAction(event -> send());
         sendButton.setOnAction(event -> send());
         attachButton.setOnAction(event -> chooseFile());
@@ -110,20 +122,29 @@ final class MessengerPane extends BorderPane {
         cancelFileButton.setManaged(false);
         cancelFileButton.setOnAction(event -> cancelFileTransfer());
         HBox transferRow = new HBox(8, transferProgress, transferRate, cancelFileButton);
+        transferRow.getStyleClass().add("transfer-row");
+        transferRate.getStyleClass().add("transfer-rate");
         HBox.setHgrow(transferProgress, Priority.ALWAYS);
         HBox inputRow = new HBox(8, composer, attachButton, sendButton);
+        inputRow.getStyleClass().add("chat-input-row");
         HBox.setHgrow(composer, Priority.ALWAYS);
 
         Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Received files save in the app downloads folder; use Export… to choose another location. Local chat history is unencrypted.");
         securityNote.setWrapText(true);
-        VBox conversation = new VBox(8, transcript, status, inputRow, transferRow, securityNote);
-        conversation.setPadding(new Insets(12));
+        securityNote.getStyleClass().add("security-note");
+        status.getStyleClass().add("chat-status");
+        VBox conversation = new VBox(8, conversationHeader, transcript, status, inputRow, transferRow, securityNote);
+        conversation.getStyleClass().add("conversation-pane");
+        conversation.setPadding(new Insets(8));
         VBox.setVgrow(transcript, Priority.ALWAYS);
         setCenter(conversation);
         setLeft(contactList);
+        getStyleClass().add("messenger-pane");
+        contactList.getStyleClass().add("contact-list");
         setPadding(new Insets(4));
         BorderPane.setMargin(contactList, new Insets(4, 8, 4, 4));
-        contactList.setPrefWidth(190);
+        contactList.setPrefWidth(235);
+        contactList.setMinWidth(185);
 
         poll = new Timeline(new KeyFrame(Duration.seconds(2), e -> refreshMessages()));
         poll.setCycleCount(Timeline.INDEFINITE);
@@ -180,7 +201,7 @@ final class MessengerPane extends BorderPane {
                 boolean result = online;
                 presence.put(contact.link(), new Presence(result, System.currentTimeMillis()));
                 checkingPresence.remove(contact.link());
-                Platform.runLater(contactList::refresh);
+                Platform.runLater(() -> { contactList.refresh(); updateConversationHeader(); });
             });
         }
         contactList.refresh();
@@ -188,6 +209,20 @@ final class MessengerPane extends BorderPane {
 
     private record Presence(boolean online, long checkedAt) {
         static Presence checking() { return new Presence(false, 0); }
+    }
+
+    private void updateConversationHeader() {
+        ContactStore.Contact contact = selected;
+        if (contact == null) {
+            conversationTitle.setText("Select a contact");
+            conversationPresence.setText("");
+            return;
+        }
+        Presence state = presence.getOrDefault(contact.link(), Presence.checking());
+        conversationTitle.setText(contact.username());
+        conversationPresence.setText(state.checkedAt() == 0 ? "Checking via Tor…" : state.online() ? "Online" : "Offline or unreachable");
+        conversationPresence.getStyleClass().removeAll("online", "offline", "checking");
+        conversationPresence.getStyleClass().add(state.online() ? "online" : state.checkedAt() == 0 ? "checking" : "offline");
     }
 
     private void refreshMessages() {
@@ -200,6 +235,7 @@ final class MessengerPane extends BorderPane {
                     if (selected == null || !selected.link().equals(contact.link())) return;
                     transcript.setItems(FXCollections.observableArrayList(messages));
                     if (!messages.isEmpty()) transcript.scrollTo(messages.size() - 1);
+                    updateConversationHeader();
                     sendButton.setDisable(sending);
                     if (!sending) status.setText("Paired with " + contact.username());
                 });
@@ -465,6 +501,7 @@ final class MessengerPane extends BorderPane {
             if (empty || message == null) { setText(null); setGraphic(null); return; }
             String who = message.outgoing() ? "You" : selected == null ? "Contact" : selected.username();
             Label heading = new Label("[" + TIME.format(Instant.ofEpochMilli(message.timestamp())) + "] " + who);
+            heading.getStyleClass().add("message-heading");
             Label content;
             if (message.attachmentName() != null) {
                 content = new Label("📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
@@ -480,7 +517,9 @@ final class MessengerPane extends BorderPane {
                 content = new Label(message.body());
                 content.setWrapText(true);
             }
+            content.getStyleClass().add("message-content");
             VBox rows = new VBox(4, heading, content);
+            rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
             rows.setPadding(new Insets(6));
             setText(null); setGraphic(rows);
         }

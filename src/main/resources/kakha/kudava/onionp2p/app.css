@@ -1,0 +1,80 @@
+.root, .app-root {
+    -fx-background-color: #141920;
+    -fx-font-family: "Segoe UI", "Arial";
+    -fx-font-size: 13px;
+    -fx-text-fill: #e5e7eb;
+}
+
+.app-shell { -fx-background-color: #141920; -fx-padding: 14 16 14 16; }
+.auth-card { -fx-background-color: #171c23; -fx-background-radius: 14; -fx-padding: 38; -fx-border-color: #2b323d; -fx-border-radius: 14; }
+.label { -fx-text-fill: #dce3ec; }
+.app-title { -fx-text-fill: #f3f4f6; -fx-font-size: 21px; -fx-font-weight: bold; }
+.connection-status { -fx-text-fill: #9aa3af; -fx-font-size: 12px; }
+
+.button {
+    -fx-background-color: #2b323d;
+    -fx-text-fill: #dce7f5;
+    -fx-background-radius: 7;
+    -fx-border-color: #394555;
+    -fx-border-radius: 7;
+    -fx-padding: 7 12 7 12;
+    -fx-cursor: hand;
+}
+.button:hover { -fx-background-color: #344153; }
+.button:disabled { -fx-opacity: 0.55; -fx-cursor: default; }
+.primary-button { -fx-background-color: #3b82f6; -fx-text-fill: white; -fx-border-color: #3b82f6; -fx-font-weight: bold; }
+.primary-button:hover { -fx-background-color: #4b91ff; }
+.secondary-button { -fx-background-color: #202832; -fx-text-fill: #bdc8d7; }
+
+.text-field, .password-field {
+    -fx-background-color: #1c232c;
+    -fx-text-fill: #e5e7eb;
+    -fx-prompt-text-fill: #758195;
+    -fx-highlight-fill: #344153;
+    -fx-highlight-text-fill: #ffffff;
+    -fx-background-radius: 7;
+    -fx-border-color: #344153;
+    -fx-border-radius: 7;
+    -fx-padding: 8 10 8 10;
+}
+.text-field:focused, .password-field:focused { -fx-border-color: #7db3f4; }
+.separator .line { -fx-border-color: #29313b; }
+.progress-indicator .percentage { -fx-fill: #7db3f4; }
+
+.messenger-pane { -fx-background-color: #171c23; -fx-background-radius: 12; -fx-border-color: #29313b; -fx-border-radius: 12; -fx-padding: 6; }
+.contact-list { -fx-background-color: #171c23; -fx-background-insets: 0; -fx-border-color: transparent #29313b transparent transparent; -fx-padding: 4 8 4 4; }
+.contact-list .list-cell { -fx-background-color: transparent; -fx-text-fill: #dce3ec; -fx-padding: 11 10 11 10; -fx-background-radius: 8; }
+.contact-list .list-cell:filled:hover { -fx-background-color: #202832; }
+.contact-list .list-cell:filled:selected { -fx-background-color: #253244; -fx-text-fill: white; }
+.contact-name { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; -fx-font-weight: 600; }
+.contact-address { -fx-text-fill: #758195; -fx-font-size: 10px; }
+.presence-dot { -fx-font-size: 12px; }
+.presence-dot.online, .conversation-presence.online { -fx-text-fill: #72b889; }
+.presence-dot.offline, .conversation-presence.offline { -fx-text-fill: #c68b72; }
+.presence-dot.checking, .conversation-presence.checking { -fx-text-fill: #7db3f4; }
+
+.conversation-pane { -fx-background-color: #141920; -fx-background-radius: 10; }
+.conversation-header { -fx-alignment: center-left; -fx-padding: 2 4 9 4; -fx-border-color: transparent transparent #29313b transparent; }
+.conversation-title { -fx-text-fill: #f3f4f6; -fx-font-size: 16px; -fx-font-weight: bold; }
+.conversation-presence { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
+.chat-transcript { -fx-background-color: #171c23; -fx-background-insets: 0; -fx-border-color: #29313b; -fx-border-radius: 8; -fx-background-radius: 8; }
+.chat-transcript .list-cell { -fx-background-color: transparent; -fx-padding: 4 6 4 6; }
+.chat-transcript .list-cell:filled:even { -fx-background-color: #171c23; }
+.chat-transcript .list-cell:filled:odd { -fx-background-color: #1a2028; }
+.message-card { -fx-padding: 9 12 9 12; -fx-background-radius: 9; -fx-max-width: 680px; }
+.message-card.outgoing { -fx-background-color: #1c2a38; }
+.message-card.incoming { -fx-background-color: #202832; }
+.message-heading { -fx-text-fill: #7db3f4; -fx-font-size: 11px; }
+.message-content { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; }
+.hyperlink { -fx-text-fill: #8bbcf7; }
+.chat-status { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
+.chat-input-row { -fx-alignment: center; -fx-padding: 2 0 2 0; }
+.chat-composer { -fx-background-color: #1c232c; -fx-background-radius: 18; -fx-padding: 10 14 10 14; }
+.transfer-row { -fx-alignment: center; }
+.transfer-rate { -fx-text-fill: #9aa3af; -fx-font-size: 11px; }
+.security-note { -fx-text-fill: #758195; -fx-font-size: 10px; }
+
+.scroll-bar:horizontal, .scroll-bar:vertical { -fx-background-color: #171c23; }
+.scroll-bar .thumb { -fx-background-color: #344153; -fx-background-radius: 8; }
+.scroll-bar .track { -fx-background-color: #1c232c; -fx-background-radius: 8; }
+.tooltip { -fx-background-color: #202832; -fx-text-fill: #e5e7eb; -fx-border-color: #344153; }

@@ -12,8 +12,8 @@
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.control.PasswordField?>
 <?import javafx.scene.control.Separator?>
-<StackPane xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
-    <VBox fx:id="authPane" alignment="CENTER" spacing="16" maxWidth="440" visible="false" managed="false">
+<StackPane styleClass="app-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
+    <VBox fx:id="authPane" styleClass="auth-card" alignment="CENTER" spacing="16" maxWidth="440" visible="false" managed="false">
         <Label fx:id="authTitle" text="Set up your account" style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
         <Label fx:id="authMessage" wrapText="true" text="Checking local account…"/>
         <TextField fx:id="usernameField" promptText="Username" maxWidth="360"/>
@@ -24,31 +24,31 @@
         <Button fx:id="authButton" text="Create account" onAction="#onAuthenticate"/>
         <ProgressIndicator fx:id="authProgress" prefWidth="28" prefHeight="28" maxWidth="28" maxHeight="28" visible="false" managed="false"/>
     </VBox>
-    <VBox fx:id="appPane" alignment="TOP_LEFT" spacing="8.0" visible="false" managed="false">
+    <VBox fx:id="appPane" styleClass="app-shell" alignment="TOP_LEFT" spacing="8.0" visible="false" managed="false">
     <padding>
         <Insets bottom="10.0" left="12.0" right="12.0" top="10.0"/>
     </padding>
 
     <HBox alignment="CENTER_LEFT" spacing="8">
-        <Label text="Onion-P2P" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
-        <Label fx:id="statusText" wrapText="true" HBox.hgrow="ALWAYS"/>
+        <Label text="Onion-P2P" styleClass="app-title"/>
+        <Label fx:id="statusText" styleClass="connection-status" wrapText="true" HBox.hgrow="ALWAYS"/>
     </HBox>
     <HBox fx:id="torProgressRow" alignment="CENTER" spacing="8" visible="false" managed="false">
         <ProgressIndicator fx:id="torProgress" prefWidth="16" prefHeight="16" maxWidth="16" maxHeight="16"/>
         <Label fx:id="torStatus" text="Starting Tor…" style="-fx-font-size: 11px;"/>
     </HBox>
     <HBox alignment="CENTER_LEFT" spacing="8">
-        <Button fx:id="generateButton" text="My link" onAction="#onGenerateLink"/>
+        <Button fx:id="generateButton" styleClass="secondary-button" text="My link" onAction="#onGenerateLink"/>
         <VBox fx:id="linkPanel" spacing="4" visible="false" managed="false" HBox.hgrow="ALWAYS">
             <HBox spacing="6">
                 <TextField fx:id="contactLink" editable="false" promptText="Your public-key link" HBox.hgrow="ALWAYS"/>
-                <Button text="Copy" onAction="#onCopyLink"/>
+                <Button styleClass="secondary-button" text="Copy" onAction="#onCopyLink"/>
             </HBox>
         </VBox>
     </HBox>
     <HBox alignment="CENTER_LEFT" spacing="8">
         <TextField fx:id="importLink" promptText="Paste a contact link to add them" onAction="#onImportLink" HBox.hgrow="ALWAYS"/>
-        <Button fx:id="importButton" text="Import link" onAction="#onImportLink"/>
+        <Button fx:id="importButton" styleClass="primary-button" text="Import link" onAction="#onImportLink"/>
     </HBox>
     <HBox alignment="CENTER_LEFT" spacing="6">
         <ProgressIndicator fx:id="pairingProgress" prefWidth="14" prefHeight="14" maxWidth="14" maxHeight="14" visible="false" managed="false"/>

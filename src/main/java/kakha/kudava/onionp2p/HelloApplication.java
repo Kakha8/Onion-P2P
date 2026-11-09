@@ -15,12 +15,13 @@ public class HelloApplication extends Application {
     public void start(Stage stage) throws Exception {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "onion-shutdown"));
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
-        Scene scene = new Scene(fxmlLoader.load(), 760, 780);
+        Scene scene = new Scene(fxmlLoader.load(), 1120, 760);
+        scene.getStylesheets().add(HelloApplication.class.getResource("app.css").toExternalForm());
         HelloController controller = fxmlLoader.getController();
         controller.setOnAuthenticated(() -> startServices(controller));
         stage.setTitle("Onion-P2P");
-        stage.setMinWidth(480);
-        stage.setMinHeight(780);
+        stage.setMinWidth(760);
+        stage.setMinHeight(620);
         stage.setScene(scene);
         stage.show();
         controller.beginAuthentication();
