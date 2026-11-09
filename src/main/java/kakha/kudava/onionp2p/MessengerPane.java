@@ -422,10 +422,10 @@ final class MessengerPane extends BorderPane {
 
     private static String formatSpeed(double bytesPerSecond) {
         if (!Double.isFinite(bytesPerSecond) || bytesPerSecond < 0) bytesPerSecond = 0;
-        if (bytesPerSecond < 1024) return String.format(java.util.Locale.ROOT, "%.0f B/s", bytesPerSecond);
-        if (bytesPerSecond < 1024 * 1024) return String.format(java.util.Locale.ROOT, "%.1f KiB/s", bytesPerSecond / 1024);
-        if (bytesPerSecond < 1024 * 1024 * 1024) return String.format(java.util.Locale.ROOT, "%.1f MiB/s", bytesPerSecond / (1024 * 1024));
-        return String.format(java.util.Locale.ROOT, "%.1f GiB/s", bytesPerSecond / (1024 * 1024 * 1024));
+        if (bytesPerSecond < 1_000) return String.format(java.util.Locale.ROOT, "%.0f B/s", bytesPerSecond);
+        if (bytesPerSecond < 1_000_000) return String.format(java.util.Locale.ROOT, "%.1f KB/s", bytesPerSecond / 1_000);
+        if (bytesPerSecond < 1_000_000_000) return String.format(java.util.Locale.ROOT, "%.1f MB/s", bytesPerSecond / 1_000_000);
+        return String.format(java.util.Locale.ROOT, "%.1f GB/s", bytesPerSecond / 1_000_000_000);
     }
 
     private static String safe(Exception e) {
