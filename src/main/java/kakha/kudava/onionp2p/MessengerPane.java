@@ -525,7 +525,7 @@ final class MessengerPane extends BorderPane {
                             + ": " + path.getFileName() + "…"));
                     manager.sendFile(contact.link(), path, index == 0 ? caption : "", cancellation,
                             transferred -> Platform.runLater(() -> {
-                                double fileFraction = fileSize == 0 ? 1 : (double) transferred / fileSize;
+                                double fileFraction = fileSize == 0 ? 1 : Math.min(1, Math.max(0, (double) transferred / fileSize));
                                 bubble.progress.set(fileFraction);
                                 bubble.speed.set(formatSpeed(speed.update(completedBytes + transferred, totalBytes, System.nanoTime())));
                             }),
@@ -603,7 +603,7 @@ final class MessengerPane extends BorderPane {
                 ActiveTransfer activeBubble = bubble;
                 SpeedMeter speed = new SpeedMeter();
                 manager.sendFile(contact.link(), path, caption, cancellation, transferred -> Platform.runLater(() -> {
-                            activeBubble.progress.set(size == 0 ? 1.0 : (double) transferred / size);
+                            activeBubble.progress.set(size == 0 ? 1.0 : Math.min(1, Math.max(0, (double) transferred / size)));
                             activeBubble.speed.set(formatSpeed(speed.update(transferred, size, System.nanoTime())));
                         }),
                         message -> Platform.runLater(() -> {
@@ -1285,10 +1285,19 @@ final class MessengerPane extends BorderPane {
                 }
                 ActiveTransfer transfer = activeTransfers.get(message.id());
                 if (transfer != null) {
-                    ProgressBar progress = new ProgressBar();
-                    progress.setMinWidth(110);
-                    progress.setMaxWidth(Double.MAX_VALUE);
-                    progress.progressProperty().bind(transfer.progress);
+                    Region progressFill = new Region();
+                    progressFill.getStyleClass().add("message-transfer-fill");
+                    StackPane progressTrack = new StackPane(progressFill);
+                    progressTrack.getStyleClass().add("message-transfer-track");
+                    progressTrack.setMinHeight(9);
+                    progressTrack.setPrefHeight(9);
+                    progressTrack.setMaxHeight(9);
+                    progressTrack.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+                    progressFill.setMinWidth(0);
+                    progressFill.setPrefWidth(0);
+                    progressFill.setMaxWidth(Region.USE_PREF_SIZE);
+                    progressFill.prefWidthProperty().bind(progressTrack.widthProperty().multiply(transfer.progress));
+                    progressFill.setMaxHeight(Double.MAX_VALUE);
                     Label percent = new Label();
                     percent.textProperty().bind(Bindings.createStringBinding(
                             () -> String.format(java.util.Locale.ROOT, "%.0f%%", transfer.progress.get() * 100), transfer.progress));
@@ -1307,9 +1316,9 @@ final class MessengerPane extends BorderPane {
                             manager.cancelTransfer(message.contactLink());
                         }
                     });
-                    HBox progressRow = new HBox(8, progress, percent, rate, cancel);
+                    HBox progressRow = new HBox(8, progressTrack, percent, rate, cancel);
                     progressRow.getStyleClass().add("message-transfer-row");
-                    HBox.setHgrow(progress, Priority.ALWAYS);
+                    HBox.setHgrow(progressTrack, Priority.ALWAYS);
                     rows.getChildren().add(progressRow);
                 }
                 HBox actions = new HBox(8);

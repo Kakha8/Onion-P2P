@@ -66,9 +66,8 @@
 .message-heading { -fx-text-fill: #7db3f4; -fx-font-size: 11px; }
 .message-content { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; }
 .message-transfer-row { -fx-alignment: center; -fx-padding: 3 0 0 0; }
-.message-transfer-row .progress-bar { -fx-pref-height: 8; -fx-min-height: 8; -fx-max-height: 8; -fx-accent: #60a5fa; -fx-control-inner-background: rgba(10, 16, 24, 0.55); }
-.message-transfer-row .progress-bar > .track { -fx-background-color: rgba(10, 16, 24, 0.55); -fx-background-radius: 5; }
-.message-transfer-row .progress-bar > .bar { -fx-background-color: #7dd3fc; -fx-background-radius: 5; }
+.message-transfer-track { -fx-background-color: rgba(10, 16, 24, 0.65); -fx-background-radius: 5; -fx-border-color: rgba(255, 255, 255, 0.15); -fx-border-radius: 5; }
+.message-transfer-fill { -fx-background-color: #7dd3fc; -fx-background-radius: 5; }
 .message-transfer-rate { -fx-text-fill: #d7e4f2; -fx-font-size: 11px; }
 .message-transfer-cancel { -fx-background-color: rgba(10, 16, 24, 0.28); -fx-border-color: transparent; -fx-text-fill: #f3f4f6; -fx-font-size: 16px; -fx-font-weight: bold; -fx-min-width: 24; -fx-pref-width: 24; -fx-max-width: 24; -fx-min-height: 24; -fx-pref-height: 24; -fx-max-height: 24; -fx-padding: 0; -fx-background-radius: 50%; }
 .message-transfer-cancel:hover { -fx-background-color: rgba(10, 16, 24, 0.5); }
