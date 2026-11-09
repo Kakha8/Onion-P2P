@@ -25,6 +25,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -269,15 +271,10 @@ final class MessengerPane extends BorderPane {
             var cancellation = activeFileCancellation;
             try {
                 long size = file.length();
-                long[] previousBytes = {0};
-                long[] previousTime = {System.nanoTime()};
+                SpeedMeter speed = new SpeedMeter();
                 manager.sendFile(contact.link(), file.toPath(), cancellation, transferred -> Platform.runLater(() -> {
                             transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size);
-                            long now = System.nanoTime();
-                            double seconds = Math.max((now - previousTime[0]) / 1_000_000_000.0, 0.001);
-                            transferRate.setText(formatSpeed((transferred - previousBytes[0]) / seconds));
-                            previousBytes[0] = transferred;
-                            previousTime[0] = now;
+                            transferRate.setText(formatSpeed(speed.update(transferred, size, System.nanoTime())));
                         }),
                         message -> Platform.runLater(() -> {
                             if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
@@ -293,7 +290,8 @@ final class MessengerPane extends BorderPane {
                     transferRate.setVisible(false);
                     cancelFileButton.setManaged(false);
                     cancelFileButton.setVisible(false);
-                    status.setText(cancellation.get() ? "File transfer cancelled." : "File delivered and saved by " + contact.username() + ".");
+                    status.setText(cancellation.get() ? "File transfer cancelled." : "File delivered and saved by "
+                            + contact.username() + ". Average speed: " + formatSpeed(speed.average()) + ".");
                     refreshMessages();
                 });
             } catch (Exception e) {
@@ -354,8 +352,8 @@ final class MessengerPane extends BorderPane {
                 long copied = 0;
                 long lastReported = 0;
                 long lastReportedAt = System.nanoTime();
-                long[] previousBytes = {0};
-                long[] previousTime = {lastReportedAt};
+                SpeedMeter speed = new SpeedMeter();
+                speed.update(0, message.attachmentSize(), lastReportedAt);
                 try (InputStream input = Files.newInputStream(source); OutputStream output = Files.newOutputStream(temporary)) {
                     byte[] buffer = new byte[64 * 1024];
                     int count;
@@ -365,18 +363,14 @@ final class MessengerPane extends BorderPane {
                         long now = System.nanoTime();
                         if (copied - lastReported >= 256 * 1024 || now - lastReportedAt >= 250_000_000L || copied == message.attachmentSize()) {
                             long total = copied;
-                            long priorBytes = previousBytes[0];
-                            double seconds = Math.max((now - previousTime[0]) / 1_000_000_000.0, 0.001);
-                            double speed = (total - priorBytes) / seconds;
+                            double currentSpeed = speed.update(total, message.attachmentSize(), now);
                             Platform.runLater(() -> {
                                 transferProgress.setProgress(message.attachmentSize() == 0
                                         ? 1 : (double) total / message.attachmentSize());
-                                transferRate.setText(formatSpeed(speed));
+                                transferRate.setText(formatSpeed(currentSpeed));
                             });
                             lastReported = copied;
                             lastReportedAt = now;
-                            previousBytes[0] = copied;
-                            previousTime[0] = now;
                         }
                     }
                 }
@@ -390,7 +384,7 @@ final class MessengerPane extends BorderPane {
                     transferProgress.setVisible(false);
                     transferRate.setManaged(false);
                     transferRate.setVisible(false);
-                    status.setText("Exported to " + destination);
+                    status.setText("Exported to " + destination + ". Average speed: " + formatSpeed(speed.average()) + ".");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -426,6 +420,39 @@ final class MessengerPane extends BorderPane {
         if (bytesPerSecond < 1_000_000) return String.format(java.util.Locale.ROOT, "%.1f KB/s", bytesPerSecond / 1_000);
         if (bytesPerSecond < 1_000_000_000) return String.format(java.util.Locale.ROOT, "%.1f MB/s", bytesPerSecond / 1_000_000);
         return String.format(java.util.Locale.ROOT, "%.1f GB/s", bytesPerSecond / 1_000_000_000);
+    }
+
+    /** Rolling three-second rate during transfer, plus an average over the actual data-copy interval. */
+    private static final class SpeedMeter {
+        private record Sample(long bytes, long time) {}
+        private final Deque<Sample> samples = new ArrayDeque<>();
+        private long startedAt;
+        private long completedAt;
+        private long finalBytes;
+
+        double update(long bytes, long total, long now) {
+            if (startedAt == 0) startedAt = now;
+            samples.addLast(new Sample(bytes, now));
+            long cutoff = now - TimeUnit.SECONDS.toNanos(3);
+            while (samples.size() > 2) {
+                var second = samples.stream().skip(1).findFirst().orElseThrow();
+                if (second.time() >= cutoff) break;
+                samples.removeFirst();
+            }
+            if (total == 0 || bytes >= total) {
+                completedAt = now;
+                finalBytes = bytes;
+            }
+            Sample first = samples.getFirst();
+            Sample last = samples.getLast();
+            long elapsed = last.time() - first.time();
+            return elapsed <= 0 ? 0 : (last.bytes() - first.bytes()) * 1_000_000_000.0 / elapsed;
+        }
+
+        double average() {
+            long elapsed = completedAt - startedAt;
+            return elapsed <= 0 ? 0 : finalBytes * 1_000_000_000.0 / elapsed;
+        }
     }
 
     private static String safe(Exception e) {
