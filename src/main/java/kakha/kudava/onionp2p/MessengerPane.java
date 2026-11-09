@@ -84,8 +84,12 @@ final class MessengerPane extends BorderPane {
     private final java.util.Set<String> checkingPresence = ConcurrentHashMap.newKeySet();
     private final Map<String, Presence> presence = new ConcurrentHashMap<>();
     private final Map<String, ActiveTransfer> activeTransfers = new ConcurrentHashMap<>();
+    private final Map<String, ActiveOutgoingMessage> activeOutgoingMessages = new ConcurrentHashMap<>();
+    private final java.util.Set<String> readReceiptsSent = ConcurrentHashMap.newKeySet();
+    private final Map<String, Long> readReceiptAttempts = new ConcurrentHashMap<>();
     private final Timeline poll;
     private final Timeline presencePoll;
+    private final Timeline seenPoll;
     private final Timeline voiceDurationPoll;
     private HBox normalInputRow;
     private HBox voiceControls;
@@ -277,15 +281,18 @@ final class MessengerPane extends BorderPane {
         poll.setCycleCount(Timeline.INDEFINITE);
         presencePoll = new Timeline(new KeyFrame(Duration.seconds(15), e -> checkContactsPresence()));
         presencePoll.setCycleCount(Timeline.INDEFINITE);
+        seenPoll = new Timeline(new KeyFrame(Duration.millis(500), e -> markVisibleIncomingMessagesSeen()));
+        seenPoll.setCycleCount(Timeline.INDEFINITE);
         voiceDurationPoll = new Timeline(new KeyFrame(Duration.millis(100), e -> updateVoiceDuration()));
         voiceDurationPoll.setCycleCount(Timeline.INDEFINITE);
         sceneProperty().addListener((obs, oldScene, newScene) -> {
-            if (newScene == null) { poll.stop(); presencePoll.stop(); }
+            if (newScene == null) { poll.stop(); presencePoll.stop(); seenPoll.stop(); }
             else {
                 if (!loaded) { loaded = true; loadContacts(); }
                 poll.play();
                 checkContactsPresence();
                 presencePoll.play();
+                seenPoll.play();
             }
         });
     }
@@ -388,6 +395,10 @@ final class MessengerPane extends BorderPane {
                             .filter(transfer -> transfer.message.contactLink().equals(contact.link()))
                             .map(transfer -> transfer.message)
                             .forEach(visibleMessages::add);
+                    activeOutgoingMessages.values().stream()
+                            .filter(outgoing -> outgoing.message.contactLink().equals(contact.link()))
+                            .map(outgoing -> outgoing.message)
+                            .forEach(visibleMessages::add);
                     visibleMessages.sort(java.util.Comparator.comparingLong(MessageStore.Message::timestamp));
                     if (!transcript.getItems().equals(visibleMessages)) {
                         boolean wasAtBottom = isTranscriptAtBottom();
@@ -416,6 +427,47 @@ final class MessengerPane extends BorderPane {
                 return bar.getMax() <= bar.getMin() || bar.getValue() >= bar.getMax() - 0.02;
         }
         return true;
+    }
+
+    private void markVisibleIncomingMessagesSeen() {
+        if (selected == null || getScene() == null || getScene().getWindow() == null
+                || !getScene().getWindow().isShowing() || !getScene().getWindow().isFocused()) return;
+        javafx.geometry.Bounds viewport;
+        try { viewport = transcript.localToScene(transcript.getBoundsInLocal()); }
+        catch (RuntimeException e) { return; }
+        for (Node node : transcript.lookupAll(".list-cell")) {
+            if (!(node instanceof MessageCell cell)) continue;
+            MessageStore.Message message = cell.getItem();
+            if (message == null || message.outgoing() || selected == null
+                    || !message.contactLink().equals(selected.link())) continue;
+            javafx.geometry.Bounds cellBounds = cell.localToScene(cell.getBoundsInLocal());
+            if (cellBounds.getMinY() < viewport.getMinY() || cellBounds.getMaxY() > viewport.getMaxY()
+                    || cellBounds.getMaxX() <= viewport.getMinX() || cellBounds.getMinX() >= viewport.getMaxX()) continue;
+            String receiptKey = message.contactLink() + "\n" + message.id();
+            if (readReceiptsSent.contains(receiptKey)) continue;
+            long now = System.currentTimeMillis();
+            Long lastAttempt = readReceiptAttempts.putIfAbsent(receiptKey, now);
+            if (lastAttempt != null) {
+                if (now - lastAttempt < 10_000 || !readReceiptAttempts.replace(receiptKey, lastAttempt, now)) continue;
+            }
+            Thread.ofPlatform().daemon().name("read-receipt").start(() -> {
+                try {
+                    manager.sendReadReceipt(message.contactLink(), message.id());
+                    readReceiptsSent.add(receiptKey);
+                } catch (Exception e) {
+                    System.err.println("Could not send read receipt: " + safe(e));
+                }
+            });
+        }
+    }
+
+    private boolean isLatestOutgoing(String id) {
+        List<MessageStore.Message> messages = transcript.getItems();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            MessageStore.Message message = messages.get(i);
+            if (message.outgoing()) return message.id().equals(id);
+        }
+        return false;
     }
 
     private ActiveTransfer beginTransferBubble(ContactStore.Contact contact, Path path, String caption,
@@ -447,6 +499,7 @@ final class MessengerPane extends BorderPane {
         final MessageStore.Message message;
         final AtomicBoolean cancellation;
         final DoubleProperty progress = new SimpleDoubleProperty(0);
+        final javafx.beans.property.BooleanProperty sent = new javafx.beans.property.SimpleBooleanProperty(false);
         final StringProperty speed = new SimpleStringProperty("0 B/s");
 
         ActiveTransfer(MessageStore.Message message, AtomicBoolean cancellation) {
@@ -455,10 +508,23 @@ final class MessengerPane extends BorderPane {
         }
     }
 
+    private static final class ActiveOutgoingMessage {
+        final MessageStore.Message message;
+        final StringProperty status = new SimpleStringProperty("Sending…");
+        ActiveOutgoingMessage(MessageStore.Message message) { this.message = message; }
+    }
+
     private void send() {
         ContactStore.Contact contact = selected;
         String body = composer.getText();
         if (contact == null || body == null || body.isBlank() || sending) return;
+        String pendingId = "pending-" + java.util.UUID.randomUUID();
+        MessageStore.Message pendingMessage = new MessageStore.Message(pendingId, contact.link(), true,
+                body, null, null, 0, System.currentTimeMillis());
+        ActiveOutgoingMessage activeMessage = new ActiveOutgoingMessage(pendingMessage);
+        activeOutgoingMessages.put(pendingId, activeMessage);
+        transcript.getItems().add(pendingMessage);
+        transcript.scrollTo(transcript.getItems().size() - 1);
         sending = true;
         setTransferControls(true);
         composer.setDisable(true);
@@ -466,8 +532,10 @@ final class MessengerPane extends BorderPane {
         Thread.ofPlatform().daemon().name("messenger-send").start(() -> {
             try {
                 manager.send(contact.link(), body, message -> Platform.runLater(() -> {
-                    if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
+                    if ("MESSAGE_SENT".equals(message)) activeMessage.status.set("✓ Sent");
+                    else if (sending && selected != null && selected.link().equals(contact.link())) status.setText(message);
                 }));
+                activeOutgoingMessages.remove(pendingId);
                 Platform.runLater(() -> {
                     if (selected != null && selected.link().equals(contact.link()) && composer.getText().equals(body))
                         composer.clear();
@@ -478,7 +546,9 @@ final class MessengerPane extends BorderPane {
                     refreshMessages();
                 });
             } catch (Exception e) {
+                activeOutgoingMessages.remove(pendingId);
                 Platform.runLater(() -> {
+                    transcript.getItems().removeIf(message -> message.id().equals(pendingId));
                     composer.setDisable(false);
                     sending = false;
                     setTransferControls(false);
@@ -543,6 +613,7 @@ final class MessengerPane extends BorderPane {
                     manager.sendFile(contact.link(), path, index == 0 ? caption : "", cancellation,
                             transferred -> Platform.runLater(() -> {
                                 double fileFraction = fileSize == 0 ? 1 : Math.min(1, Math.max(0, (double) transferred / fileSize));
+                                if (transferred > 0) bubble.sent.set(true);
                                 bubble.progress.set(fileFraction);
                                 bubble.speed.set(formatSpeed(speed.update(completedBytes + transferred, totalBytes, System.nanoTime())));
                             }),
@@ -620,6 +691,7 @@ final class MessengerPane extends BorderPane {
                 ActiveTransfer activeBubble = bubble;
                 SpeedMeter speed = new SpeedMeter();
                 manager.sendFile(contact.link(), path, caption, cancellation, transferred -> Platform.runLater(() -> {
+                            if (transferred > 0) activeBubble.sent.set(true);
                             activeBubble.progress.set(size == 0 ? 1.0 : Math.min(1, Math.max(0, (double) transferred / size)));
                             activeBubble.speed.set(formatSpeed(speed.update(transferred, size, System.nanoTime())));
                         }),
@@ -1355,7 +1427,7 @@ final class MessengerPane extends BorderPane {
                     actions.getChildren().add(exportButton);
                 }
                 if (!actions.getChildren().isEmpty()) rows.getChildren().add(actions);
-                setText(null); setGraphic(wrapMessageCard(rows, message.outgoing())); return;
+                setText(null); setGraphic(wrapMessageCard(rows, message)); return;
             } else {
                 content = new Label(message.body());
                 content.setWrapText(true);
@@ -1364,12 +1436,35 @@ final class MessengerPane extends BorderPane {
             VBox rows = new VBox(4, heading, content);
             rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
             rows.setPadding(new Insets(6));
-            setText(null); setGraphic(wrapMessageCard(rows, message.outgoing()));
+            setText(null); setGraphic(wrapMessageCard(rows, message));
         }
 
-        private HBox wrapMessageCard(VBox card, boolean outgoing) {
-            HBox alignment = new HBox(card);
-            alignment.setAlignment(outgoing ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
+        private HBox wrapMessageCard(VBox card, MessageStore.Message message) {
+            VBox messageGroup = new VBox(3, card);
+            messageGroup.setAlignment(message.outgoing() ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
+            messageGroup.setMaxWidth(680);
+            if (message.outgoing() && isLatestOutgoing(message.id())) {
+                Label receipt = new Label();
+                ActiveOutgoingMessage pendingMessage = activeOutgoingMessages.get(message.id());
+                ActiveTransfer transfer = activeTransfers.get(message.id());
+                if (pendingMessage != null) {
+                    receipt.textProperty().bind(pendingMessage.status);
+                    receipt.getStyleClass().add("delivery-status");
+                } else if (transfer != null) {
+                    receipt.textProperty().bind(Bindings.createStringBinding(
+                            () -> transfer.sent.get() ? "✓ Sent" : "Sending…", transfer.sent));
+                    receipt.getStyleClass().add("delivery-status");
+                } else if (message.seenAt() > 0) {
+                    receipt.setText("✓✓ Seen");
+                    receipt.getStyleClass().addAll("delivery-status", "seen");
+                } else {
+                    receipt.setText("✓✓ Delivered");
+                    receipt.getStyleClass().add("delivery-status");
+                }
+                messageGroup.getChildren().add(receipt);
+            }
+            HBox alignment = new HBox(messageGroup);
+            alignment.setAlignment(message.outgoing() ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
             alignment.setMaxWidth(Double.MAX_VALUE);
             alignment.prefWidthProperty().bind(transcript.widthProperty().subtract(34));
             card.setMaxWidth(680);

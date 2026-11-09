@@ -9,7 +9,12 @@ import java.util.List;
 /** Local, plaintext conversation history. Transport payloads are encrypted separately. */
 final class MessageStore {
     record Message(String id, String contactLink, boolean outgoing, String body,
-                   String attachmentName, String attachmentPath, long attachmentSize, long timestamp) {}
+                   String attachmentName, String attachmentPath, long attachmentSize, long timestamp, long seenAt) {
+        Message(String id, String contactLink, boolean outgoing, String body, String attachmentName,
+                String attachmentPath, long attachmentSize, long timestamp) {
+            this(id, contactLink, outgoing, body, attachmentName, attachmentPath, attachmentSize, timestamp, 0);
+        }
+    }
 
     private final String url;
 
@@ -28,6 +33,7 @@ final class MessageStore {
             addColumn(statement, "attachment_name TEXT");
             addColumn(statement, "attachment_path TEXT");
             addColumn(statement, "attachment_size INTEGER NOT NULL DEFAULT 0");
+            addColumn(statement, "seen_at INTEGER NOT NULL DEFAULT 0");
             statement.execute("CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(contact_link,sent_at)");
         }
     }
@@ -71,15 +77,25 @@ final class MessageStore {
     synchronized List<Message> all(String contactLink) throws SQLException {
         var messages = new ArrayList<Message>();
         try (var connection = connect(); var statement = connection.prepareStatement(
-                "SELECT message_id,direction,body,attachment_name,attachment_path,attachment_size,sent_at FROM messages WHERE contact_link=? ORDER BY sent_at,message_id LIMIT 5000")) {
+                "SELECT message_id,direction,body,attachment_name,attachment_path,attachment_size,sent_at,seen_at FROM messages WHERE contact_link=? ORDER BY sent_at,message_id LIMIT 5000")) {
             statement.setString(1, contactLink);
             try (var rows = statement.executeQuery()) {
                 while (rows.next()) messages.add(new Message(rows.getString(1), contactLink,
                         rows.getInt(2) == 1, rows.getString(3), rows.getString(4), rows.getString(5),
-                        rows.getLong(6), rows.getLong(7)));
+                        rows.getLong(6), rows.getLong(7), rows.getLong(8)));
             }
         }
         return List.copyOf(messages);
+    }
+
+    synchronized boolean markSeen(String contactLink, String messageId, long seenAt) throws SQLException {
+        try (var connection = connect(); var statement = connection.prepareStatement(
+                "UPDATE messages SET seen_at=CASE WHEN seen_at=0 THEN ? ELSE seen_at END WHERE contact_link=? AND message_id=? AND direction=1")) {
+            statement.setLong(1, seenAt);
+            statement.setString(2, contactLink);
+            statement.setString(3, messageId);
+            return statement.executeUpdate() > 0;
+        }
     }
 
     private static void addColumn(Statement statement, String definition) throws SQLException {

@@ -38,7 +38,8 @@ final class ContactMessaging {
     private ContactMessaging() {}
 
     static MessageStore.Message send(Socket socket, ContactRendezvous.Material material,
-                                     MessageStore store, String link, String body, boolean newConnection) throws Exception {
+                                     MessageStore store, String link, String body, boolean newConnection,
+                                     Runnable sentSignal) throws Exception {
         byte[] plaintext = body.getBytes(StandardCharsets.UTF_8);
         if (plaintext.length == 0 || plaintext.length > MAX_BODY_BYTES)
             throw new IllegalArgumentException("Message must be between 1 and 4096 UTF-8 bytes.");
@@ -58,6 +59,7 @@ final class ContactMessaging {
         if (newConnection) output.writeInt(MAGIC);
         output.write(idBytes); output.writeLong(timestamp);
         output.write(nonce); output.writeByte(0); output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
+        if (sentSignal != null) sentSignal.run();
         awaitReceipt(input, material, nonce, aad);
         var saved = new MessageStore.Message(id, link, true, body, null, null, 0, timestamp);
         store.save(link, id, true, body, timestamp);
@@ -86,6 +88,26 @@ final class ContactMessaging {
         output.write(idBytes); output.writeLong(timestamp); output.write(nonce); output.writeByte(type);
         output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
         awaitReceipt(input, material, nonce, aad);
+    }
+
+    static void sendReadReceipt(Socket socket, ContactRendezvous.Material material, String messageId,
+                                boolean newConnection) throws Exception {
+        byte[] idBytes = uuidBytes(UUID.randomUUID().toString());
+        long timestamp = System.currentTimeMillis();
+        byte[] nonce = new byte[12]; RANDOM.nextBytes(nonce);
+        byte type = 3;
+        byte[] aad = aad(idBytes, timestamp, type, material.localPublic(), material.remotePublic());
+        byte[] messageKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "message");
+        byte[] ciphertext;
+        try { ciphertext = crypt(Cipher.ENCRYPT_MODE, messageKey, nonce, aad, uuidBytes(messageId)); }
+        finally { Arrays.fill(messageKey, (byte) 0); }
+        var output = new DataOutputStream(socket.getOutputStream());
+        var input = new DataInputStream(socket.getInputStream());
+        if (newConnection) output.writeInt(MAGIC);
+        output.write(idBytes); output.writeLong(timestamp); output.write(nonce); output.writeByte(type);
+        output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
+        awaitReceipt(input, material, nonce, aad);
+        Arrays.fill(ciphertext, (byte) 0);
     }
 
     static MessageStore.Message sendFile(Socket socket, ContactRendezvous.Material material, MessageStore store,
@@ -189,7 +211,7 @@ final class ContactMessaging {
         int length = input.readInt();
         long maxLength = type == 1 ? MAX_FILE_BYTES + 4_400 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type != 0 && type != 1 && type != 2) throw new IOException("Unsupported message type.");
+        if (type != 0 && type != 1 && type != 2 && type != 3) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
         if (type == 1) {
             receiveFile(input, output, material, store, link, id, timestamp, nonce, aad, length, captionFrames);
@@ -207,6 +229,22 @@ final class ContactMessaging {
                     throw new GeneralSecurityException("Invalid connection check.");
             } finally { Arrays.fill(plaintext, (byte) 0); }
             if (onlineSignal != null) onlineSignal.run();
+            awaitReceiptSend(output, material, nonce, aad);
+            return;
+        }
+        if (type == 3) {
+            if (length != 32) throw new IOException("Invalid read receipt.");
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] plaintext;
+            try { plaintext = crypt(Cipher.DECRYPT_MODE, messageKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            String readMessageId;
+            try {
+                if (plaintext.length != 16) throw new IOException("Invalid read receipt message ID.");
+                readMessageId = uuidString(plaintext);
+            } finally { Arrays.fill(plaintext, (byte) 0); }
+            store.markSeen(link, readMessageId, timestamp);
             awaitReceiptSend(output, material, nonce, aad);
             return;
         }

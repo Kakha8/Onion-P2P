@@ -71,6 +71,8 @@
 .message-transfer-rate { -fx-text-fill: #d7e4f2; -fx-font-size: 11px; }
 .message-transfer-cancel { -fx-background-color: rgba(10, 16, 24, 0.28); -fx-border-color: transparent; -fx-text-fill: #f3f4f6; -fx-font-size: 16px; -fx-font-weight: bold; -fx-min-width: 24; -fx-pref-width: 24; -fx-max-width: 24; -fx-min-height: 24; -fx-pref-height: 24; -fx-max-height: 24; -fx-padding: 0; -fx-background-radius: 50%; }
 .message-transfer-cancel:hover { -fx-background-color: rgba(10, 16, 24, 0.5); }
+.delivery-status { -fx-text-fill: #9aa8b8; -fx-font-size: 10px; -fx-padding: 0 4 0 0; }
+.delivery-status.seen { -fx-text-fill: #60a5fa; }
 .hyperlink { -fx-text-fill: #8bbcf7; }
 .chat-status { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
 .chat-input-row { -fx-alignment: center; -fx-spacing: 4; -fx-padding: 4 8 4 8; -fx-background-color: #202832; -fx-background-radius: 26; -fx-border-color: #2b323d; -fx-border-radius: 26; }

@@ -60,13 +60,21 @@ final class ContactManager implements AutoCloseable {
         return messageStore.all(canonicalLink(link));
     }
 
+    void sendReadReceipt(String link, String messageId) throws Exception {
+        withMessageSession(link, ignored -> {}, () -> false, (entry, session, canonical) -> {
+            ContactMessaging.sendReadReceipt(session.socket, entry.material, messageId, session.firstMessage);
+            return null;
+        });
+    }
+
     MessageStore.Message send(String link, String body) throws Exception {
         return send(link, body, ignored -> {});
     }
 
     MessageStore.Message send(String link, String body, java.util.function.Consumer<String> status) throws Exception {
         return withMessageSession(link, status, () -> false, (entry, session, canonical) ->
-                ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage));
+                ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage,
+                        () -> status.accept("MESSAGE_SENT")));
     }
 
     MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress) throws Exception {
