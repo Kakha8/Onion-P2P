@@ -14,6 +14,9 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
+import javax.sound.sampled.LineEvent;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -43,7 +46,8 @@ final class MessengerPane extends BorderPane {
     private final Label conversationPresence = new Label();
     private final TextField composer = new TextField();
     private final Button sendButton = new Button("Send");
-    private final Button attachButton = new Button("Attach file");
+    private final Button attachButton = new Button("📎");
+    private final Button voiceButton = new Button("🎙");
     private final ProgressBar transferProgress = new ProgressBar(0);
     private final Label transferRate = new Label();
     private final Button cancelFileButton = new Button("×");
@@ -56,9 +60,15 @@ final class MessengerPane extends BorderPane {
     private final Map<String, Presence> presence = new ConcurrentHashMap<>();
     private final Timeline poll;
     private final Timeline presencePoll;
+    private final Timeline voiceDurationPoll;
     private ContactStore.Contact selected;
     private ContactStore.Contact activeTransferContact;
     private java.util.concurrent.atomic.AtomicBoolean activeFileCancellation;
+    private VoiceRecorder voiceRecorder;
+    private ContactStore.Contact recordingContact;
+    private long voiceRecordingStarted;
+    private Clip activeVoiceClip;
+    private Path activeVoicePath;
     private boolean sending;
 
     private boolean loaded;
@@ -105,11 +115,16 @@ final class MessengerPane extends BorderPane {
         conversationHeader.getStyleClass().add("conversation-header");
         composer.setPromptText("Write a message…");
         composer.getStyleClass().add("chat-composer");
+        attachButton.setTooltip(new Tooltip("Attach file"));
+        attachButton.getStyleClass().add("attach-icon-button");
+        voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
+        voiceButton.getStyleClass().add("attach-icon-button");
         sendButton.getStyleClass().add("primary-button");
         attachButton.getStyleClass().add("secondary-button");
         composer.setOnAction(event -> send());
         sendButton.setOnAction(event -> send());
         attachButton.setOnAction(event -> chooseFile());
+        voiceButton.setOnAction(event -> toggleVoiceRecording());
         setTransferControls(false);
         transferProgress.setMaxWidth(Double.MAX_VALUE);
         transferProgress.setVisible(false);
@@ -125,11 +140,11 @@ final class MessengerPane extends BorderPane {
         transferRow.getStyleClass().add("transfer-row");
         transferRate.getStyleClass().add("transfer-rate");
         HBox.setHgrow(transferProgress, Priority.ALWAYS);
-        HBox inputRow = new HBox(8, composer, attachButton, sendButton);
+        HBox inputRow = new HBox(8, attachButton, composer, sendButton, voiceButton);
         inputRow.getStyleClass().add("chat-input-row");
         HBox.setHgrow(composer, Priority.ALWAYS);
 
-        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Received files save in the app downloads folder; use Export… to choose another location. Local chat history is unencrypted.");
+        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Received files save in the app downloads folder; use Export… to choose another location. Local chat history and saved voice recordings are unencrypted.");
         securityNote.setWrapText(true);
         securityNote.getStyleClass().add("security-note");
         status.getStyleClass().add("chat-status");
@@ -150,6 +165,8 @@ final class MessengerPane extends BorderPane {
         poll.setCycleCount(Timeline.INDEFINITE);
         presencePoll = new Timeline(new KeyFrame(Duration.seconds(15), e -> checkContactsPresence()));
         presencePoll.setCycleCount(Timeline.INDEFINITE);
+        voiceDurationPoll = new Timeline(new KeyFrame(Duration.seconds(1), e -> updateVoiceDuration()));
+        voiceDurationPoll.setCycleCount(Timeline.INDEFINITE);
         sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene == null) { poll.stop(); presencePoll.stop(); }
             else {
@@ -289,9 +306,14 @@ final class MessengerPane extends BorderPane {
         chooser.setTitle("Choose a file to send (1 GiB maximum)");
         File file = chooser.showOpenDialog(getScene() == null ? null : getScene().getWindow());
         if (file == null) return;
+        sendFile(contact, file.toPath(), false);
+    }
+
+    private void sendFile(ContactStore.Contact contact, Path path, boolean voiceMessage) {
         sending = true;
         activeTransferContact = contact;
-        activeFileCancellation = new java.util.concurrent.atomic.AtomicBoolean();
+        var cancellation = new java.util.concurrent.atomic.AtomicBoolean();
+        activeFileCancellation = cancellation;
         setTransferControls(true);
         transferProgress.setProgress(0);
         transferProgress.setManaged(true);
@@ -302,13 +324,12 @@ final class MessengerPane extends BorderPane {
         cancelFileButton.setDisable(false);
         cancelFileButton.setManaged(true);
         cancelFileButton.setVisible(true);
-        status.setText("Sending " + file.getName() + "…");
+        status.setText(voiceMessage ? "Sending voice message…" : "Sending " + path.getFileName() + "…");
         Thread.ofPlatform().daemon().name("messenger-file-send").start(() -> {
-            var cancellation = activeFileCancellation;
             try {
-                long size = file.length();
+                long size = Files.size(path);
                 SpeedMeter speed = new SpeedMeter();
-                manager.sendFile(contact.link(), file.toPath(), cancellation, transferred -> Platform.runLater(() -> {
+                manager.sendFile(contact.link(), path, cancellation, transferred -> Platform.runLater(() -> {
                             transferProgress.setProgress(size == 0 ? 1.0 : (double) transferred / size);
                             transferRate.setText(formatSpeed(speed.update(transferred, size, System.nanoTime())));
                         }),
@@ -326,11 +347,13 @@ final class MessengerPane extends BorderPane {
                     transferRate.setVisible(false);
                     cancelFileButton.setManaged(false);
                     cancelFileButton.setVisible(false);
-                    status.setText(cancellation.get() ? "File transfer cancelled." : "File delivered and saved by "
-                            + contact.username() + ". Average speed: " + formatSpeed(speed.average()) + ".");
+                    status.setText(cancellation.get() ? (voiceMessage ? "Voice message cancelled." : "File transfer cancelled.")
+                            : (voiceMessage ? "Voice message delivered." : "File delivered and saved by " + contact.username())
+                            + " Average speed: " + formatSpeed(speed.average()) + ".");
                     refreshMessages();
                 });
             } catch (Exception e) {
+                if (voiceMessage) try { Files.deleteIfExists(path); } catch (Exception ignored) {}
                 Platform.runLater(() -> {
                     sending = false;
                     activeFileCancellation = null;
@@ -342,10 +365,117 @@ final class MessengerPane extends BorderPane {
                     transferRate.setVisible(false);
                     cancelFileButton.setManaged(false);
                     cancelFileButton.setVisible(false);
-                    status.setText(cancellation.get() ? "File transfer cancelled." : "File was not delivered: " + safe(e));
+                    status.setText(cancellation.get() ? (voiceMessage ? "Voice message cancelled." : "File transfer cancelled.")
+                            : (voiceMessage ? "Voice message was not delivered: " : "File was not delivered: ") + safe(e));
                 });
             }
         });
+    }
+
+    private void toggleVoiceRecording() {
+        if (voiceRecorder != null) {
+            stopVoiceRecording();
+            return;
+        }
+        if (sending) return;
+        ContactStore.Contact contact = selected;
+        if (contact == null) {
+            status.setText("Select a saved contact before recording a voice message.");
+            return;
+        }
+        Path directory = AppData.directory().resolve("voice-messages");
+        Path output = directory.resolve("voice-message-" + java.util.UUID.randomUUID() + ".wav");
+        try { Files.createDirectories(directory); }
+        catch (Exception e) { status.setText("Could not prepare voice recording: " + safe(e)); return; }
+
+        sending = true;
+        setTransferControls(true);
+        voiceButton.setText("…");
+        voiceButton.setDisable(true);
+        status.setText("Preparing microphone…");
+        recordingContact = contact;
+        VoiceRecorder recorder = new VoiceRecorder(output);
+        voiceRecorder = recorder;
+        recorder.start(
+                () -> Platform.runLater(() -> {
+                    if (voiceRecorder != recorder) return;
+                    voiceRecordingStarted = System.nanoTime();
+                    voiceButton.setText("■");
+                    voiceButton.setTooltip(new Tooltip("Stop and send voice message"));
+                    voiceButton.setDisable(false);
+                    voiceButton.getStyleClass().add("recording");
+                    status.setText("Recording voice message… 0:00 / 0:30");
+                    voiceDurationPoll.playFromStart();
+                }),
+                recorded -> {
+                    final long recordedBytes;
+                    try { recordedBytes = Files.size(recorded); }
+                    catch (Exception e) {
+                        Platform.runLater(() -> {
+                            voiceRecorder = null;
+                            recordingContact = null;
+                            voiceDurationPoll.stop();
+                            try { Files.deleteIfExists(recorded); } catch (Exception ignored) {}
+                            voiceButton.setText("🎙");
+                            voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
+                            voiceButton.getStyleClass().remove("recording");
+                            finishVoiceOperation("Could not prepare voice message: " + safe(e));
+                        });
+                        return;
+                    }
+                    Platform.runLater(() -> {
+                        if (voiceRecorder != recorder) { try { Files.deleteIfExists(recorded); } catch (Exception ignored) {} return; }
+                        voiceDurationPoll.stop();
+                        voiceRecorder = null;
+                        voiceButton.setText("🎙");
+                        voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
+                        voiceButton.getStyleClass().remove("recording");
+                        ContactStore.Contact destination = recordingContact;
+                        recordingContact = null;
+                        if (recordedBytes <= 44) {
+                            try { Files.deleteIfExists(recorded); } catch (Exception ignored) {}
+                            finishVoiceOperation("No audio was recorded. Check microphone access and try again.");
+                        } else sendFile(destination, recorded, true);
+                    });
+                },
+                error -> Platform.runLater(() -> {
+                    if (voiceRecorder != recorder) return;
+                    voiceDurationPoll.stop();
+                    voiceRecorder = null;
+                    recordingContact = null;
+                    try { Files.deleteIfExists(output); } catch (Exception ignored) {}
+                    voiceButton.setText("🎙");
+                    voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
+                    voiceButton.getStyleClass().remove("recording");
+                    finishVoiceOperation("Could not record audio: " + safe(error));
+                }));
+    }
+
+    private void updateVoiceDuration() {
+        if (voiceRecorder == null) { voiceDurationPoll.stop(); return; }
+        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - voiceRecordingStarted);
+        long minutes = elapsedSeconds / 60;
+        long seconds = elapsedSeconds % 60;
+        status.setText(String.format(java.util.Locale.ROOT, "Recording voice message… %d:%02d / 0:30", minutes, seconds));
+        if (elapsedSeconds >= 30) stopVoiceRecording();
+    }
+
+    private void stopVoiceRecording() {
+        VoiceRecorder recorder = voiceRecorder;
+        if (recorder == null) return;
+        voiceDurationPoll.stop();
+        voiceButton.setDisable(true);
+        voiceButton.setText("…");
+        voiceButton.setTooltip(new Tooltip("Preparing voice message"));
+        voiceButton.getStyleClass().remove("recording");
+        status.setText("Preparing voice message…");
+        recorder.stop();
+    }
+
+    private void finishVoiceOperation(String message) {
+        sending = false;
+        setTransferControls(false);
+        status.setText(message);
     }
 
     private void cancelFileTransfer() {
@@ -441,6 +571,7 @@ final class MessengerPane extends BorderPane {
     private void setTransferControls(boolean busy) {
         sendButton.setDisable(busy || selected == null);
         attachButton.setDisable(busy || selected == null);
+        voiceButton.setDisable(busy || selected == null);
         composer.setDisable(busy || selected == null);
     }
 
@@ -504,15 +635,30 @@ final class MessengerPane extends BorderPane {
             heading.getStyleClass().add("message-heading");
             Label content;
             if (message.attachmentName() != null) {
-                content = new Label("📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
+                boolean voice = isVoiceMessage(message);
+                content = new Label(voice ? "🎙 Voice message" : "📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
                 content.setWrapText(true);
-                if (!message.outgoing()) {
-                    Hyperlink exportLink = new Hyperlink("Export…");
-                    exportLink.setOnAction(event -> export(message));
-                    VBox rows = new VBox(4, heading, content, exportLink);
-                    rows.setPadding(new Insets(6));
-                    setText(null); setGraphic(rows); return;
+                content.getStyleClass().add("message-content");
+                VBox rows = new VBox(5, heading, content);
+                rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
+                HBox actions = new HBox(8);
+                if (voice) {
+                    Button play = new Button(isPlaying(message.attachmentPath()) ? "■ Stop" : "▶ Play");
+                    play.getStyleClass().add("voice-play-button");
+                    if (message.attachmentPath() == null || !Files.isRegularFile(Path.of(message.attachmentPath()))) {
+                        play.setDisable(true);
+                        play.setTooltip(new Tooltip("Voice recording is unavailable on this device."));
+                    } else play.setOnAction(event -> playVoice(Path.of(message.attachmentPath())));
+                    actions.getChildren().add(play);
                 }
+                if (!message.outgoing()) {
+                    Button exportButton = new Button("Export…");
+                    exportButton.getStyleClass().add("export-button");
+                    exportButton.setOnAction(event -> export(message));
+                    actions.getChildren().add(exportButton);
+                }
+                if (!actions.getChildren().isEmpty()) rows.getChildren().add(actions);
+                setText(null); setGraphic(rows); return;
             } else {
                 content = new Label(message.body());
                 content.setWrapText(true);
@@ -523,5 +669,55 @@ final class MessengerPane extends BorderPane {
             rows.setPadding(new Insets(6));
             setText(null); setGraphic(rows);
         }
+    }
+
+    private static boolean isVoiceMessage(MessageStore.Message message) {
+        return message.attachmentName() != null && message.attachmentName().startsWith("voice-message-")
+                && message.attachmentName().toLowerCase(java.util.Locale.ROOT).endsWith(".wav");
+    }
+
+    private boolean isPlaying(String path) {
+        return path != null && activeVoiceClip != null && activeVoiceClip.isRunning() && Path.of(path).equals(activeVoicePath);
+    }
+
+    private void playVoice(Path path) {
+        if (activeVoiceClip != null) {
+            Clip previous = activeVoiceClip;
+            boolean sameMessage = path.equals(activeVoicePath);
+            activeVoiceClip = null;
+            activeVoicePath = null;
+            try { previous.stop(); previous.close(); } catch (Exception ignored) {}
+            transcript.refresh();
+            if (sameMessage) return;
+        }
+        status.setText("Loading voice message…");
+        Thread.ofPlatform().daemon().name("voice-playback").start(() -> {
+            Clip clip = null;
+            try (var audio = AudioSystem.getAudioInputStream(path.toFile())) {
+                clip = AudioSystem.getClip();
+                clip.open(audio);
+                Clip ready = clip;
+                Platform.runLater(() -> {
+                    activeVoiceClip = ready;
+                    activeVoicePath = path;
+                    ready.addLineListener(event -> {
+                        if (event.getType() == LineEvent.Type.STOP) Platform.runLater(() -> {
+                            if (activeVoiceClip == ready) {
+                                activeVoiceClip = null;
+                                activeVoicePath = null;
+                                ready.close();
+                                transcript.refresh();
+                            }
+                        });
+                    });
+                    ready.start();
+                    status.setText("Playing voice message…");
+                    transcript.refresh();
+                });
+            } catch (Exception e) {
+                if (clip != null) try { clip.close(); } catch (Exception ignored) {}
+                Platform.runLater(() -> status.setText("Could not play voice message: " + safe(e)));
+            }
+        });
     }
 }

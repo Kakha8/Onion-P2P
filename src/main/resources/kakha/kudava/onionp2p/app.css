@@ -68,8 +68,14 @@
 .message-content { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; }
 .hyperlink { -fx-text-fill: #8bbcf7; }
 .chat-status { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
-.chat-input-row { -fx-alignment: center; -fx-padding: 2 0 2 0; }
-.chat-composer { -fx-background-color: #1c232c; -fx-background-radius: 18; -fx-padding: 10 14 10 14; }
+.chat-input-row { -fx-alignment: center; -fx-spacing: 4; -fx-padding: 4 8 4 8; -fx-background-color: #202832; -fx-background-radius: 26; -fx-border-color: #2b323d; -fx-border-radius: 26; }
+.chat-composer { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-insets: 0; -fx-padding: 10 8 10 8; }
+.chat-composer:focused { -fx-border-color: transparent; }
+.attach-icon-button { -fx-background-color: transparent; -fx-border-color: transparent; -fx-font-size: 19px; -fx-padding: 5 8 5 8; -fx-text-fill: #bdc8d7; }
+.attach-icon-button:hover { -fx-background-color: #303b49; -fx-background-radius: 18; }
+.attach-icon-button.recording { -fx-background-color: #493128; -fx-text-fill: #f3aa88; -fx-background-radius: 18; }
+.chat-input-row .primary-button { -fx-background-radius: 20; -fx-padding: 8 16 8 16; }
+.voice-play-button, .export-button { -fx-background-color: #253244; -fx-border-color: #344153; -fx-text-fill: #8bbcf7; -fx-padding: 5 10 5 10; }
 .transfer-row { -fx-alignment: center; }
 .transfer-rate { -fx-text-fill: #9aa3af; -fx-font-size: 11px; }
 .security-note { -fx-text-fill: #758195; -fx-font-size: 10px; }

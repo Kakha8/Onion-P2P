@@ -5,6 +5,7 @@ module kakha.kudava.onionp2p {
     requires org.bouncycastle.provider;
     requires jdk.crypto.ec;
     requires java.sql;
+    requires java.desktop;
     requires org.xerial.sqlitejdbc;
 
 
