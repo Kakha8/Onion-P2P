@@ -10,9 +10,22 @@
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.Region?>
 <?import javafx.scene.control.PasswordField?>
 <?import javafx.scene.control.Separator?>
-<StackPane styleClass="app-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
+<BorderPane fx:id="windowRoot" styleClass="app-root window-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
+    <top>
+        <HBox fx:id="windowBar" styleClass="window-bar" alignment="CENTER_LEFT" spacing="0">
+            <Label text="Onion-P2P" styleClass="window-title"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Button fx:id="minimizeButton" styleClass="window-control-button" onAction="#onMinimizeWindow"/>
+            <Button fx:id="maximizeButton" styleClass="window-control-button" onAction="#onToggleMaximizeWindow"/>
+            <Button fx:id="closeWindowButton" styleClass="window-control-button window-close-button" onAction="#onCloseWindow"/>
+        </HBox>
+    </top>
+    <center>
+        <StackPane styleClass="window-content">
     <VBox fx:id="authPane" styleClass="auth-card" alignment="CENTER" spacing="16" maxWidth="440" visible="false" managed="false">
         <Label fx:id="authTitle" text="Set up your account" style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
         <Label fx:id="authMessage" wrapText="true" text="Checking local account…"/>
@@ -24,41 +37,46 @@
         <Button fx:id="authButton" text="Create account" onAction="#onAuthenticate"/>
         <ProgressIndicator fx:id="authProgress" prefWidth="28" prefHeight="28" maxWidth="28" maxHeight="28" visible="false" managed="false"/>
     </VBox>
-    <VBox fx:id="appPane" styleClass="app-shell" alignment="TOP_LEFT" spacing="8.0" visible="false" managed="false">
+    <VBox fx:id="appPane" styleClass="app-shell" alignment="TOP_LEFT" spacing="0.0" visible="false" managed="false">
     <padding>
-        <Insets bottom="10.0" left="12.0" right="12.0" top="10.0"/>
+        <Insets bottom="0.0" left="0.0" right="0.0" top="0.0"/>
     </padding>
 
-    <HBox alignment="CENTER_LEFT" spacing="8">
-        <Label text="Onion-P2P" styleClass="app-title"/>
-        <Label fx:id="statusText" styleClass="connection-status" wrapText="true" HBox.hgrow="ALWAYS"/>
-    </HBox>
-    <HBox fx:id="torProgressRow" alignment="CENTER" spacing="8" visible="false" managed="false">
-        <ProgressIndicator fx:id="torProgress" prefWidth="16" prefHeight="16" maxWidth="16" maxHeight="16"/>
-        <Label fx:id="torStatus" text="Starting Tor…" style="-fx-font-size: 11px;"/>
-    </HBox>
-    <HBox alignment="CENTER_LEFT" spacing="8">
-        <Button fx:id="generateButton" styleClass="secondary-button" text="My link" onAction="#onGenerateLink"/>
-        <VBox fx:id="linkPanel" spacing="4" visible="false" managed="false" HBox.hgrow="ALWAYS">
-            <HBox spacing="6">
-                <TextField fx:id="contactLink" editable="false" promptText="Your public-key link" HBox.hgrow="ALWAYS"/>
-                <Button styleClass="secondary-button" text="Copy" onAction="#onCopyLink"/>
+    <StackPane fx:id="contentStack" VBox.vgrow="ALWAYS">
+        <VBox fx:id="messengerHost" spacing="4" minHeight="250"/>
+        <VBox fx:id="addContactPane" styleClass="add-contact-pane" spacing="14" alignment="TOP_LEFT" visible="false" managed="false">
+            <HBox alignment="CENTER_LEFT" spacing="12">
+                <Button text="‹" styleClass="rail-button" onAction="#onCloseAddContact"/>
+                <Label text="Add a contact" styleClass="add-contact-title"/>
             </HBox>
+            <Label text="Import a contact link to pair securely." styleClass="add-contact-description" wrapText="true"/>
+            <Label fx:id="statusText" styleClass="add-contact-description" wrapText="true"/>
+            <VBox styleClass="my-link-section" spacing="8">
+                <Label text="Your contact link" styleClass="add-contact-section-title"/>
+                <Button fx:id="generateButton" styleClass="secondary-button" text="Generate public-key link" onAction="#onGenerateLink"/>
+                <VBox fx:id="linkPanel" spacing="4" visible="false" managed="false">
+                    <HBox spacing="6">
+                        <TextField fx:id="contactLink" editable="false" promptText="Your public-key link" HBox.hgrow="ALWAYS"/>
+                        <Button styleClass="secondary-button" text="Copy" onAction="#onCopyLink"/>
+                    </HBox>
+                </VBox>
+            </VBox>
+            <Separator/>
+            <HBox alignment="CENTER_LEFT" spacing="8">
+                <TextField fx:id="importLink" promptText="Paste a contact link" onAction="#onImportLink" HBox.hgrow="ALWAYS"/>
+                <Button fx:id="importButton" styleClass="primary-button" text="Import link" onAction="#onImportLink"/>
+            </HBox>
+            <HBox alignment="CENTER_LEFT" spacing="6">
+                <ProgressIndicator fx:id="pairingProgress" prefWidth="18" prefHeight="18" maxWidth="18" maxHeight="18" visible="false" managed="false"/>
+                <Label fx:id="importStatus" wrapText="true" styleClass="add-contact-description"/>
+            </HBox>
+            <VBox fx:id="addressPanel" spacing="5" visible="false" managed="false">
+                <Label text="Contact rendezvous address" styleClass="add-contact-description"/>
+                <TextField fx:id="importedAddress" editable="false"/>
+            </VBox>
         </VBox>
-    </HBox>
-    <HBox alignment="CENTER_LEFT" spacing="8">
-        <TextField fx:id="importLink" promptText="Paste a contact link to add them" onAction="#onImportLink" HBox.hgrow="ALWAYS"/>
-        <Button fx:id="importButton" styleClass="primary-button" text="Import link" onAction="#onImportLink"/>
-    </HBox>
-    <HBox alignment="CENTER_LEFT" spacing="6">
-        <ProgressIndicator fx:id="pairingProgress" prefWidth="14" prefHeight="14" maxWidth="14" maxHeight="14" visible="false" managed="false"/>
-        <Label fx:id="importStatus" wrapText="true" style="-fx-font-size: 11px;"/>
-    </HBox>
-    <VBox fx:id="addressPanel" spacing="3" visible="false" managed="false">
-        <Label text="Contact rendezvous address" style="-fx-font-size: 10px;"/>
-        <TextField fx:id="importedAddress" editable="false" prefHeight="26"/>
+    </StackPane>
     </VBox>
-    <Separator/>
-    <VBox fx:id="messengerHost" spacing="4" minHeight="250" VBox.vgrow="ALWAYS"/>
-    </VBox>
-</StackPane>
+        </StackPane>
+    </center>
+</BorderPane>

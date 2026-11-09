@@ -7,9 +7,14 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.PasswordField;
+import javafx.scene.shape.SVGPath;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.Cursor;
+import javafx.scene.input.MouseEvent;
+import javafx.stage.Stage;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 
@@ -26,9 +31,12 @@ public class HelloController {
     @FXML private Label importStatus;
     @FXML private ProgressIndicator pairingProgress;
     @FXML private VBox messengerHost;
-    @FXML private HBox torProgressRow;
-    @FXML private ProgressIndicator torProgress;
-    @FXML private Label torStatus;
+    @FXML private VBox addContactPane;
+    @FXML private HBox windowBar;
+    @FXML private Button maximizeButton;
+    @FXML private Button minimizeButton;
+    @FXML private Button closeWindowButton;
+    @FXML private BorderPane windowRoot;
     @FXML private VBox authPane;
     @FXML private Label authTitle;
     @FXML private Label authMessage;
@@ -45,6 +53,40 @@ public class HelloController {
     private Runnable onAuthenticated;
     private boolean creatingAccount;
     private String authenticatedUsername;
+    private double windowDragOffsetX;
+    private double windowDragOffsetY;
+    private double resizeStartX, resizeStartY, resizeStartWidth, resizeStartHeight, resizeStartWindowX, resizeStartWindowY;
+    private Cursor activeResizeCursor = Cursor.DEFAULT;
+
+    @FXML private void initialize() {
+        minimizeButton.setFocusTraversable(false);
+        maximizeButton.setFocusTraversable(false);
+        closeWindowButton.setFocusTraversable(false);
+        minimizeButton.setGraphic(windowControlGlyph("M4 12 H20"));
+        maximizeButton.setGraphic(windowControlGlyph("M5 5 H19 V19 H5 Z"));
+        closeWindowButton.setGraphic(windowControlGlyph("M5 5 L19 19 M19 5 L5 19"));
+        windowBar.setOnMousePressed(event -> {
+            if (event.getClickCount() > 1 || event.getTarget() instanceof Button) return;
+            Stage stage = windowStage();
+            if (stage == null || stage.isMaximized()) return;
+            windowDragOffsetX = event.getScreenX() - stage.getX();
+            windowDragOffsetY = event.getScreenY() - stage.getY();
+        });
+        windowBar.setOnMouseDragged(event -> {
+            Stage stage = windowStage();
+            if (stage != null && !stage.isMaximized() && !(event.getTarget() instanceof Button)) {
+                stage.setX(event.getScreenX() - windowDragOffsetX);
+                stage.setY(event.getScreenY() - windowDragOffsetY);
+            }
+        });
+        windowBar.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2 && !(event.getTarget() instanceof Button)) toggleMaximize();
+        });
+        windowRoot.addEventHandler(MouseEvent.MOUSE_MOVED, this::updateResizeCursor);
+        windowRoot.addEventHandler(MouseEvent.MOUSE_PRESSED, this::beginResize);
+        windowRoot.addEventHandler(MouseEvent.MOUSE_DRAGGED, this::resizeWindow);
+        windowRoot.addEventHandler(MouseEvent.MOUSE_RELEASED, event -> activeResizeCursor = Cursor.DEFAULT);
+    }
 
     void setOnAuthenticated(Runnable callback) { onAuthenticated = callback; }
 
@@ -67,6 +109,79 @@ public class HelloController {
                 });
             }
         });
+    }
+
+    @FXML private void onMinimizeWindow() {
+        Stage stage = windowStage();
+        if (stage != null) stage.setIconified(true);
+    }
+
+    @FXML private void onToggleMaximizeWindow() { toggleMaximize(); }
+
+    private void toggleMaximize() {
+        Stage stage = windowStage();
+        if (stage == null) return;
+        stage.setMaximized(!stage.isMaximized());
+        maximizeButton.setGraphic(windowControlGlyph(stage.isMaximized()
+                ? "M8 5 H19 V16 M16 8 H5 V19 H16 Z" : "M5 5 H19 V19 H5 Z"));
+    }
+
+    private static SVGPath windowControlGlyph(String path) {
+        SVGPath icon = new SVGPath();
+        icon.setContent(path);
+        icon.getStyleClass().add("window-control-glyph");
+        icon.setScaleX(0.82);
+        icon.setScaleY(0.82);
+        return icon;
+    }
+
+    @FXML private void onCloseWindow() {
+        Stage stage = windowStage();
+        if (stage != null) stage.close();
+    }
+
+    private Stage windowStage() {
+        return windowRoot.getScene() != null && windowRoot.getScene().getWindow() instanceof Stage stage ? stage : null;
+    }
+
+    private void updateResizeCursor(MouseEvent event) {
+        if (windowStage() == null || windowStage().isMaximized()) return;
+        double x = event.getX(), y = event.getY(), width = windowRoot.getWidth(), height = windowRoot.getHeight();
+        boolean left = x <= 6, right = x >= width - 6, top = y <= 6, bottom = y >= height - 6;
+        activeResizeCursor = top && left ? Cursor.NW_RESIZE : top && right ? Cursor.NE_RESIZE
+                : bottom && left ? Cursor.SW_RESIZE : bottom && right ? Cursor.SE_RESIZE
+                : left ? Cursor.W_RESIZE : right ? Cursor.E_RESIZE : top ? Cursor.N_RESIZE
+                : bottom ? Cursor.S_RESIZE : Cursor.DEFAULT;
+        windowRoot.setCursor(activeResizeCursor);
+    }
+
+    private void beginResize(MouseEvent event) {
+        Stage stage = windowStage();
+        if (stage == null || stage.isMaximized() || activeResizeCursor == Cursor.DEFAULT
+                || event.getTarget() instanceof Button) return;
+        resizeStartX = event.getScreenX(); resizeStartY = event.getScreenY();
+        resizeStartWidth = stage.getWidth(); resizeStartHeight = stage.getHeight();
+        resizeStartWindowX = stage.getX(); resizeStartWindowY = stage.getY();
+        event.consume();
+    }
+
+    private void resizeWindow(MouseEvent event) {
+        Stage stage = windowStage();
+        if (stage == null || stage.isMaximized() || activeResizeCursor == Cursor.DEFAULT
+                || event.getTarget() instanceof Button || resizeStartWidth == 0) return;
+        double dx = event.getScreenX() - resizeStartX, dy = event.getScreenY() - resizeStartY;
+        if (activeResizeCursor == Cursor.E_RESIZE || activeResizeCursor == Cursor.NE_RESIZE || activeResizeCursor == Cursor.SE_RESIZE)
+            stage.setWidth(Math.max(stage.getMinWidth(), resizeStartWidth + dx));
+        if (activeResizeCursor == Cursor.W_RESIZE || activeResizeCursor == Cursor.NW_RESIZE || activeResizeCursor == Cursor.SW_RESIZE) {
+            double width = Math.max(stage.getMinWidth(), resizeStartWidth - dx);
+            stage.setWidth(width); stage.setX(resizeStartWindowX + resizeStartWidth - width);
+        }
+        if (activeResizeCursor == Cursor.S_RESIZE || activeResizeCursor == Cursor.SE_RESIZE || activeResizeCursor == Cursor.SW_RESIZE)
+            stage.setHeight(Math.max(stage.getMinHeight(), resizeStartHeight + dy));
+        if (activeResizeCursor == Cursor.N_RESIZE || activeResizeCursor == Cursor.NE_RESIZE || activeResizeCursor == Cursor.NW_RESIZE) {
+            double height = Math.max(stage.getMinHeight(), resizeStartHeight - dy);
+            stage.setHeight(height); stage.setY(resizeStartWindowY + resizeStartHeight - height);
+        }
     }
 
     private void showAuth(boolean create) {
@@ -138,28 +253,37 @@ public class HelloController {
     }
 
     void torStarting() {
-        torStatus.setText("Starting Tor and publishing your onion service…");
-        torProgressRow.setManaged(true);
-        torProgressRow.setVisible(true);
+        MessengerPane.updateTorIndicator("Starting Tor", null);
     }
 
     void torReady(String onionAddress) {
-        torProgressRow.setVisible(false);
-        torProgressRow.setManaged(false);
-        statusText.setText("Onion server ready: http://" + onionAddress + "/");
+        MessengerPane.updateTorIndicator("Tor ready", onionAddress);
     }
 
     void torFailed(String message) {
-        torProgressRow.setVisible(false);
-        torProgressRow.setManaged(false);
-        statusText.setText("Tor could not start. See console for details.");
+        MessengerPane.updateTorIndicator("Tor unavailable", null);
     }
 
     void setManager(ContactManager manager) {
         this.manager = manager;
-        var pane = new MessengerPane(manager);
+        var pane = new MessengerPane(manager, authenticatedUsername, this::showAddContactPane);
         messengerHost.getChildren().setAll(pane);
         VBox.setVgrow(pane, javafx.scene.layout.Priority.ALWAYS);
+    }
+
+    private void showAddContactPane() {
+        messengerHost.setVisible(false);
+        messengerHost.setManaged(false);
+        addContactPane.setVisible(true);
+        addContactPane.setManaged(true);
+        importLink.requestFocus();
+    }
+
+    @FXML protected void onCloseAddContact() {
+        addContactPane.setVisible(false);
+        addContactPane.setManaged(false);
+        messengerHost.setVisible(true);
+        messengerHost.setManaged(true);
     }
 
     @FXML

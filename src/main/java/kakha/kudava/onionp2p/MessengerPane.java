@@ -2,6 +2,7 @@ package kakha.kudava.onionp2p;
 
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
+import javafx.animation.ScaleTransition;
 import javafx.application.Platform;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
@@ -9,10 +10,14 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.Scene;
 import javafx.scene.Node;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.*;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -54,9 +59,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Embedded chat pane backed by saved contacts and local message history. */
 final class MessengerPane extends BorderPane {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
+    private static volatile MessengerPane activePane;
+    private final Label torIndicatorDot = new Label("●");
+    private final ScaleTransition torStartupPulse = new ScaleTransition(Duration.seconds(0.65), torIndicatorDot);
     private final ContactManager manager;
+    private final Runnable onAddContact;
     private final ListView<ContactStore.Contact> contactList = new ListView<>();
+    private final ObservableList<ContactStore.Contact> allContacts = FXCollections.observableArrayList();
+    private final FilteredList<ContactStore.Contact> filteredContacts = new FilteredList<>(allContacts, contact -> true);
+    private final TextField contactSearch = new TextField();
     private final ListView<MessageStore.Message> transcript = new ListView<>();
+    private final Label conversationAvatar = new Label();
     private final Label conversationTitle = new Label("Select a contact");
     private final Label conversationPresence = new Label();
     private final TextField composer = new TextField();
@@ -114,24 +127,44 @@ final class MessengerPane extends BorderPane {
 
     private boolean loaded;
 
-    MessengerPane(ContactManager manager) {
+    MessengerPane(ContactManager manager, String username, Runnable onAddContact) {
         this.manager = manager;
+        this.onAddContact = onAddContact;
+        activePane = this;
         manager.setPresenceListener(this::contactCameOnline);
 
         contactList.setPlaceholder(new Label("No saved contacts yet."));
+        contactList.setItems(filteredContacts);
+        contactSearch.setPromptText("Search contacts");
+        contactSearch.getStyleClass().add("contact-search-field");
+        contactSearch.textProperty().addListener((obs, oldValue, query) -> {
+            String needle = query == null ? "" : query.strip().toLowerCase(java.util.Locale.ROOT);
+            filteredContacts.setPredicate(contact -> needle.isEmpty()
+                    || contact.username().toLowerCase(java.util.Locale.ROOT).contains(needle)
+                    || contact.onion().toLowerCase(java.util.Locale.ROOT).contains(needle));
+        });
         contactList.setCellFactory(list -> new ListCell<>() {
             @Override protected void updateItem(ContactStore.Contact contact, boolean empty) {
                 super.updateItem(contact, empty);
                 if (empty || contact == null) { setText(null); setGraphic(null); setTooltip(null); return; }
                 Presence state = presence.getOrDefault(contact.link(), Presence.checking());
+                Label avatar = new Label(profileInitial(contact.username()));
+                avatar.getStyleClass().add("profile-bubble");
                 Label dot = new Label("●");
                 dot.getStyleClass().addAll("presence-dot", state.online() ? "online" : state.checkedAt() == 0 ? "checking" : "offline");
                 Label name = new Label(contact.username());
                 name.getStyleClass().add("contact-name");
+                name.setMinWidth(0);
                 HBox heading = new HBox(6, dot, name);
                 Label address = new Label(contact.onion());
                 address.getStyleClass().add("contact-address");
-                VBox cell = new VBox(2, heading, address);
+                address.setMinWidth(0);
+                address.setTooltip(new Tooltip(contact.onion()));
+                VBox details = new VBox(2, heading, address);
+                details.setMinWidth(0);
+                HBox.setHgrow(details, Priority.ALWAYS);
+                HBox cell = new HBox(10, avatar, details);
+                cell.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
                 setText(null); setGraphic(cell);
                 String message = state.checkedAt() == 0 ? "Checking availability through Tor…"
                         : (state.online() ? "Online" : "Offline or temporarily unreachable")
@@ -153,9 +186,39 @@ final class MessengerPane extends BorderPane {
         transcript.setPlaceholder(new Label("No messages yet."));
         transcript.getStyleClass().add("chat-transcript");
         transcript.setCellFactory(list -> new MessageCell());
+        conversationAvatar.getStyleClass().add("profile-bubble");
+        conversationAvatar.setVisible(false);
+        conversationAvatar.managedProperty().bind(conversationAvatar.visibleProperty());
         conversationTitle.getStyleClass().add("conversation-title");
+        conversationTitle.setMinWidth(0);
         conversationPresence.getStyleClass().add("conversation-presence");
-        HBox conversationHeader = new HBox(10, conversationTitle, conversationPresence);
+        conversationPresence.setMinWidth(0);
+        conversationPresence.managedProperty().bind(conversationAvatar.visibleProperty());
+        Button videoCallButton = new Button();
+        videoCallButton.setGraphic(videoCallGlyph());
+        videoCallButton.getStyleClass().add("conversation-action-button");
+        videoCallButton.setTooltip(new Tooltip("Video call"));
+        videoCallButton.setOnAction(event -> showCallsUnavailable());
+        Button voiceCallButton = new Button();
+        voiceCallButton.setGraphic(phoneGlyph());
+        voiceCallButton.getStyleClass().add("conversation-action-button");
+        voiceCallButton.setTooltip(new Tooltip("Voice call"));
+        voiceCallButton.setOnAction(event -> showCallsUnavailable());
+        Button searchMessagesButton = new Button();
+        searchMessagesButton.setGraphic(searchGlyph());
+        searchMessagesButton.getStyleClass().add("conversation-action-button");
+        searchMessagesButton.setTooltip(new Tooltip("Search messages"));
+        searchMessagesButton.setOnAction(event -> searchConversation());
+        Button conversationMenu = new Button("⋮");
+        conversationMenu.getStyleClass().add("conversation-menu-button");
+        conversationMenu.setTooltip(new Tooltip("Conversation options"));
+        conversationMenu.setFocusTraversable(false);
+        VBox conversationIdentity = new VBox(2, conversationTitle, conversationPresence);
+        conversationIdentity.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        conversationIdentity.setMinWidth(0);
+        HBox.setHgrow(conversationIdentity, Priority.ALWAYS);
+        HBox conversationHeader = new HBox(8, conversationAvatar, conversationIdentity,
+                videoCallButton, voiceCallButton, searchMessagesButton, conversationMenu);
         conversationHeader.getStyleClass().add("conversation-header");
         composer.setPromptText("Write a message…");
         composer.getStyleClass().add("chat-composer");
@@ -259,23 +322,121 @@ final class MessengerPane extends BorderPane {
         HBox.setHgrow(composer, Priority.ALWAYS);
         updateComposerMode();
 
-        Label securityNote = new Label("Messages and files are encrypted in transit. Files up to 1 GiB. Received files save in the app downloads folder; use Export… to choose another location. Local chat history and saved voice recordings are unencrypted.");
-        securityNote.setWrapText(true);
-        securityNote.getStyleClass().add("security-note");
         status.getStyleClass().add("chat-status");
-        VBox conversation = new VBox(8, conversationHeader, transcript, status, composerArea, transferRow, securityNote);
+        Canvas chatPattern = new Canvas();
+        // The wallpaper follows the viewport size and must not set its minimum size.
+        chatPattern.setManaged(false);
+        StackPane transcriptLayer = new StackPane(chatPattern, transcript);
+        chatPattern.setMouseTransparent(true);
+        chatPattern.widthProperty().bind(transcriptLayer.widthProperty());
+        chatPattern.heightProperty().bind(transcriptLayer.heightProperty());
+        chatPattern.widthProperty().addListener(obs -> drawChatPattern(chatPattern));
+        chatPattern.heightProperty().addListener(obs -> drawChatPattern(chatPattern));
+        transcriptLayer.getStyleClass().add("chat-transcript-layer");
+        VBox composerDock = new VBox(7, transferRow, composerArea);
+        composerDock.setPadding(new Insets(8, 12, 12, 12));
+        BorderPane chatSurface = new BorderPane();
+        chatSurface.setCenter(transcriptLayer);
+        chatSurface.setBottom(composerDock);
+        chatSurface.getStyleClass().add("chat-surface");
+        chatSurface.setPadding(Insets.EMPTY);
+        transcriptLayer.setMinHeight(0);
+        VBox conversation = new VBox(0, conversationHeader, chatSurface);
         conversation.getStyleClass().add("conversation-pane");
-        conversation.setPadding(new Insets(8));
-        VBox.setVgrow(transcript, Priority.ALWAYS);
-        VBox.setVgrow(composerArea, Priority.NEVER);
-        setCenter(conversation);
-        setLeft(contactList);
+        conversation.setPadding(Insets.EMPTY);
+        VBox.setVgrow(chatSurface, Priority.ALWAYS);
+        conversation.setMinWidth(360);
+        Label chatsTitle = new Label("Chats");
+        chatsTitle.getStyleClass().add("contacts-title");
+        Button addContact = new Button();
+        addContact.setGraphic(plusGlyph());
+        addContact.setTooltip(new Tooltip("Add contact"));
+        addContact.getStyleClass().add("new-contact-button");
+        addContact.setOnAction(event -> { if (this.onAddContact != null) this.onAddContact.run(); });
+        Region contactHeaderSpacer = new Region();
+        HBox.setHgrow(contactHeaderSpacer, Priority.ALWAYS);
+        HBox contactsHeader = new HBox(8, chatsTitle, contactHeaderSpacer, addContact);
+        contactsHeader.getStyleClass().add("contacts-header");
+        Label searchIcon = new Label();
+        searchIcon.setGraphic(searchGlyph());
+        searchIcon.getStyleClass().add("contact-search-icon");
+        HBox searchRow = new HBox(9, searchIcon, contactSearch);
+        searchRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        searchRow.getStyleClass().add("contact-search");
+        HBox.setHgrow(contactSearch, Priority.ALWAYS);
+        VBox contactsPane = new VBox(8, contactsHeader, searchRow, contactList);
+        contactsPane.getStyleClass().add("contacts-pane");
+        VBox.setVgrow(contactList, Priority.ALWAYS);
+        contactsPane.setPrefWidth(235);
+        contactsPane.setMinWidth(185);
+        contactsPane.setMaxWidth(400);
+
+        Button chatsNavigation = new Button();
+        chatsNavigation.setGraphic(chatsGlyph());
+        chatsNavigation.setTooltip(new Tooltip("Chats"));
+        chatsNavigation.getStyleClass().addAll("rail-button", "rail-button-selected");
+        chatsNavigation.setFocusTraversable(false);
+
+        Button callsNavigation = new Button();
+        callsNavigation.setGraphic(phoneGlyph());
+        callsNavigation.getStyleClass().add("rail-button");
+        callsNavigation.setAccessibleText("Calls");
+        callsNavigation.setTooltip(new Tooltip("Calls"));
+        callsNavigation.setOnAction(event -> showCallsUnavailable());
+
+        Label driveIcon = railIcon("Drive", "M3 13 L6 6 H18 L21 13 M3 13 H21 V19 H3 Z M17 16 H18");
+        Region railDivider = new Region();
+        railDivider.getStyleClass().add("rail-divider");
+        Region railSpacer = new Region();
+        VBox.setVgrow(railSpacer, Priority.ALWAYS);
+
+        Label settingsIcon = railIcon("Settings",
+                "M8.5 2 H11.5 L12 4.5 13.5 5.1 15.7 3.7 17.8 5.8 16.4 8 17 9.5 19.5 10 V13"
+                + " L17 13.5 16.4 15 17.8 17.2 15.7 19.3 13.5 17.9 12 18.5 11.5 21 H8.5"
+                + " L8 18.5 6.5 17.9 4.3 19.3 2.2 17.2 3.6 15 3 13.5 0.5 13 V10"
+                + " L3 9.5 3.6 8 2.2 5.8 4.3 3.7 6.5 5.1 8 4.5 Z"
+                + " M13 11.5 A3 3 0 1 1 7 11.5 A3 3 0 1 1 13 11.5 Z");
+        Label profileBubble = new Label(profileInitial(username));
+        profileBubble.getStyleClass().add("profile-bubble");
+        profileBubble.setAccessibleText("Signed in as " + username);
+        profileBubble.setTooltip(new Tooltip(username));
+        VBox accountControls = new VBox(8, settingsIcon, profileBubble);
+        accountControls.setAlignment(javafx.geometry.Pos.CENTER);
+
+        torIndicatorDot.getStyleClass().addAll("tor-dot", "tor-dot-starting", "rail-tor-indicator");
+        torIndicatorDot.setMinSize(28, 28);
+        torIndicatorDot.setMaxSize(28, 28);
+        torIndicatorDot.setAlignment(javafx.geometry.Pos.CENTER);
+        torIndicatorDot.setTooltip(new Tooltip("Tor is starting"));
+        torStartupPulse.setFromX(1.0);
+        torStartupPulse.setFromY(1.0);
+        torStartupPulse.setToX(1.28);
+        torStartupPulse.setToY(1.28);
+        torStartupPulse.setAutoReverse(true);
+        torStartupPulse.setCycleCount(Timeline.INDEFINITE);
+        torStartupPulse.play();
+        VBox navigationRail = new VBox(14, torIndicatorDot, chatsNavigation, callsNavigation,
+                driveIcon, railDivider, railSpacer, accountControls);
+        navigationRail.getStyleClass().add("navigation-rail");
+        navigationRail.setPrefWidth(58);
+        navigationRail.setMinWidth(58);
+        navigationRail.setMaxWidth(58);
+        HBox leftColumns = new HBox(navigationRail, contactsPane);
+        HBox.setHgrow(contactsPane, Priority.ALWAYS);
+        leftColumns.setMinWidth(243);
+        leftColumns.setPrefWidth(293);
+        leftColumns.setMaxWidth(458);
+        SplitPane mainSplit = new SplitPane(leftColumns, conversation);
+        mainSplit.getStyleClass().add("main-split-pane");
+        mainSplit.setDividerPositions(0.25);
+        mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
+        mainSplit.getDividers().getFirst().positionProperty()
+                .addListener((obs, oldPosition, newPosition) -> clampContactColumn(mainSplit, leftColumns));
+        setCenter(mainSplit);
         getStyleClass().add("messenger-pane");
         contactList.getStyleClass().add("contact-list");
-        setPadding(new Insets(4));
-        BorderPane.setMargin(contactList, new Insets(4, 8, 4, 4));
-        contactList.setPrefWidth(235);
-        contactList.setMinWidth(185);
+        setPadding(Insets.EMPTY);
+        BorderPane.setMargin(leftColumns, Insets.EMPTY);
 
         poll = new Timeline(new KeyFrame(Duration.seconds(2), e -> refreshMessages()));
         poll.setCycleCount(Timeline.INDEFINITE);
@@ -297,13 +458,46 @@ final class MessengerPane extends BorderPane {
         });
     }
 
+    private void clampContactColumn(SplitPane split, HBox contactSide) {
+        double width = split.getWidth();
+        if (width <= 0 || split.getDividers().isEmpty()) return;
+        double min = contactSide.minWidth(-1);
+        double max = Math.min(contactSide.maxWidth(-1), width - 360);
+        if (max < min) max = min;
+        double current = split.getDividers().getFirst().getPosition() * width;
+        double clamped = Math.max(min, Math.min(max, current));
+        if (Math.abs(clamped - current) > 1) split.setDividerPosition(0, clamped / width);
+    }
+
+    static void updateTorIndicator(String message, String onionAddress) {
+        MessengerPane pane = activePane;
+        if (pane == null) return;
+        Platform.runLater(() -> {
+            Label dot = pane.torIndicatorDot;
+            dot.getStyleClass().removeAll("tor-dot-starting", "tor-dot-ready", "tor-dot-failed");
+            String state = message.equals("Tor ready") ? "ready"
+                    : message.equals("Tor unavailable") ? "failed" : "starting";
+            dot.getStyleClass().add("tor-dot-" + state);
+            dot.setGraphic(null);
+            dot.setText(state.equals("failed") ? "!" : "●");
+            if (state.equals("starting")) pane.torStartupPulse.play();
+            else {
+                pane.torStartupPulse.stop();
+                dot.setScaleX(1);
+                dot.setScaleY(1);
+            }
+            Tooltip.install(dot, new Tooltip(onionAddress == null
+                    ? message : "Onion service: http://" + onionAddress + "/"));
+        });
+    }
+
     private void loadContacts() {
         Thread.ofPlatform().daemon().name("messenger-contacts").start(() -> {
             try {
                 List<ContactStore.Contact> contacts = manager.contacts();
                 Platform.runLater(() -> {
                     ContactStore.Contact previous = selected;
-                    contactList.setItems(FXCollections.observableArrayList(contacts));
+                    allContacts.setAll(contacts);
                     if (previous != null) {
                         contacts.stream().filter(c -> c.link().equals(previous.link())).findFirst()
                                 .ifPresent(c -> contactList.getSelectionModel().select(c));
@@ -370,16 +564,23 @@ final class MessengerPane extends BorderPane {
 
     private void updateConversationHeader() {
         ContactStore.Contact contact = selected;
+        conversationAvatar.setVisible(contact != null);
         if (contact == null) {
             conversationTitle.setText("Select a contact");
             conversationPresence.setText("");
             return;
         }
         Presence state = presence.getOrDefault(contact.link(), Presence.checking());
+        conversationAvatar.setText(profileInitial(contact.username()));
         conversationTitle.setText(contact.username());
         conversationPresence.setText(state.checkedAt() == 0 ? "Checking via Tor…" : state.online() ? "Online" : "Offline or unreachable");
         conversationPresence.getStyleClass().removeAll("online", "offline", "checking");
         conversationPresence.getStyleClass().add(state.online() ? "online" : state.checkedAt() == 0 ? "checking" : "offline");
+    }
+
+    private static String profileInitial(String name) {
+        if (name == null || name.isBlank()) return "?";
+        return Character.toString(Character.toUpperCase(name.codePointAt(0)));
     }
 
     private void refreshMessages() {
@@ -412,7 +613,7 @@ final class MessengerPane extends BorderPane {
                         if (!visibleMessages.isEmpty() && wasAtBottom) transcript.scrollTo(visibleMessages.size() - 1);
                     }
                     sendButton.setDisable(sending);
-                    if (!sending) status.setText("Paired with " + contact.username());
+                    if (!sending) status.setText("");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status.setText("Could not load conversation: " + safe(e)));
@@ -1270,10 +1471,114 @@ final class MessengerPane extends BorderPane {
         return icon;
     }
 
+    private static SVGPath searchGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M10.8 3a7.8 7.8 0 1 0 4.8 13.95L21 22l1-1-5.4-5.05A7.8 7.8 0 0 0 10.8 3zm0 1.6a6.2 6.2 0 1 1 0 12.4 6.2 6.2 0 0 1 0-12.4z");
+        icon.getStyleClass().add("contact-search-glyph");
+        return icon;
+    }
+
+    private static void drawChatPattern(Canvas canvas) {
+        double width = canvas.getWidth();
+        double height = canvas.getHeight();
+        if (width <= 0 || height <= 0) return;
+        GraphicsContext graphics = canvas.getGraphicsContext2D();
+        graphics.clearRect(0, 0, width, height);
+        graphics.setStroke(javafx.scene.paint.Color.rgb(105, 125, 147, 0.12));
+        graphics.setLineWidth(1.15);
+        graphics.setLineJoin(javafx.scene.shape.StrokeLineJoin.ROUND);
+        double stepX = 68;
+        double stepY = 68;
+        for (int row = -1; row * stepY < height + stepY; row++) {
+            double cy = row * stepY + 34;
+            double offset = (row & 1) == 0 ? 0 : stepX / 2;
+            for (double cx = -stepX + offset; cx < width + stepX; cx += stepX) {
+                // Repeating nested angular arches, offset by half a tile per row
+                // to create the interlocking textile-like pattern from the reference.
+                for (int layer = 0; layer < 3; layer++) {
+                    double halfWidth = 31 - layer * 8;
+                    double top = cy - 24 + layer * 7;
+                    double bottom = cy + 24 - layer * 7;
+                    graphics.beginPath();
+                    graphics.moveTo(cx - halfWidth, bottom);
+                    graphics.lineTo(cx - halfWidth, top);
+                    graphics.lineTo(cx, top - 13 + layer * 4);
+                    graphics.lineTo(cx + halfWidth, top);
+                    graphics.lineTo(cx + halfWidth, bottom);
+                    graphics.stroke();
+                }
+            }
+        }
+    }
+
+    private static SVGPath phoneGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11.4 11.4 0 0 0 3.6.58 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .58 3.6 1 1 0 0 1-.25 1z");
+        icon.getStyleClass().add("conversation-action-glyph");
+        return icon;
+    }
+
+    private static Label railIcon(String name, String path) {
+        SVGPath glyph = new SVGPath();
+        glyph.setContent(path);
+        glyph.getStyleClass().add("rail-icon-glyph");
+        Label icon = new Label(null, glyph);
+        icon.getStyleClass().add("rail-icon");
+        icon.setAccessibleText(name);
+        icon.setTooltip(new Tooltip(name));
+        return icon;
+    }
+
+    private static SVGPath videoCallGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M3 6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2.2l5 3.2V7l-5 3.2V8a2 2 0 0 0-2-2z");
+        icon.getStyleClass().add("conversation-action-glyph");
+        return icon;
+    }
+
+    private void searchConversation() {
+        if (selected == null) return;
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("Search conversation");
+        dialog.setHeaderText("Search messages with " + selected.username());
+        dialog.setContentText("Search text:");
+        dialog.showAndWait().filter(query -> !query.isBlank()).ifPresent(query -> {
+            String needle = query.strip().toLowerCase(java.util.Locale.ROOT);
+            for (int i = 0; i < transcript.getItems().size(); i++) {
+                MessageStore.Message message = transcript.getItems().get(i);
+                String body = message.body() == null ? "" : message.body();
+                String fileName = message.attachmentName() == null ? "" : message.attachmentName();
+                if (body.toLowerCase(java.util.Locale.ROOT).contains(needle)
+                        || fileName.toLowerCase(java.util.Locale.ROOT).contains(needle)) {
+                    transcript.scrollTo(i);
+                    transcript.getSelectionModel().select(i);
+                    return;
+                }
+            }
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, "No matching messages were found.", ButtonType.OK);
+            alert.setHeaderText(null);
+            alert.showAndWait();
+        });
+    }
+
+    private void showCallsUnavailable() {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION,
+                "Voice and video calls are not available yet.", ButtonType.OK);
+        alert.setHeaderText(null);
+        alert.showAndWait();
+    }
+
     private static SVGPath plusGlyph() {
         SVGPath icon = new SVGPath();
         icon.setContent("M11 2h2v9h9v2h-9v9h-2v-9H2v-2h9z");
         icon.getStyleClass().add("plus-glyph");
+        return icon;
+    }
+
+    private static SVGPath chatsGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M4 4h16v12H9l-5 4V4zm4 4v2h8V8H8zm0 4v2h5v-2H8z");
+        icon.getStyleClass().add("chats-glyph");
         return icon;
     }
 
@@ -1361,9 +1666,15 @@ final class MessengerPane extends BorderPane {
             Label content;
             if (message.attachmentName() != null) {
                 boolean voice = isVoiceMessage(message);
-                content = new Label(voice ? "🎙 Voice message" : "📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
+                content = new Label(voice ? "Voice message" : "📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
                 content.setWrapText(true);
                 content.getStyleClass().add("message-content");
+                if (voice) {
+                    SVGPath microphone = microphoneGlyph();
+                    microphone.getStyleClass().add("message-mic-glyph");
+                    content.setGraphic(microphone);
+                    content.setGraphicTextGap(8);
+                }
                 VBox rows = new VBox(5, heading, content);
                 rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
                 if (message.body() != null && !message.body().isBlank()) {

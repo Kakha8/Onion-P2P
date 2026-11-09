@@ -3,6 +3,7 @@ package kakha.kudava.onionp2p;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
+import javafx.stage.StageStyle;
 import javafx.stage.Stage;
 
 import java.io.IOException;
@@ -14,6 +15,7 @@ public class HelloApplication extends Application {
     @Override
     public void start(Stage stage) throws Exception {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "onion-shutdown"));
+        stage.initStyle(StageStyle.UNDECORATED);
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 1120, 760);
         scene.getStylesheets().add(HelloApplication.class.getResource("app.css").toExternalForm());
