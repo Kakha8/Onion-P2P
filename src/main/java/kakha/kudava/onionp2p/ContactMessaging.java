@@ -30,7 +30,7 @@ import java.util.function.BooleanSupplier;
 final class ContactMessaging {
     static final int MAGIC = 0x4f503035; // OP05 adds encrypted file captions
     static final int LEGACY_MAGIC = 0x4f503034;
-    private static final int MAX_BODY_BYTES = 4096;
+    static final int MAX_BODY_BYTES = 4096;
     static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     private static final int CHUNK_BYTES = 64 * 1024;
     private static final SecureRandom RANDOM = new SecureRandom();

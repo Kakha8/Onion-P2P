@@ -1,28 +1,45 @@
 package kakha.kudava.onionp2p;
 
+import javafx.animation.AnimationTimer;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.animation.ScaleTransition;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleDoubleProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.beans.binding.Bindings;
+import javafx.beans.binding.IntegerBinding;
+import javafx.beans.binding.NumberBinding;
+import javafx.beans.binding.StringBinding;
+import javafx.beans.value.ObservableStringValue;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
+import javafx.css.PseudoClass;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.geometry.Pos;
 import javafx.geometry.Side;
 import javafx.scene.Scene;
 import javafx.scene.Node;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.*;
+import javafx.scene.control.skin.VirtualFlow;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.input.ScrollEvent;
 import javafx.scene.shape.SVGPath;
+import javafx.scene.text.Text;
+import javafx.scene.text.TextAlignment;
+import javafx.scene.text.TextFlow;
 import javafx.stage.FileChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -38,42 +55,68 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static kakha.kudava.onionp2p.ContactMessaging.MAX_BODY_BYTES;
+
 /** Embedded chat pane backed by saved contacts and local message history. */
 final class MessengerPane extends BorderPane {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter MESSAGE_TIME = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter CHAT_DATE = DateTimeFormatter.ofPattern("MMM d, uuuu", Locale.ENGLISH);
+    private static final long FLOATING_DATE_TIMEOUT = TimeUnit.MILLISECONDS.toNanos(900);
+    private static final int COUNTER_THRESHOLD = MAX_BODY_BYTES - 512;
     private static volatile MessengerPane activePane;
     private final Label torIndicatorDot = new Label("●");
     private final ScaleTransition torStartupPulse = new ScaleTransition(Duration.seconds(0.65), torIndicatorDot);
     private final ContactManager manager;
+    private final String localUsername;
     private final Runnable onAddContact;
     private final ListView<ContactStore.Contact> contactList = new ListView<>();
     private final ObservableList<ContactStore.Contact> allContacts = FXCollections.observableArrayList();
     private final FilteredList<ContactStore.Contact> filteredContacts = new FilteredList<>(allContacts, contact -> true);
     private final TextField contactSearch = new TextField();
     private final ListView<MessageStore.Message> transcript = new ListView<>();
+    private final NumberBinding transcriptRowWidth = Bindings.max(0, transcript.widthProperty().subtract(34));
+    private final NumberBinding textBubbleMaxWidth = Bindings.min(520, transcriptRowWidth.multiply(0.70));
+    private final ObjectProperty<LocalDate> transcriptToday = new SimpleObjectProperty<>(LocalDate.now(TIME.getZone()));
+    private final Label floatingDate = new Label();
+    private long lastScrollInput;
+    private final AnimationTimer floatingDateTimer = new AnimationTimer() {
+        @Override public void handle(long now) {
+            if (System.nanoTime() - lastScrollInput >= FLOATING_DATE_TIMEOUT) hideFloatingDate();
+            else updateFloatingDate();
+        }
+    };
     private final Label conversationAvatar = new Label();
     private final Label conversationTitle = new Label("Select a contact");
     private final Label conversationPresence = new Label();
     private final TextField composer = new TextField();
+    private final IntegerBinding messageBytes = Bindings.createIntegerBinding(
+            () -> utf8Bytes(composer.getText()), composer.textProperty());
     private final Button sendButton = new Button();
     private final Button attachButton = new Button("📎");
     private final Button voiceButton = new Button();
@@ -81,6 +124,12 @@ final class MessengerPane extends BorderPane {
     private final Button pauseVoiceButton = new Button();
     private final Button voiceSendButton = new Button();
     private final TextArea attachmentCaption = new TextArea();
+    private final StringBinding captionDraft = Bindings.createStringBinding(() -> {
+        String text = attachmentCaption.getText();
+        return text == null ? "" : text.strip();
+    }, attachmentCaption.textProperty());
+    private final IntegerBinding captionBytes = Bindings.createIntegerBinding(
+            () -> utf8Bytes(captionDraft.get()), captionDraft);
     private final HBox attachmentFilesList = new HBox(10);
     private final ScrollPane attachmentFilesViewport = new ScrollPane(attachmentFilesList);
     private final Button attachmentAddButton = new Button();
@@ -109,7 +158,7 @@ final class MessengerPane extends BorderPane {
     private HBox voiceControls;
     private BorderPane attachmentComposer;
     private StackPane composerArea;
-    private final List<Path> pendingAttachments = new ArrayList<>();
+    private final ObservableList<Path> pendingAttachments = FXCollections.observableArrayList();
     private ContactStore.Contact selected;
     private ContactStore.Contact activeTransferContact;
     private java.util.concurrent.atomic.AtomicBoolean activeFileCancellation;
@@ -122,7 +171,14 @@ final class MessengerPane extends BorderPane {
     private boolean sendAfterRecording;
     private Path completedVoiceRecording;
     private Clip activeVoiceClip;
-    private Path activeVoicePath;
+    private final ObjectProperty<Path> activeVoicePath = new SimpleObjectProperty<>();
+    private final BooleanProperty voicePlaying = new SimpleBooleanProperty();
+    private final DoubleProperty voicePlaybackProgress = new SimpleDoubleProperty();
+    private final Timeline voicePlaybackPoll = new Timeline(new KeyFrame(Duration.millis(60), event -> updateVoicePlayback()));
+    private final Map<Path, CompletableFuture<VoiceNote>> voiceNotes = new HashMap<>();
+    private final ExecutorService voiceNoteReader = Executors.newSingleThreadExecutor(runnable ->
+            Thread.ofPlatform().daemon().name("voice-waveform").unstarted(runnable));
+    private long voicePlaybackRequest;
     private boolean activeVoiceTransfer;
     private boolean sending;
 
@@ -130,6 +186,7 @@ final class MessengerPane extends BorderPane {
 
     MessengerPane(ContactManager manager, String username, Runnable onAddContact) {
         this.manager = manager;
+        localUsername = username;
         this.onAddContact = onAddContact;
         activePane = this;
         manager.setPresenceListener(this::contactCameOnline);
@@ -178,6 +235,7 @@ final class MessengerPane extends BorderPane {
             selected = value;
             if (!pendingAttachments.isEmpty() && old != null && value != null && !old.link().equals(value.link()))
                 clearAttachmentComposer();
+            hideFloatingDate();
             transcript.getItems().clear();
             setTransferControls(false);
             updateConversationHeader();
@@ -223,7 +281,14 @@ final class MessengerPane extends BorderPane {
         conversationHeader.getStyleClass().add("conversation-header");
         composer.setPromptText("Write a message…");
         composer.getStyleClass().add("chat-composer");
-        composer.textProperty().addListener((obs, oldText, newText) -> updateComposerMode());
+        composer.setSkin(new EmojiTextFieldSkin(composer));
+        var hasMessage = Bindings.createBooleanBinding(() -> !composer.getText().isBlank(), composer.textProperty());
+        sendButton.visibleProperty().bind(hasMessage);
+        sendButton.managedProperty().bind(sendButton.visibleProperty());
+        sendButton.disableProperty().bind(composer.disabledProperty().or(hasMessage.not())
+                .or(messageBytes.greaterThan(MAX_BODY_BYTES)));
+        voiceButton.visibleProperty().bind(hasMessage.not());
+        voiceButton.managedProperty().bind(voiceButton.visibleProperty());
         attachButton.setTooltip(new Tooltip("Attach file"));
         attachButton.getStyleClass().add("attach-icon-button");
         Button emojiButton = new Button();
@@ -293,6 +358,9 @@ final class MessengerPane extends BorderPane {
         attachmentSendButton.setTooltip(new Tooltip("Send file and message"));
         attachmentSendButton.getStyleClass().add("send-icon-button");
         attachmentSendButton.setOnAction(event -> sendPendingAttachment());
+        attachmentSendButton.disableProperty().bind(composer.disabledProperty()
+                .or(attachmentCaption.disabledProperty()).or(Bindings.isEmpty(pendingAttachments))
+                .or(captionBytes.greaterThan(MAX_BODY_BYTES)));
         voiceDurationLabel.getStyleClass().add("voice-duration");
         voiceWaveform.getStyleClass().add("voice-waveform");
         setTransferControls(false);
@@ -312,7 +380,8 @@ final class MessengerPane extends BorderPane {
         transferRow.getStyleClass().add("transfer-row");
         transferRate.getStyleClass().add("transfer-rate");
         HBox.setHgrow(transferProgress, Priority.ALWAYS);
-        normalInputRow = new HBox(8, attachButton, emojiButton, composer, sendButton, voiceButton);
+        normalInputRow = new HBox(8, attachButton, emojiButton, composer,
+                sizeCounter(composer.textProperty(), messageBytes), sendButton, voiceButton);
         normalInputRow.getStyleClass().add("chat-input-row");
         voiceControls = new HBox(12, discardVoiceButton, voiceDurationLabel, voiceWaveform, pauseVoiceButton, voiceSendButton);
         voiceControls.getStyleClass().add("voice-controls");
@@ -321,7 +390,8 @@ final class MessengerPane extends BorderPane {
         HBox.setHgrow(voiceWaveform, Priority.ALWAYS);
         Region attachmentActionsSpacer = new Region();
         HBox.setHgrow(attachmentActionsSpacer, Priority.ALWAYS);
-        HBox attachmentActions = new HBox(10, attachmentAddButton, attachmentActionsSpacer, attachmentSendButton);
+        HBox attachmentActions = new HBox(10, attachmentAddButton, attachmentActionsSpacer,
+                sizeCounter(captionDraft, captionBytes), attachmentSendButton);
         attachmentActions.getStyleClass().add("attachment-actions");
         attachmentComposer = new BorderPane();
         attachmentComposer.setTop(attachmentFilesViewport);
@@ -339,14 +409,31 @@ final class MessengerPane extends BorderPane {
         composerArea = new StackPane(normalInputRow, voiceControls, attachmentComposer);
         composerArea.getStyleClass().add("composer-area");
         HBox.setHgrow(composer, Priority.ALWAYS);
-        updateComposerMode();
 
         status.getStyleClass().add("chat-status");
         VBox composerDock = new VBox(7, transferRow, composerArea);
         composerDock.setPadding(new Insets(8, 12, 12, 12));
         BorderPane chatContent = new BorderPane();
         transcript.setMinHeight(0);
-        chatContent.setCenter(transcript);
+        floatingDate.getStyleClass().addAll("chat-date-pill", "floating-chat-date");
+        floatingDate.setVisible(false);
+        floatingDate.setMouseTransparent(true);
+        StackPane transcriptArea = new StackPane(transcript, floatingDate);
+        transcriptArea.setMinHeight(0);
+        StackPane.setAlignment(floatingDate, Pos.TOP_CENTER);
+        StackPane.setMargin(floatingDate, new Insets(8, 16, 0, 0));
+        transcript.addEventFilter(ScrollEvent.SCROLL, event -> {
+            if (event.getDeltaY() != 0) trackTranscriptScroll();
+        });
+        transcript.addEventFilter(MouseEvent.MOUSE_PRESSED, this::trackTranscriptScrollbar);
+        transcript.addEventFilter(MouseEvent.MOUSE_DRAGGED, this::trackTranscriptScrollbar);
+        transcript.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            switch (event.getCode()) {
+                case UP, DOWN, PAGE_UP, PAGE_DOWN, HOME, END -> trackTranscriptScroll();
+                default -> { }
+            }
+        });
+        chatContent.setCenter(transcriptArea);
         chatContent.setBottom(composerDock);
 
         Canvas chatPattern = new Canvas();
@@ -465,8 +552,13 @@ final class MessengerPane extends BorderPane {
         seenPoll.setCycleCount(Timeline.INDEFINITE);
         voiceDurationPoll = new Timeline(new KeyFrame(Duration.millis(100), e -> updateVoiceDuration()));
         voiceDurationPoll.setCycleCount(Timeline.INDEFINITE);
+        voicePlaybackPoll.setCycleCount(Timeline.INDEFINITE);
         sceneProperty().addListener((obs, oldScene, newScene) -> {
-            if (newScene == null) { poll.stop(); presencePoll.stop(); seenPoll.stop(); }
+            if (newScene == null) {
+                poll.stop(); presencePoll.stop(); seenPoll.stop();
+                hideFloatingDate();
+                closeVoicePlayback();
+            }
             else {
                 if (!loaded) { loaded = true; loadContacts(); }
                 poll.play();
@@ -603,6 +695,8 @@ final class MessengerPane extends BorderPane {
     }
 
     private void refreshMessages() {
+        LocalDate today = LocalDate.now(TIME.getZone());
+        if (!today.equals(transcriptToday.get())) transcriptToday.set(today);
         ContactStore.Contact contact = selected;
         if (contact == null || !loading.compareAndSet(false, true)) return;
         Thread.ofPlatform().daemon().name("messenger-history").start(() -> {
@@ -631,7 +725,6 @@ final class MessengerPane extends BorderPane {
                         }
                         if (!visibleMessages.isEmpty() && wasAtBottom) scrollTranscriptToEnd();
                     }
-                    sendButton.setDisable(sending);
                     if (!sending) status.setText("");
                 });
             } catch (Exception e) {
@@ -655,6 +748,53 @@ final class MessengerPane extends BorderPane {
         transcript.scrollTo(transcript.getItems().size());
     }
 
+    private static LocalDate messageDate(MessageStore.Message message) {
+        return Instant.ofEpochMilli(message.timestamp()).atZone(TIME.getZone()).toLocalDate();
+    }
+
+    private String formatChatDate(LocalDate date) {
+        LocalDate today = transcriptToday.get();
+        if (date.equals(today)) return "Today";
+        if (date.equals(today.minusDays(1))) return "Yesterday";
+        if (date.isBefore(today) && date.isAfter(today.minusDays(7))) {
+            return date.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+        }
+        return CHAT_DATE.format(date);
+    }
+
+    private void trackTranscriptScrollbar(MouseEvent event) {
+        for (Node node = event.getTarget() instanceof Node target ? target : null;
+             node != null && node != transcript; node = node.getParent()) {
+            if (node instanceof ScrollBar bar && bar.getOrientation() == Orientation.VERTICAL) {
+                trackTranscriptScroll();
+                return;
+            }
+        }
+    }
+
+    private void trackTranscriptScroll() {
+        lastScrollInput = System.nanoTime();
+        floatingDateTimer.start();
+    }
+
+    private void hideFloatingDate() {
+        floatingDateTimer.stop();
+        floatingDate.setVisible(false);
+    }
+
+    private void updateFloatingDate() {
+        if (transcript.lookup(".virtual-flow") instanceof VirtualFlow<?> flow
+                && flow.getFirstVisibleCell() instanceof MessageCell cell && cell.getItem() != null) {
+            double viewportTop = flow.localToScene(flow.getLayoutBounds()).getMinY();
+            boolean inlineDateInView = cell.dateRow.isVisible()
+                    && cell.dateRow.localToScene(cell.dateRow.getLayoutBounds()).getMinY() >= viewportTop;
+            floatingDate.setText(formatChatDate(messageDate(cell.getItem())));
+            floatingDate.setVisible(!inlineDateInView);
+        } else {
+            floatingDate.setVisible(false);
+        }
+    }
+
     private void markVisibleIncomingMessagesSeen() {
         if (selected == null || getScene() == null || getScene().getWindow() == null
                 || !getScene().getWindow().isShowing() || !getScene().getWindow().isFocused()) return;
@@ -666,9 +806,10 @@ final class MessengerPane extends BorderPane {
             MessageStore.Message message = cell.getItem();
             if (message == null || message.outgoing() || selected == null
                     || !message.contactLink().equals(selected.link())) continue;
-            javafx.geometry.Bounds cellBounds = cell.localToScene(cell.getBoundsInLocal());
-            if (cellBounds.getMinY() < viewport.getMinY() || cellBounds.getMaxY() > viewport.getMaxY()
-                    || cellBounds.getMaxX() <= viewport.getMinX() || cellBounds.getMinX() >= viewport.getMaxX()) continue;
+            Node messageRow = cell.messageLayout.getChildren().getLast();
+            javafx.geometry.Bounds messageBounds = messageRow.localToScene(messageRow.getBoundsInLocal());
+            if (messageBounds.getMinY() < viewport.getMinY() || messageBounds.getMaxY() > viewport.getMaxY()
+                    || messageBounds.getMaxX() <= viewport.getMinX() || messageBounds.getMinX() >= viewport.getMaxX()) continue;
             String receiptKey = message.contactLink() + "\n" + message.id();
             if (readReceiptsSent.contains(receiptKey)) continue;
             long now = System.currentTimeMillis();
@@ -743,7 +884,7 @@ final class MessengerPane extends BorderPane {
     private void send() {
         ContactStore.Contact contact = selected;
         String body = composer.getText();
-        if (contact == null || body == null || body.isBlank() || sending) return;
+        if (contact == null || body == null || body.isBlank() || sending || messageBytes.get() > MAX_BODY_BYTES) return;
         String pendingId = "pending-" + java.util.UUID.randomUUID();
         MessageStore.Message pendingMessage = new MessageStore.Message(pendingId, contact.link(), true,
                 body, null, null, 0, System.currentTimeMillis());
@@ -753,7 +894,6 @@ final class MessengerPane extends BorderPane {
         scrollTranscriptToEnd();
         sending = true;
         setTransferControls(true);
-        composer.setDisable(true);
         status.setText("Sending message…");
         Thread.ofPlatform().daemon().name("messenger-send").start(() -> {
             try {
@@ -765,7 +905,6 @@ final class MessengerPane extends BorderPane {
                 Platform.runLater(() -> {
                     if (selected != null && selected.link().equals(contact.link()) && composer.getText().equals(body))
                         composer.clear();
-                    composer.setDisable(false);
                     sending = false;
                     setTransferControls(false);
                     status.setText("Message delivered and saved.");
@@ -775,7 +914,6 @@ final class MessengerPane extends BorderPane {
                 activeOutgoingMessages.remove(pendingId);
                 Platform.runLater(() -> {
                     transcript.getItems().removeIf(message -> message.id().equals(pendingId));
-                    composer.setDisable(false);
                     sending = false;
                     setTransferControls(false);
                     status.setText("Message was not delivered: " + safe(e));
@@ -963,7 +1101,6 @@ final class MessengerPane extends BorderPane {
                     status.setText(cancellation.get() ? (voiceMessage ? "Voice message cancelled." : "File transfer cancelled.")
                             : (voiceMessage ? "Voice message was not delivered: " : "File was not delivered: ") + safe(e));
                     if (voiceMessage) resetVoiceComposer(status.getText());
-                    else attachmentSendButton.setDisable(false);
                 });
             }
         });
@@ -996,7 +1133,6 @@ final class MessengerPane extends BorderPane {
             attachmentComposer.setManaged(true);
             VBox.setVgrow(transcript, Priority.SOMETIMES);
             VBox.setVgrow(composerArea, Priority.ALWAYS);
-            attachmentSendButton.setDisable(false);
             attachmentCaption.setDisable(false);
             status.setText(pendingAttachments.size() + " file" + (pendingAttachments.size() == 1 ? "" : "s")
                     + " ready · " + formatBytes(total) + " total. Add an optional message, then send.");
@@ -1122,12 +1258,8 @@ final class MessengerPane extends BorderPane {
     }
 
     private void sendPendingAttachment() {
-        if (sending || pendingAttachments.isEmpty() || selected == null) return;
-        String caption = attachmentCaption.getText() == null ? "" : attachmentCaption.getText().strip();
-        if (caption.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 4096) {
-            status.setText("Attachment message must be 4096 UTF-8 bytes or fewer.");
-            return;
-        }
+        if (sending || pendingAttachments.isEmpty() || selected == null || captionBytes.get() > MAX_BODY_BYTES) return;
+        String caption = captionDraft.get();
         var files = List.copyOf(pendingAttachments);
         clearAttachmentComposer();
         sendAttachments(selected, files, caption);
@@ -1145,7 +1277,6 @@ final class MessengerPane extends BorderPane {
         VBox.setVgrow(composerArea, Priority.NEVER);
         normalInputRow.setVisible(true);
         normalInputRow.setManaged(true);
-        updateComposerMode();
     }
 
     private static String fileTypeLabel(Path path) {
@@ -1457,22 +1588,43 @@ final class MessengerPane extends BorderPane {
     }
 
     private void setTransferControls(boolean busy) {
-        sendButton.setDisable(busy || selected == null || composer.getText().isBlank());
         attachButton.setDisable(busy || selected == null);
         voiceButton.setDisable(busy || selected == null);
         composer.setDisable(busy || selected == null);
         attachmentCaption.setDisable(busy);
-        attachmentSendButton.setDisable(busy || pendingAttachments.isEmpty() || selected == null);
         attachmentAddButton.setDisable(busy || pendingAttachments.size() >= 5 || selected == null);
     }
 
-    private void updateComposerMode() {
-        boolean hasText = !composer.getText().isBlank();
-        sendButton.setVisible(hasText);
-        sendButton.setManaged(hasText);
-        voiceButton.setVisible(!hasText);
-        voiceButton.setManaged(!hasText);
-        sendButton.setDisable(sending || selected == null || !hasText);
+    private static int utf8Bytes(String text) {
+        return text == null ? 0 : text.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private static Label sizeCounter(ObservableStringValue draft, IntegerBinding bytes) {
+        Label counter = new Label();
+        counter.getStyleClass().add("composer-size-counter");
+        counter.setMinWidth(Region.USE_PREF_SIZE);
+        counter.setTextAlignment(TextAlignment.RIGHT);
+        counter.textProperty().bind(Bindings.createStringBinding(() -> {
+            int used = bytes.get();
+            if (used < COUNTER_THRESHOLD) return "";
+            var characters = EmojiArtwork.GRAPHEME.matcher(draft.get());
+            int count = 0;
+            while (characters.find()) count++;
+            String unit = count == 1 ? "character" : "characters";
+            int remaining = MAX_BODY_BYTES - used;
+            String allowance = switch (Integer.signum(remaining)) {
+                case -1 -> "Too long";
+                case 0 -> "0 left";
+                default -> String.format(Locale.ROOT, "Up to %,d left", remaining);
+            };
+            return String.format(Locale.ROOT, "%,d %s\n%s", count, unit, allowance);
+        }, draft, bytes));
+        counter.visibleProperty().bind(bytes.greaterThanOrEqualTo(COUNTER_THRESHOLD));
+        counter.managedProperty().bind(counter.visibleProperty());
+        PseudoClass overLimit = PseudoClass.getPseudoClass("over-limit");
+        bytes.addListener((obs, oldCount, newCount) ->
+                counter.pseudoClassStateChanged(overLimit, newCount.intValue() > MAX_BODY_BYTES));
+        return counter;
     }
 
     private static String formatBytes(long bytes) {
@@ -1689,31 +1841,57 @@ final class MessengerPane extends BorderPane {
     }
 
     private final class MessageCell extends ListCell<MessageStore.Message> {
+        private final Label dateSeparator = new Label();
+        private final HBox dateRow = new HBox(dateSeparator);
+        private final VBox messageLayout = new VBox(dateRow);
+
+        private MessageCell() {
+            dateSeparator.getStyleClass().add("chat-date-pill");
+            dateRow.getStyleClass().add("chat-date-row");
+            dateRow.setAlignment(Pos.CENTER);
+            var dateText = Bindings.createStringBinding(this::dateSeparatorText,
+                    indexProperty(), transcript.getItems(), transcriptToday);
+            dateSeparator.textProperty().bind(dateText);
+            dateRow.visibleProperty().bind(dateText.isNotEmpty());
+            dateRow.managedProperty().bind(dateRow.visibleProperty());
+        }
+
+        private String dateSeparatorText() {
+            int index = getIndex();
+            List<MessageStore.Message> messages = transcript.getItems();
+            if (index < 0 || index >= messages.size()) return "";
+            LocalDate date = messageDate(messages.get(index));
+            return index == 0 || !date.equals(messageDate(messages.get(index - 1))) ? formatChatDate(date) : "";
+        }
+
         @Override protected void updateItem(MessageStore.Message message, boolean empty) {
             super.updateItem(message, empty);
+            setContextMenu(null);
             if (empty || message == null) { setText(null); setGraphic(null); return; }
-            String who = message.outgoing() ? "You" : selected == null ? "Contact" : selected.username();
-            Label heading = new Label("[" + TIME.format(Instant.ofEpochMilli(message.timestamp())) + "] " + who);
-            heading.getStyleClass().add("message-heading");
-            Label content;
             if (message.attachmentName() != null) {
                 boolean voice = isVoiceMessage(message);
-                content = new Label(voice ? "Voice message" : "📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
-                content.setWrapText(true);
-                content.getStyleClass().add("message-content");
-                if (voice) {
-                    SVGPath microphone = microphoneGlyph();
-                    microphone.getStyleClass().add("message-mic-glyph");
-                    content.setGraphic(microphone);
-                    content.setGraphicTextGap(8);
-                }
-                VBox rows = new VBox(5, heading, content);
+                Label duration = null;
+                VBox rows = new VBox(5);
                 rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
+                rows.setMaxWidth(680);
+                if (voice) {
+                    duration = new Label("–:––");
+                    duration.getStyleClass().add("voice-note-duration");
+                    rows.getStyleClass().add("voice-note-card");
+                    rows.getChildren().add(createVoicePlayer(message, duration));
+                    if (!message.outgoing() && message.attachmentPath() != null) {
+                        MenuItem exportItem = new MenuItem("Export recording…");
+                        exportItem.setOnAction(event -> export(message));
+                        setContextMenu(new ContextMenu(exportItem));
+                    }
+                } else {
+                    Label content = new Label("📎 " + message.attachmentName() + " (" + formatBytes(message.attachmentSize()) + ")");
+                    content.setWrapText(true);
+                    content.getStyleClass().add("message-content");
+                    rows.getChildren().add(content);
+                }
                 if (message.body() != null && !message.body().isBlank()) {
-                    Label caption = new Label(message.body());
-                    caption.setWrapText(true);
-                    caption.getStyleClass().add("message-content");
-                    rows.getChildren().add(caption);
+                    rows.getChildren().add(messageText(message.body()));
                 }
                 ActiveTransfer transfer = activeTransfers.get(message.id());
                 if (transfer != null) {
@@ -1753,36 +1931,46 @@ final class MessengerPane extends BorderPane {
                     HBox.setHgrow(progressTrack, Priority.ALWAYS);
                     rows.getChildren().add(progressRow);
                 }
-                HBox actions = new HBox(8);
-                if (voice) {
-                    Button play = new Button(isPlaying(message.attachmentPath()) ? "■ Stop" : "▶ Play");
-                    play.getStyleClass().add("voice-play-button");
-                    if (message.attachmentPath() == null || !Files.isRegularFile(Path.of(message.attachmentPath()))) {
-                        play.setDisable(true);
-                        play.setTooltip(new Tooltip("Voice recording is unavailable on this device."));
-                    } else play.setOnAction(event -> playVoice(Path.of(message.attachmentPath())));
-                    actions.getChildren().add(play);
-                }
-                if (!message.outgoing()) {
+                if (!voice && !message.outgoing()) {
                     Button exportButton = new Button("Export…");
                     exportButton.getStyleClass().add("export-button");
                     exportButton.setOnAction(event -> export(message));
-                    actions.getChildren().add(exportButton);
+                    rows.getChildren().add(new HBox(8, exportButton));
                 }
-                if (!actions.getChildren().isEmpty()) rows.getChildren().add(actions);
-                setText(null); setGraphic(wrapMessageCard(rows, message)); return;
-            } else {
-                content = new Label(message.body());
-                content.setWrapText(true);
+                showMessage(rows, message, duration);
+                return;
             }
-            content.getStyleClass().add("message-content");
-            VBox rows = new VBox(4, heading, content);
+            VBox rows = new VBox(4, messageText(message.body()));
             rows.getStyleClass().addAll("message-card", message.outgoing() ? "outgoing" : "incoming");
+            rows.maxWidthProperty().bind(textBubbleMaxWidth);
             rows.setPadding(new Insets(6));
-            setText(null); setGraphic(wrapMessageCard(rows, message));
+            showMessage(rows, message, null);
         }
 
-        private HBox wrapMessageCard(VBox card, MessageStore.Message message) {
+        private void showMessage(VBox card, MessageStore.Message message, Label voiceDuration) {
+            Instant sentAt = Instant.ofEpochMilli(message.timestamp());
+            String fullTimestamp = TIME.format(sentAt);
+            Label timestamp = new Label(MESSAGE_TIME.format(sentAt));
+            timestamp.getStyleClass().add("message-timestamp");
+            timestamp.setTooltip(new Tooltip(fullTimestamp));
+            timestamp.setAccessibleText(fullTimestamp);
+            timestamp.setMaxWidth(Double.MAX_VALUE);
+            timestamp.setAlignment(message.outgoing() ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+            if (voiceDuration == null) {
+                card.getChildren().add(timestamp);
+            } else {
+                HBox footer = message.outgoing() ? new HBox(8, voiceDuration, timestamp) : new HBox(8, timestamp, voiceDuration);
+                footer.setAlignment(Pos.CENTER);
+                HBox.setHgrow(timestamp, Priority.ALWAYS);
+                card.getChildren().add(footer);
+            }
+
+            messageLayout.getChildren().setAll(dateRow, alignMessageCard(card, message));
+            setText(null);
+            setGraphic(messageLayout);
+        }
+
+        private HBox alignMessageCard(VBox card, MessageStore.Message message) {
             VBox messageGroup = new VBox(3, card);
             messageGroup.setAlignment(message.outgoing() ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
             messageGroup.setMaxWidth(680);
@@ -1809,10 +1997,33 @@ final class MessengerPane extends BorderPane {
             HBox alignment = new HBox(messageGroup);
             alignment.setAlignment(message.outgoing() ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
             alignment.setMaxWidth(Double.MAX_VALUE);
-            alignment.prefWidthProperty().bind(transcript.widthProperty().subtract(34));
-            card.setMaxWidth(680);
+            alignment.prefWidthProperty().bind(transcriptRowWidth);
             return alignment;
         }
+    }
+
+    private static Region messageText(String value) {
+        List<EmojiArtwork.Span> emojis = EmojiArtwork.findIn(value);
+        if (emojis.isEmpty()) {
+            Label text = new Label(value);
+            text.setWrapText(true);
+            text.setMinWidth(0);
+            text.getStyleClass().add("message-content");
+            return text;
+        }
+
+        TextFlow flow = new TextFlow();
+        flow.setMinWidth(0);
+        flow.setAccessibleText(value);
+        flow.getStyleClass().add("emoji-message-content");
+        int offset = 0;
+        for (var emoji : emojis) {
+            if (offset < emoji.start()) flow.getChildren().add(new Text(value.substring(offset, emoji.start())));
+            flow.getChildren().add(EmojiArtwork.icon(emoji.image(), 17));
+            offset = emoji.end();
+        }
+        if (offset < value.length()) flow.getChildren().add(new Text(value.substring(offset)));
+        return flow;
     }
 
     private static boolean isVoiceMessage(MessageStore.Message message) {
@@ -1820,20 +2031,81 @@ final class MessengerPane extends BorderPane {
                 && message.attachmentName().toLowerCase(java.util.Locale.ROOT).endsWith(".wav");
     }
 
-    private boolean isPlaying(String path) {
-        return path != null && activeVoiceClip != null && activeVoiceClip.isRunning() && Path.of(path).equals(activeVoicePath);
+    private HBox createVoicePlayer(MessageStore.Message message, Label duration) {
+        Button play = new Button();
+        play.getStyleClass().add("voice-note-play");
+        play.setGraphic(playGlyph());
+        play.setAccessibleText("Play voice message");
+        Tooltip playHint = new Tooltip("Loading voice recording…");
+        play.setTooltip(playHint);
+        play.setDisable(true);
+
+        WaveformView waveform = new WaveformView(true);
+        HBox.setHgrow(waveform, Priority.ALWAYS);
+        String sender = message.outgoing() ? localUsername : selected == null ? null : selected.username();
+        Label avatar = new Label(profileInitial(sender));
+        avatar.getStyleClass().add("profile-bubble");
+        Label mic = new Label();
+        mic.setGraphic(microphoneGlyph());
+        mic.getStyleClass().add("voice-note-mic");
+        StackPane portrait = new StackPane(avatar, mic);
+        StackPane.setAlignment(mic, Pos.BOTTOM_LEFT);
+        HBox player = new HBox(8, play, waveform, portrait);
+        player.getStyleClass().add("voice-note-player");
+
+        if (message.attachmentPath() == null) {
+            playHint.setText("Voice recording is unavailable on this device.");
+            return player;
+        }
+        Path path = Path.of(message.attachmentPath());
+        var isPlaying = Bindings.createBooleanBinding(() -> path.equals(activeVoicePath.get()) && voicePlaying.get(),
+                activeVoicePath, voicePlaying);
+        play.graphicProperty().bind(Bindings.when(isPlaying).then(pauseGlyph()).otherwise(playGlyph()));
+        play.accessibleTextProperty().bind(Bindings.when(isPlaying)
+                .then("Pause voice message").otherwise("Play voice message"));
+        waveform.progressProperty().bind(Bindings.createDoubleBinding(
+                () -> path.equals(activeVoicePath.get()) ? voicePlaybackProgress.get() : 0,
+                activeVoicePath, voicePlaybackProgress));
+        play.setOnAction(event -> playVoice(path));
+
+        var preview = voiceNotes.computeIfAbsent(path, key -> CompletableFuture.supplyAsync(() -> {
+            try { return VoiceNote.read(key); }
+            catch (Exception unavailable) { return null; }
+        }, voiceNoteReader));
+        preview.thenAccept(note -> {
+            Runnable showPreview = () -> {
+                if (note == null) {
+                    playHint.setText("Voice recording is unavailable on this device.");
+                    voiceNotes.remove(path, preview);
+                    return;
+                }
+                waveform.setPreview(note.levels());
+                duration.setText(String.format(Locale.ROOT, "%d:%02d", note.seconds() / 60, note.seconds() % 60));
+                playHint.textProperty().bind(play.accessibleTextProperty());
+                play.setDisable(false);
+            };
+            if (Platform.isFxApplicationThread()) showPreview.run();
+            else Platform.runLater(showPreview);
+        });
+        return player;
     }
 
     private void playVoice(Path path) {
-        if (activeVoiceClip != null) {
-            Clip previous = activeVoiceClip;
-            boolean sameMessage = path.equals(activeVoicePath);
-            activeVoiceClip = null;
-            activeVoicePath = null;
-            try { previous.stop(); previous.close(); } catch (Exception ignored) {}
-            transcript.refresh();
-            if (sameMessage) return;
+        if (path.equals(activeVoicePath.get())) {
+            if (activeVoiceClip == null) return;
+            if (voicePlaying.get()) {
+                activeVoiceClip.stop();
+                voicePlaybackPoll.stop();
+                voicePlaying.set(false);
+                updateVoicePlayback();
+            } else {
+                startVoicePlayback();
+            }
+            return;
         }
+        closeVoicePlayback();
+        long request = voicePlaybackRequest;
+        activeVoicePath.set(path);
         status.setText("Loading voice message…");
         Thread.ofPlatform().daemon().name("voice-playback").start(() -> {
             Clip clip = null;
@@ -1842,26 +2114,55 @@ final class MessengerPane extends BorderPane {
                 clip.open(audio);
                 Clip ready = clip;
                 Platform.runLater(() -> {
+                    if (request != voicePlaybackRequest) {
+                        ready.close();
+                        return;
+                    }
                     activeVoiceClip = ready;
-                    activeVoicePath = path;
                     ready.addLineListener(event -> {
-                        if (event.getType() == LineEvent.Type.STOP) Platform.runLater(() -> {
-                            if (activeVoiceClip == ready) {
-                                activeVoiceClip = null;
-                                activeVoicePath = null;
-                                ready.close();
-                                transcript.refresh();
-                            }
+                        if (event.getType() == LineEvent.Type.STOP
+                                && event.getFramePosition() >= ready.getFrameLength()) Platform.runLater(() -> {
+                            if (activeVoiceClip == ready) closeVoicePlayback();
                         });
                     });
-                    ready.start();
-                    status.setText("Playing voice message…");
-                    transcript.refresh();
+                    startVoicePlayback();
                 });
             } catch (Exception e) {
                 if (clip != null) try { clip.close(); } catch (Exception ignored) {}
-                Platform.runLater(() -> status.setText("Could not play voice message: " + safe(e)));
+                Platform.runLater(() -> {
+                    if (request == voicePlaybackRequest) {
+                        closeVoicePlayback();
+                        status.setText("Could not play voice message: " + safe(e));
+                    }
+                });
             }
         });
+    }
+
+    private void startVoicePlayback() {
+        activeVoiceClip.start();
+        voicePlaying.set(true);
+        voicePlaybackPoll.play();
+        status.setText("Playing voice message…");
+    }
+
+    private void updateVoicePlayback() {
+        double progress = (double) activeVoiceClip.getFramePosition() / activeVoiceClip.getFrameLength();
+        if (progress >= 1) closeVoicePlayback();
+        else voicePlaybackProgress.set(progress);
+    }
+
+    private void closeVoicePlayback() {
+        voicePlaybackRequest++;
+        voicePlaybackPoll.stop();
+        Clip previous = activeVoiceClip;
+        activeVoiceClip = null;
+        activeVoicePath.set(null);
+        voicePlaying.set(false);
+        voicePlaybackProgress.set(0);
+        if (previous != null) {
+            previous.stop();
+            previous.close();
+        }
     }
 }

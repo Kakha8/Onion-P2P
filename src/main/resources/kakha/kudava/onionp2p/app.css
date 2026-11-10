@@ -167,12 +167,50 @@
 .chat-transcript .virtual-flow { -fx-background-color: transparent; }
 .chat-transcript .list-cell { -fx-background-color: transparent; -fx-padding: 4 6 4 6; }
 .chat-transcript .list-cell:filled:even, .chat-transcript .list-cell:filled:odd { -fx-background-color: transparent; }
+.chat-date-row { -fx-padding: 5 0 7 0; }
+.chat-date-pill {
+    -fx-background-color: #242b35;
+    -fx-background-radius: 8;
+    -fx-padding: 4 11;
+    -fx-text-fill: #c6d1df;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
 .message-card { -fx-padding: 9 12 9 12; -fx-background-radius: 16; -fx-max-width: 680px; }
 .message-card.outgoing { -fx-background-color: #2369ad; }
 .message-card.incoming { -fx-background-color: #293746; }
-.message-heading { -fx-text-fill: #7db3f4; -fx-font-size: 11px; }
+.message-timestamp { -fx-text-fill: #dbeafe; -fx-font-size: 11px; }
 .message-content { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; }
-.message-mic-glyph { -fx-fill: #e5e7eb; -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.emoji-message-content Text { -fx-fill: #e5e7eb; -fx-font-size: 14px; }
+.voice-note-card { -fx-padding: 7 12 7 12; }
+.voice-note-player { -fx-alignment: center-left; }
+.voice-note-player .profile-bubble {
+    -fx-min-width: 42;
+    -fx-max-width: 42;
+    -fx-min-height: 42;
+    -fx-max-height: 42;
+    -fx-background-radius: 21;
+}
+.voice-note-mic {
+    -fx-alignment: center;
+    -fx-min-width: 16;
+    -fx-min-height: 16;
+    -fx-background-color: #203144;
+    -fx-background-radius: 8;
+}
+.voice-note-mic .mic-glyph { -fx-fill: #82c5ff; -fx-scale-x: 0.52; -fx-scale-y: 0.52; }
+.voice-note-play {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-radius: 16;
+    -fx-min-width: 32;
+    -fx-min-height: 32;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+.voice-note-play:hover, .voice-note-play:focused { -fx-background-color: rgba(255, 255, 255, 0.12); }
+.voice-note-play .voice-control-glyph { -fx-fill: #e8f2ff; -fx-stroke: transparent; }
+.voice-note-duration { -fx-text-fill: #dbeafe; -fx-font-size: 11px; }
 .message-transfer-row { -fx-alignment: center; -fx-padding: 3 0 0 0; }
 .message-transfer-track { -fx-background-color: rgba(10, 16, 24, 0.65); -fx-background-radius: 5; -fx-border-color: rgba(255, 255, 255, 0.15); -fx-border-radius: 5; }
 .message-transfer-fill { -fx-background-color: #7dd3fc; -fx-background-radius: 5; }
@@ -184,8 +222,10 @@
 .hyperlink { -fx-text-fill: #8bbcf7; }
 .chat-status { -fx-text-fill: #8f9aab; -fx-font-size: 11px; }
 .chat-input-row { -fx-alignment: center; -fx-spacing: 4; -fx-padding: 4 8 4 8; -fx-background-color: #202832; -fx-background-radius: 26; -fx-border-color: #2b323d; -fx-border-radius: 26; }
-.chat-composer { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-insets: 0; -fx-padding: 10 8 10 8; }
+.chat-composer { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-insets: 0; -fx-padding: 10 8 10 8; -fx-highlight-fill: transparent; }
 .chat-composer:focused { -fx-border-color: transparent; }
+.composer-size-counter { -fx-text-fill: #acb9c9; -fx-font-size: 11px; }
+.composer-size-counter:over-limit { -fx-text-fill: #ff9c9c; }
 .attachment-composer { -fx-padding: 18 20 16 20; -fx-min-height: 220; -fx-pref-height: 270; -fx-background-color: #1c232c; -fx-background-radius: 24; -fx-border-color: #303b49; -fx-border-radius: 24; }
 .attachment-file-heading { -fx-alignment: center-left; -fx-padding: 2 2 5 2; }
 .attachment-files-viewport { -fx-background-color: transparent; -fx-background: transparent; -fx-padding: 0; -fx-fit-to-height: true; -fx-pref-height: 82; -fx-min-height: 82; -fx-max-height: 82; }
@@ -334,7 +374,7 @@
 .voice-trash-button:hover, .voice-control-button:hover { -fx-background-color: #303b49; }
 .voice-trash-button .trash-glyph { -fx-fill: transparent; -fx-stroke: #aeb7c2; -fx-stroke-width: 1.8; -fx-scale-x: 0.8; -fx-scale-y: 0.8; }
 .voice-control-button .voice-control-glyph { -fx-fill: #aeb7c2; -fx-stroke: transparent; -fx-scale-x: 0.8; -fx-scale-y: 0.8; }
-.voice-play-button, .export-button { -fx-background-color: #253244; -fx-border-color: #344153; -fx-text-fill: #8bbcf7; -fx-padding: 5 10 5 10; }
+.export-button { -fx-background-color: #253244; -fx-border-color: #344153; -fx-text-fill: #8bbcf7; -fx-padding: 5 10 5 10; }
 .transfer-row { -fx-alignment: center; }
 .transfer-rate { -fx-text-fill: #9aa3af; -fx-font-size: 11px; }
 .security-note { -fx-text-fill: #758195; -fx-font-size: 10px; }

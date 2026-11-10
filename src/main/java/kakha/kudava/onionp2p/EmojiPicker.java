@@ -12,20 +12,16 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.TilePane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.SVGPath;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,7 +29,6 @@ import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.zip.ZipInputStream;
 
 /** Local emoji palette. The composer receives the original Unicode text. */
 final class EmojiPicker extends ContextMenu {
@@ -122,8 +117,7 @@ final class EmojiPicker extends ContextMenu {
     private final Label empty = new Label("No matching emojis");
     private final ScrollPane scroll;
     private Category activeCategory = CATEGORIES.getFirst();
-    private Map<String, Image> artwork = Map.of();
-    private boolean artworkLoaded;
+    private boolean populated;
 
     EmojiPicker(Consumer<String> onSelection) {
         this.onSelection = onSelection;
@@ -157,9 +151,8 @@ final class EmojiPicker extends ContextMenu {
         item.getStyleClass().add("emoji-picker-item");
         getItems().add(item);
         setOnShowing(event -> {
-            if (!artworkLoaded) {
-                artwork = loadArtwork();
-                artworkLoaded = true;
+            if (!populated) {
+                populated = true;
                 refresh();
             }
         });
@@ -209,15 +202,11 @@ final class EmojiPicker extends ContextMenu {
         button.getStyleClass().add("emoji-choice");
         button.setTooltip(new Tooltip(emoji.name()));
         button.setAccessibleText(emoji.name());
-        Image image = artwork.get(artworkKey(emoji.symbol()));
+        Image image = EmojiArtwork.imageFor(emoji.symbol());
         if (image == null) {
             button.setText(emoji.symbol());
         } else {
-            ImageView icon = new ImageView(image);
-            icon.setFitWidth(25);
-            icon.setFitHeight(25);
-            icon.setPreserveRatio(true);
-            button.setGraphic(icon);
+            button.setGraphic(EmojiArtwork.icon(image, 25));
         }
         button.setOnAction(event -> {
             hide();
@@ -290,25 +279,4 @@ final class EmojiPicker extends ContextMenu {
         };
     }
 
-    private static String artworkKey(String symbol) {
-        String key = symbol.contains("\u200d") ? symbol : symbol.replace("\ufe0f", "");
-        return key.codePoints().mapToObj(Integer::toHexString).collect(Collectors.joining("-")) + ".png";
-    }
-
-    private static Map<String, Image> loadArtwork() {
-        Map<String, Image> images = new HashMap<>();
-        try (var stream = EmojiPicker.class.getResourceAsStream("emoji-artwork.zip")) {
-            if (stream == null) return images;
-            try (var archive = new ZipInputStream(stream)) {
-                for (var entry = archive.getNextEntry(); entry != null; entry = archive.getNextEntry()) {
-                    if (!entry.getName().endsWith(".png")) continue;
-                    Image image = new Image(new ByteArrayInputStream(archive.readAllBytes()));
-                    if (!image.isError()) images.put(entry.getName(), image);
-                }
-            }
-        } catch (IOException e) {
-            System.err.println("Could not load emoji artwork: " + e.getMessage());
-        }
-        return images;
-    }
 }
