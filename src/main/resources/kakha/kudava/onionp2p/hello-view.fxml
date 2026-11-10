@@ -14,29 +14,67 @@
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.control.PasswordField?>
 <?import javafx.scene.control.Separator?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
 <BorderPane fx:id="windowRoot" styleClass="app-root window-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
     <top>
         <HBox fx:id="windowBar" styleClass="window-bar" alignment="CENTER_LEFT" spacing="0">
-            <Label text="Onion-P2P" styleClass="window-title"/>
+            <Label text="Onion-P2P" styleClass="window-title" graphicTextGap="7">
+                <graphic>
+                    <ImageView fitWidth="24" fitHeight="24" preserveRatio="true" smooth="true"
+                               blendMode="LIGHTEN" mouseTransparent="true">
+                        <image>
+                            <Image url="@onion-owl.png" requestedWidth="48" requestedHeight="48" preserveRatio="true" smooth="true"/>
+                        </image>
+                    </ImageView>
+                </graphic>
+            </Label>
             <Region HBox.hgrow="ALWAYS"/>
             <Button fx:id="minimizeButton" styleClass="window-control-button" onAction="#onMinimizeWindow"/>
             <Button fx:id="maximizeButton" styleClass="window-control-button" onAction="#onToggleMaximizeWindow"/>
-            <Button fx:id="closeWindowButton" styleClass="window-control-button window-close-button" onAction="#onCloseWindow"/>
+            <Button fx:id="closeWindowButton" styleClass="window-control-button,window-close-button" onAction="#onCloseWindow"/>
         </HBox>
     </top>
     <center>
         <StackPane styleClass="window-content">
-    <VBox fx:id="authPane" styleClass="auth-card" alignment="CENTER" spacing="16" maxWidth="440" visible="false" managed="false">
-        <Label fx:id="authTitle" text="Set up your account" style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
-        <Label fx:id="authMessage" wrapText="true" text="Checking local account…"/>
-        <TextField fx:id="usernameField" promptText="Username" maxWidth="360"/>
-        <PasswordField fx:id="passwordField" promptText="Password (at least 12 characters)" maxWidth="360"/>
-        <VBox fx:id="confirmPasswordRow" spacing="8" alignment="CENTER" visible="false" managed="false">
-            <PasswordField fx:id="confirmPasswordField" promptText="Confirm password" maxWidth="360" onAction="#onAuthenticate"/>
-        </VBox>
-        <Button fx:id="authButton" text="Create account" onAction="#onAuthenticate"/>
-        <ProgressIndicator fx:id="authProgress" prefWidth="28" prefHeight="28" maxWidth="28" maxHeight="28" visible="false" managed="false"/>
-    </VBox>
+            <VBox fx:id="authPane" styleClass="auth-card" alignment="CENTER" spacing="14" maxWidth="338"
+                  visible="false" managed="false">
+                <ImageView fitWidth="112" fitHeight="112" preserveRatio="true" smooth="true"
+                           blendMode="LIGHTEN" mouseTransparent="true">
+                    <image>
+                        <Image url="@onion-owl.png" requestedWidth="224" requestedHeight="224" preserveRatio="true" smooth="true"/>
+                    </image>
+                </ImageView>
+                <VBox alignment="CENTER" spacing="5">
+                    <Label fx:id="authTitle" styleClass="auth-title" text="Onion-P2P"/>
+                    <Label fx:id="authMessage" styleClass="auth-message" wrapText="true" textAlignment="CENTER"
+                           text="Checking local account…"/>
+                </VBox>
+                <VBox styleClass="auth-fields" spacing="10">
+                    <TextField fx:id="usernameField" promptText="Username"/>
+                    <StackPane>
+                        <PasswordField fx:id="passwordField" styleClass="auth-password-input" promptText="Password"/>
+                        <TextField fx:id="revealedPasswordField" styleClass="auth-password-input" promptText="Password"
+                                   visible="false" managed="false"/>
+                        <Button fx:id="passwordVisibilityButton" styleClass="auth-password-toggle"
+                                StackPane.alignment="CENTER_RIGHT" onAction="#onTogglePasswordVisibility">
+                            <StackPane.margin><Insets right="4"/></StackPane.margin>
+                        </Button>
+                    </StackPane>
+                    <VBox fx:id="confirmPasswordRow" visible="false" managed="false">
+                        <PasswordField fx:id="confirmPasswordField" promptText="Confirm password"/>
+                    </VBox>
+                </VBox>
+                <StackPane>
+                    <Button fx:id="authButton" styleClass="auth-submit" text="Unlock" maxWidth="Infinity"
+                            onAction="#onAuthenticate"/>
+                    <ProgressIndicator fx:id="authProgress" styleClass="auth-progress" prefWidth="18" prefHeight="18"
+                                       maxWidth="18" maxHeight="18" StackPane.alignment="CENTER_RIGHT"
+                                       mouseTransparent="true" visible="false" managed="false">
+                        <StackPane.margin><Insets right="12"/></StackPane.margin>
+                    </ProgressIndicator>
+                </StackPane>
+            </VBox>
     <VBox fx:id="appPane" styleClass="app-shell" alignment="TOP_LEFT" spacing="0.0" visible="false" managed="false">
     <padding>
         <Insets bottom="0.0" left="0.0" right="0.0" top="0.0"/>

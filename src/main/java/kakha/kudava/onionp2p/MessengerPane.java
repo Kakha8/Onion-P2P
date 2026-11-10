@@ -323,24 +323,24 @@ final class MessengerPane extends BorderPane {
         updateComposerMode();
 
         status.getStyleClass().add("chat-status");
-        Canvas chatPattern = new Canvas();
-        // The wallpaper follows the viewport size and must not set its minimum size.
-        chatPattern.setManaged(false);
-        StackPane transcriptLayer = new StackPane(chatPattern, transcript);
-        chatPattern.setMouseTransparent(true);
-        chatPattern.widthProperty().bind(transcriptLayer.widthProperty());
-        chatPattern.heightProperty().bind(transcriptLayer.heightProperty());
-        chatPattern.widthProperty().addListener(obs -> drawChatPattern(chatPattern));
-        chatPattern.heightProperty().addListener(obs -> drawChatPattern(chatPattern));
-        transcriptLayer.getStyleClass().add("chat-transcript-layer");
         VBox composerDock = new VBox(7, transferRow, composerArea);
         composerDock.setPadding(new Insets(8, 12, 12, 12));
-        BorderPane chatSurface = new BorderPane();
-        chatSurface.setCenter(transcriptLayer);
-        chatSurface.setBottom(composerDock);
+        BorderPane chatContent = new BorderPane();
+        transcript.setMinHeight(0);
+        chatContent.setCenter(transcript);
+        chatContent.setBottom(composerDock);
+
+        Canvas chatPattern = new Canvas();
+        // The wallpaper follows the conversation body without setting its minimum size.
+        chatPattern.setManaged(false);
+        chatPattern.setMouseTransparent(true);
+        StackPane chatSurface = new StackPane(chatPattern, chatContent);
         chatSurface.getStyleClass().add("chat-surface");
-        chatSurface.setPadding(Insets.EMPTY);
-        transcriptLayer.setMinHeight(0);
+        chatPattern.widthProperty().bind(chatSurface.widthProperty());
+        chatPattern.heightProperty().bind(chatSurface.heightProperty());
+        chatPattern.widthProperty().addListener(obs -> drawChatPattern(chatPattern));
+        chatPattern.heightProperty().addListener(obs -> drawChatPattern(chatPattern));
+
         VBox conversation = new VBox(0, conversationHeader, chatSurface);
         conversation.getStyleClass().add("conversation-pane");
         conversation.setPadding(Insets.EMPTY);

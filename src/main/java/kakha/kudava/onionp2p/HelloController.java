@@ -7,6 +7,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
@@ -19,6 +20,8 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 
 public class HelloController {
+    private static final String PASSWORD_EYE =
+            "M2 10 Q10 -1 18 10 Q10 21 2 10 Z M12.5 10 A2.5 2.5 0 1 1 7.5 10 A2.5 2.5 0 1 1 12.5 10 Z";
     @FXML
     private Label statusText;
     @FXML private Button generateButton;
@@ -42,11 +45,14 @@ public class HelloController {
     @FXML private Label authMessage;
     @FXML private TextField usernameField;
     @FXML private PasswordField passwordField;
+    @FXML private TextField revealedPasswordField;
+    @FXML private Button passwordVisibilityButton;
     @FXML private PasswordField confirmPasswordField;
     @FXML private VBox confirmPasswordRow;
     @FXML private Button authButton;
     @FXML private ProgressIndicator authProgress;
     @FXML private VBox appPane;
+    private final SVGPath passwordEye = new SVGPath();
     private volatile ContactManager manager;
     private String selectedLink;
     private AccountStore accounts;
@@ -62,6 +68,18 @@ public class HelloController {
         minimizeButton.setFocusTraversable(false);
         maximizeButton.setFocusTraversable(false);
         closeWindowButton.setFocusTraversable(false);
+        maximizeButton.visibleProperty().bind(appPane.visibleProperty());
+        maximizeButton.managedProperty().bind(maximizeButton.visibleProperty());
+        authButton.defaultButtonProperty().bind(authPane.visibleProperty());
+        revealedPasswordField.textProperty().bindBidirectional(passwordField.textProperty());
+        revealedPasswordField.managedProperty().bind(revealedPasswordField.visibleProperty());
+        passwordField.visibleProperty().bind(revealedPasswordField.visibleProperty().not());
+        passwordField.managedProperty().bind(passwordField.visibleProperty());
+        passwordEye.getStyleClass().add("auth-password-eye");
+        passwordVisibilityButton.setGraphic(passwordEye);
+        passwordVisibilityButton.setTooltip(new Tooltip());
+        passwordVisibilityButton.disableProperty().bind(authButton.disableProperty());
+        setPasswordRevealed(false);
         minimizeButton.setGraphic(windowControlGlyph("M4 12 H20"));
         maximizeButton.setGraphic(windowControlGlyph("M5 5 H19 V19 H5 Z"));
         closeWindowButton.setGraphic(windowControlGlyph("M5 5 L19 19 M19 5 L5 19"));
@@ -120,7 +138,7 @@ public class HelloController {
 
     private void toggleMaximize() {
         Stage stage = windowStage();
-        if (stage == null) return;
+        if (stage == null || !stage.isResizable()) return;
         stage.setMaximized(!stage.isMaximized());
         maximizeButton.setGraphic(windowControlGlyph(stage.isMaximized()
                 ? "M8 5 H19 V16 M16 8 H5 V19 H16 Z" : "M5 5 H19 V19 H5 Z"));
@@ -145,7 +163,8 @@ public class HelloController {
     }
 
     private void updateResizeCursor(MouseEvent event) {
-        if (windowStage() == null || windowStage().isMaximized()) return;
+        Stage stage = windowStage();
+        if (stage == null || !stage.isResizable() || stage.isMaximized()) return;
         double x = event.getX(), y = event.getY(), width = windowRoot.getWidth(), height = windowRoot.getHeight();
         boolean left = x <= 6, right = x >= width - 6, top = y <= 6, bottom = y >= height - 6;
         activeResizeCursor = top && left ? Cursor.NW_RESIZE : top && right ? Cursor.NE_RESIZE
@@ -186,6 +205,7 @@ public class HelloController {
 
     private void showAuth(boolean create) {
         creatingAccount = create;
+        setPasswordRevealed(false);
         authTitle.setText(create ? "Set up your account" : "Unlock your account");
         authMessage.setText(create ? "Choose a username and a password of at least 12 characters."
                 : "Enter your local username and password.");
@@ -200,12 +220,33 @@ public class HelloController {
         usernameField.requestFocus();
     }
 
+    @FXML private void onTogglePasswordVisibility() {
+        boolean reveal = !revealedPasswordField.isVisible();
+        TextField previous = reveal ? passwordField : revealedPasswordField;
+        TextField next = reveal ? revealedPasswordField : passwordField;
+        int anchor = previous.getAnchor();
+        int caret = previous.getCaretPosition();
+
+        setPasswordRevealed(reveal);
+        next.requestFocus();
+        next.selectRange(anchor, caret);
+    }
+
+    private void setPasswordRevealed(boolean reveal) {
+        revealedPasswordField.setVisible(reveal);
+        passwordEye.setContent(reveal ? PASSWORD_EYE + " M3 3 L17 17" : PASSWORD_EYE);
+        String action = reveal ? "Hide password" : "Show password";
+        passwordVisibilityButton.setAccessibleText(action);
+        passwordVisibilityButton.getTooltip().setText(action);
+    }
+
     @FXML protected void onAuthenticate() {
         if (authButton.isDisabled()) return;
         String username = usernameField.getText();
         char[] password = passwordField.getText().toCharArray();
         char[] confirmation = confirmPasswordField.getText().toCharArray();
         passwordField.clear(); confirmPasswordField.clear();
+        setPasswordRevealed(false);
         if (creatingAccount && !constantTimeEquals(password, confirmation)) {
             java.util.Arrays.fill(password, '\0'); java.util.Arrays.fill(confirmation, '\0');
             authMessage.setText("Passwords do not match."); return;
