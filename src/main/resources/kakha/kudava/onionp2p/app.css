@@ -221,6 +221,103 @@
 .attach-icon-button { -fx-background-color: transparent; -fx-border-color: transparent; -fx-font-size: 19px; -fx-padding: 5 8 5 8; -fx-text-fill: #bdc8d7; }
 .attach-icon-button:hover { -fx-background-color: #303b49; -fx-background-radius: 18; }
 .attach-icon-button.recording { -fx-background-color: #493128; -fx-text-fill: #f3aa88; -fx-background-radius: 18; }
+.button.emoji-picker-button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-radius: 18;
+    -fx-padding: 8;
+}
+.button.emoji-picker-button:hover, .button.emoji-picker-button:focused { -fx-background-color: #303b49; }
+.emoji-picker-glyph { -fx-fill: transparent; -fx-stroke: #bdc8d7; -fx-stroke-width: 1.6; -fx-stroke-line-cap: round; }
+.context-menu.emoji-picker {
+    -fx-background-color: #1c232c;
+    -fx-background-insets: 0;
+    -fx-background-radius: 16;
+    -fx-border-color: #394555;
+    -fx-border-radius: 16;
+    -fx-padding: 0;
+}
+.emoji-picker .emoji-picker-item, .emoji-picker .emoji-picker-item:focused { -fx-background-color: transparent; -fx-padding: 0; }
+.emoji-picker-panel { -fx-padding: 10 12 12; }
+.toggle-button.emoji-category {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 7;
+    -fx-border-color: transparent;
+    -fx-border-width: 0 0 2 0;
+    -fx-min-height: 36;
+    -fx-padding: 4 8;
+    -fx-cursor: hand;
+}
+.toggle-button.emoji-category:hover, .toggle-button.emoji-category:focused { -fx-background-color: #2b3543; }
+.toggle-button.emoji-category:selected { -fx-border-color: transparent transparent #60a5fa transparent; }
+.emoji-category-glyph, .emoji-search-glyph {
+    -fx-fill: transparent;
+    -fx-stroke: #9aa7b7;
+    -fx-stroke-width: 1.65;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+.emoji-category:selected .emoji-category-glyph { -fx-stroke: #bfdbfe; }
+.emoji-search {
+    -fx-alignment: center-left;
+    -fx-padding: 0 12;
+    -fx-min-height: 37;
+    -fx-background-color: #14181e;
+    -fx-background-radius: 20;
+    -fx-border-color: #394555;
+    -fx-border-radius: 20;
+}
+.emoji-search:focus-within { -fx-border-color: #60a5fa; }
+.emoji-search .text-field.emoji-search-field {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 7 0;
+    -fx-prompt-text-fill: #a9b5c6;
+}
+.emoji-picker-results { -fx-padding: 2 4 0 0; }
+.label.emoji-picker-title { -fx-text-fill: #b7c3d3; -fx-font-size: 12px; -fx-font-weight: bold; }
+.label.emoji-picker-empty { -fx-text-fill: #a9b5c6; -fx-padding: 8 0; }
+.emoji-picker-scroll, .emoji-picker-scroll > .viewport {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+.emoji-picker-scroll > .scroll-bar:vertical {
+    -fx-pref-width: 7;
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.emoji-picker-scroll > .scroll-bar:vertical > .track,
+.emoji-picker-scroll > .scroll-bar:vertical > .track-background { -fx-background-color: transparent; }
+.emoji-picker-scroll > .scroll-bar:vertical > .increment-button,
+.emoji-picker-scroll > .scroll-bar:vertical > .decrement-button {
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    -fx-max-height: 0;
+    -fx-padding: 0;
+    -fx-opacity: 0;
+}
+.emoji-picker-scroll > .scroll-bar:vertical > .thumb {
+    -fx-background-color: #485260;
+    -fx-background-insets: 0 1 0 1;
+    -fx-background-radius: 4;
+}
+.button.emoji-choice {
+    -fx-font-family: "Segoe UI Emoji";
+    -fx-font-size: 18px;
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-border-color: transparent;
+    -fx-min-width: 32;
+    -fx-pref-width: 32;
+    -fx-max-width: 32;
+    -fx-min-height: 32;
+    -fx-pref-height: 32;
+    -fx-max-height: 32;
+    -fx-padding: 0;
+}
+.button.emoji-choice:hover, .button.emoji-choice:focused { -fx-background-color: #303b49; }
 .voice-icon-button { -fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 7; -fx-min-width: 36; -fx-min-height: 36; -fx-pref-width: 36; -fx-pref-height: 36; -fx-background-radius: 18; }
 .voice-icon-button:hover { -fx-background-color: #2b323d; }
 .voice-icon-button.recording { -fx-background-color: transparent; }

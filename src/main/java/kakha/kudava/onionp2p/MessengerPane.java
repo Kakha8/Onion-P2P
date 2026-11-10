@@ -14,6 +14,7 @@ import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.geometry.Side;
 import javafx.scene.Scene;
 import javafx.scene.Node;
 import javafx.scene.canvas.Canvas;
@@ -225,6 +226,24 @@ final class MessengerPane extends BorderPane {
         composer.textProperty().addListener((obs, oldText, newText) -> updateComposerMode());
         attachButton.setTooltip(new Tooltip("Attach file"));
         attachButton.getStyleClass().add("attach-icon-button");
+        Button emojiButton = new Button();
+        emojiButton.setGraphic(smileyGlyph());
+        emojiButton.getStyleClass().add("emoji-picker-button");
+        emojiButton.setAccessibleText("Choose emoji");
+        emojiButton.setTooltip(new Tooltip("Choose emoji"));
+        emojiButton.disableProperty().bind(composer.disabledProperty());
+        EmojiPicker emojiPicker = new EmojiPicker(emoji -> {
+            if (composer.isDisabled()) return;
+            composer.replaceSelection(emoji);
+            composer.requestFocus();
+        });
+        emojiButton.setOnAction(event -> {
+            if (emojiPicker.isShowing()) emojiPicker.hide();
+            else emojiPicker.show(emojiButton, Side.TOP, 0, -6);
+        });
+        emojiButton.disabledProperty().addListener((obs, wasDisabled, disabled) -> {
+            if (disabled) emojiPicker.hide();
+        });
         voiceButton.setTooltip(new Tooltip("Record a voice message (up to 30 seconds)"));
         voiceButton.getStyleClass().add("voice-icon-button");
         voiceButton.setGraphic(microphoneGlyph());
@@ -293,7 +312,7 @@ final class MessengerPane extends BorderPane {
         transferRow.getStyleClass().add("transfer-row");
         transferRate.getStyleClass().add("transfer-rate");
         HBox.setHgrow(transferProgress, Priority.ALWAYS);
-        normalInputRow = new HBox(8, attachButton, composer, sendButton, voiceButton);
+        normalInputRow = new HBox(8, attachButton, emojiButton, composer, sendButton, voiceButton);
         normalInputRow.getStyleClass().add("chat-input-row");
         voiceControls = new HBox(12, discardVoiceButton, voiceDurationLabel, voiceWaveform, pauseVoiceButton, voiceSendButton);
         voiceControls.getStyleClass().add("voice-controls");
@@ -610,7 +629,7 @@ final class MessengerPane extends BorderPane {
                         } else {
                             transcript.getItems().setAll(visibleMessages);
                         }
-                        if (!visibleMessages.isEmpty() && wasAtBottom) transcript.scrollTo(visibleMessages.size() - 1);
+                        if (!visibleMessages.isEmpty() && wasAtBottom) scrollTranscriptToEnd();
                     }
                     sendButton.setDisable(sending);
                     if (!sending) status.setText("");
@@ -628,6 +647,12 @@ final class MessengerPane extends BorderPane {
                 return bar.getMax() <= bar.getMin() || bar.getValue() >= bar.getMax() - 0.02;
         }
         return true;
+    }
+
+    private void scrollTranscriptToEnd() {
+        // Measure the rows first, then use the index JavaFX treats as the end of the viewport.
+        transcript.layout();
+        transcript.scrollTo(transcript.getItems().size());
     }
 
     private void markVisibleIncomingMessagesSeen() {
@@ -684,7 +709,7 @@ final class MessengerPane extends BorderPane {
             if (selected == null || !selected.link().equals(contact.link())) return;
             if (transcript.getItems().stream().noneMatch(existing -> existing.id().equals(id))) {
                 transcript.getItems().add(message);
-                transcript.scrollTo(transcript.getItems().size() - 1);
+                scrollTranscriptToEnd();
             }
         });
         return transfer;
@@ -725,7 +750,7 @@ final class MessengerPane extends BorderPane {
         ActiveOutgoingMessage activeMessage = new ActiveOutgoingMessage(pendingMessage);
         activeOutgoingMessages.put(pendingId, activeMessage);
         transcript.getItems().add(pendingMessage);
-        transcript.scrollTo(transcript.getItems().size() - 1);
+        scrollTranscriptToEnd();
         sending = true;
         setTransferControls(true);
         composer.setDisable(true);
@@ -1468,6 +1493,13 @@ final class MessengerPane extends BorderPane {
         SVGPath icon = new SVGPath();
         icon.setContent("M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11z");
         icon.getStyleClass().add("mic-glyph");
+        return icon;
+    }
+
+    private static SVGPath smileyGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M18 10 A8 8 0 1 1 2 10 A8 8 0 1 1 18 10 Z M6.8 8 H7 M13 8 H13.2 M6.5 12 Q10 16 13.5 12");
+        icon.getStyleClass().add("emoji-picker-glyph");
         return icon;
     }
 

@@ -50,6 +50,8 @@ Our experimental rendezvous v1 calculation is X25519(local private key, remote p
 
 ## Bundled runtime
 
+The emoji picker bundles [Twemoji v16.0.1 artwork](https://github.com/jdecked/twemoji/tree/v16.0.1) by Twitter, Inc. and contributors, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The artwork archive includes the license and attribution notice.
+
 `src/main/resources/tor/windows-x64.zip` repackages the official Tor Expert Bundle 16.0 for Windows x86_64, including its `docs` license notices. Source:
 
 https://dist.torproject.org/torbrowser/16.0/tor-expert-bundle-windows-x86_64-16.0.tar.gz
