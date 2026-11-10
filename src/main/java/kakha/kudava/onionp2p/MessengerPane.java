@@ -89,6 +89,7 @@ final class MessengerPane extends BorderPane {
     private static final DateTimeFormatter CHAT_DATE = DateTimeFormatter.ofPattern("MMM d, uuuu", Locale.ENGLISH);
     private static final long FLOATING_DATE_TIMEOUT = TimeUnit.MILLISECONDS.toNanos(900);
     private static final int COUNTER_THRESHOLD = MAX_BODY_BYTES - 512;
+    private static final String REACTION_PREFIX = "\u001eONION_REACTION_V1:";
     private static volatile MessengerPane activePane;
     private final Label torIndicatorDot = new Label("●");
     private final ScaleTransition torStartupPulse = new ScaleTransition(Duration.seconds(0.65), torIndicatorDot);
@@ -100,7 +101,7 @@ final class MessengerPane extends BorderPane {
     private final FilteredList<ContactStore.Contact> filteredContacts = new FilteredList<>(allContacts, contact -> true);
     private final TextField contactSearch = new TextField();
     private final ListView<MessageStore.Message> transcript = new ListView<>();
-    private final NumberBinding transcriptRowWidth = Bindings.max(0, transcript.widthProperty().subtract(34));
+    private final NumberBinding transcriptRowWidth = Bindings.max(0, transcript.widthProperty().subtract(50));
     private final NumberBinding textBubbleMaxWidth = Bindings.min(520, transcriptRowWidth.multiply(0.70));
     private final ObjectProperty<LocalDate> transcriptToday = new SimpleObjectProperty<>(LocalDate.now(TIME.getZone()));
     private final Label floatingDate = new Label();
@@ -150,6 +151,8 @@ final class MessengerPane extends BorderPane {
     private final Map<String, ActiveOutgoingMessage> activeOutgoingMessages = new ConcurrentHashMap<>();
     private final java.util.Set<String> readReceiptsSent = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> readReceiptAttempts = new ConcurrentHashMap<>();
+    private Map<String, Map<String, ReactionCounts>> messageReactions = Map.of();
+    private final Map<String, Map<String, Integer>> pendingMessageReactions = new HashMap<>();
     private final Timeline poll;
     private final Timeline presencePoll;
     private final Timeline seenPoll;
@@ -704,7 +707,31 @@ final class MessengerPane extends BorderPane {
                 var messages = manager.messages(contact.link());
                 Platform.runLater(() -> {
                     if (selected == null || !selected.link().equals(contact.link())) return;
-                    List<MessageStore.Message> visibleMessages = new ArrayList<>(messages);
+                    Map<String, Map<Integer, String>> activeReactions = new HashMap<>();
+                    List<MessageStore.Message> visibleMessages = new ArrayList<>();
+                    for (MessageStore.Message message : messages) {
+                        var reaction = parseReaction(message.body());
+                        if (reaction == null) {
+                            visibleMessages.add(message);
+                        } else {
+                            int actor = message.outgoing() ? 0 : 1;
+                            Map<Integer, String> actors = activeReactions.computeIfAbsent(
+                                    reaction.messageId(), ignored -> new HashMap<>());
+                            if (reaction.added()) actors.put(actor, reaction.emoji());
+                            else actors.remove(actor, reaction.emoji());
+                        }
+                    }
+                    Map<String, Map<String, ReactionCounts>> reactions = new HashMap<>();
+                    activeReactions.forEach((messageId, actors) -> {
+                        Map<String, int[]> emojiCounts = new HashMap<>();
+                        actors.forEach((actor, emoji) -> emojiCounts.computeIfAbsent(emoji, ignored -> new int[2])[actor]++);
+                        Map<String, ReactionCounts> positiveCounts = new HashMap<>();
+                        emojiCounts.forEach((emoji, counts) -> positiveCounts.put(emoji,
+                                new ReactionCounts(counts[0], counts[1])));
+                        if (!positiveCounts.isEmpty()) reactions.put(messageId, positiveCounts);
+                    });
+                    boolean reactionsChanged = !messageReactions.equals(reactions);
+                    messageReactions = reactions;
                     activeTransfers.values().stream()
                             .filter(transfer -> transfer.message.contactLink().equals(contact.link()))
                             .map(transfer -> transfer.message)
@@ -724,13 +751,103 @@ final class MessengerPane extends BorderPane {
                             transcript.getItems().setAll(visibleMessages);
                         }
                         if (!visibleMessages.isEmpty() && wasAtBottom) scrollTranscriptToEnd();
-                    }
+                    } else if (reactionsChanged) transcript.refresh();
                     if (!sending) status.setText("");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status.setText("Could not load conversation: " + safe(e)));
             } finally { loading.set(false); }
         });
+    }
+
+    private record MessageReaction(String messageId, String emoji, boolean added) {}
+    private record ReactionCounts(int mine, int theirs) {}
+    private record ReactionUpdate(String emoji, boolean added) {}
+
+    private static String reactionBody(String messageId, String emoji, boolean added) {
+        String encodedEmoji = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(emoji.getBytes(StandardCharsets.UTF_8));
+        return REACTION_PREFIX + (added ? "+" : "-") + messageId + ":" + encodedEmoji;
+    }
+
+    private static MessageReaction parseReaction(String body) {
+        if (body == null || !body.startsWith(REACTION_PREFIX)) return null;
+        String[] fields = body.substring(REACTION_PREFIX.length()).split(":", 2);
+        if (fields.length != 2) return null;
+        try {
+            boolean added = !fields[0].startsWith("-");
+            String encodedId = fields[0].startsWith("+") || fields[0].startsWith("-")
+                    ? fields[0].substring(1) : fields[0];
+            String messageId = java.util.UUID.fromString(encodedId).toString();
+            String emoji = new String(java.util.Base64.getUrlDecoder().decode(fields[1]), StandardCharsets.UTF_8);
+            var graphemes = EmojiArtwork.GRAPHEME.matcher(emoji);
+            if (!graphemes.matches() || EmojiArtwork.imageFor(emoji) == null) return null;
+            return new MessageReaction(messageId, emoji, added);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private void sendReaction(MessageStore.Message target, String emoji) {
+        Map<String, Integer> current = ownReactions(target.id());
+        List<ReactionUpdate> changes = new ArrayList<>();
+        if (current.containsKey(emoji)) {
+            current.keySet().forEach(active -> changes.add(new ReactionUpdate(active, false)));
+        } else {
+            current.keySet().forEach(active -> changes.add(new ReactionUpdate(active, false)));
+            changes.add(new ReactionUpdate(emoji, true));
+        }
+        sendReactionChanges(target, changes);
+    }
+
+    private Map<String, Integer> ownReactions(String messageId) {
+        Map<String, Integer> current = new HashMap<>();
+        messageReactions.getOrDefault(messageId, Map.of()).forEach((emoji, counts) -> {
+            if (counts.mine() > 0) current.put(emoji, counts.mine());
+        });
+        pendingMessageReactions.getOrDefault(messageId, Map.of()).forEach((emoji, delta) -> {
+            int count = Math.max(0, current.getOrDefault(emoji, 0) + delta);
+            if (count == 0) current.remove(emoji);
+            else current.put(emoji, count);
+        });
+        return current;
+    }
+
+    private void sendReactionChange(MessageStore.Message target, String emoji, boolean added) {
+        sendReactionChanges(target, List.of(new ReactionUpdate(emoji, added)));
+    }
+
+    private void sendReactionChanges(MessageStore.Message target, List<ReactionUpdate> changes) {
+        ContactStore.Contact contact = selected;
+        if (contact == null || !contact.link().equals(target.contactLink()) || target.id().startsWith("pending-") || changes.isEmpty()) return;
+        changes.forEach(change -> adjustPendingReaction(target.id(), change.emoji(), change.added() ? 1 : -1));
+        transcript.refresh();
+        Thread.ofPlatform().daemon().name("messenger-reaction").start(() -> {
+            try {
+                for (ReactionUpdate change : changes)
+                    manager.send(contact.link(), reactionBody(target.id(), change.emoji(), change.added()));
+                Platform.runLater(() -> {
+                    changes.forEach(change -> adjustPendingReaction(target.id(), change.emoji(), change.added() ? -1 : 1));
+                    refreshMessages();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    changes.forEach(change -> adjustPendingReaction(target.id(), change.emoji(), change.added() ? -1 : 1));
+                    transcript.refresh();
+                    status.setText("Reaction was not delivered: " + safe(e));
+                });
+            }
+        });
+    }
+
+    private void adjustPendingReaction(String messageId, String emoji, int amount) {
+        Map<String, Integer> pending = pendingMessageReactions.get(messageId);
+        if (pending == null && amount < 0) return;
+        if (pending == null) pending = pendingMessageReactions.computeIfAbsent(messageId, ignored -> new HashMap<>());
+        int count = pending.getOrDefault(emoji, 0) + amount;
+        if (count == 0) pending.remove(emoji);
+        else pending.put(emoji, count);
+        if (pending.isEmpty()) pendingMessageReactions.remove(messageId);
     }
 
     private boolean isTranscriptAtBottom() {
@@ -1971,9 +2088,12 @@ final class MessengerPane extends BorderPane {
         }
 
         private HBox alignMessageCard(VBox card, MessageStore.Message message) {
-            VBox messageGroup = new VBox(3, card);
+            HBox bubbleRow = createReactionBubble(card, message);
+            VBox messageGroup = new VBox(0, bubbleRow);
             messageGroup.setAlignment(message.outgoing() ? javafx.geometry.Pos.CENTER_RIGHT : javafx.geometry.Pos.CENTER_LEFT);
             messageGroup.setMaxWidth(680);
+            HBox reactionBadges = createReactionBadges(message);
+            if (reactionBadges != null) messageGroup.getChildren().add(reactionBadges);
             if (message.outgoing() && isLatestOutgoing(message.id())) {
                 Label receipt = new Label();
                 ActiveOutgoingMessage pendingMessage = activeOutgoingMessages.get(message.id());
@@ -1999,6 +2119,129 @@ final class MessengerPane extends BorderPane {
             alignment.setMaxWidth(Double.MAX_VALUE);
             alignment.prefWidthProperty().bind(transcriptRowWidth);
             return alignment;
+        }
+
+        private HBox createReactionBadges(MessageStore.Message message) {
+            Map<String, ReactionCounts> reactions = messageReactions.getOrDefault(message.id(), Map.of());
+            Map<String, Integer> pending = pendingMessageReactions.getOrDefault(message.id(), Map.of());
+            if (reactions.isEmpty() && pending.isEmpty()) return null;
+
+            HBox badges = new HBox(4);
+            badges.getStyleClass().add("message-reaction-row");
+            badges.setAlignment(message.outgoing() ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+            badges.setMaxWidth(Double.MAX_VALUE);
+            badges.setTranslateY(-8);
+            java.util.Set<String> emojis = new java.util.TreeSet<>(reactions.keySet());
+            emojis.addAll(pending.keySet());
+            for (String emoji : emojis) {
+                ReactionCounts confirmed = reactions.getOrDefault(emoji, new ReactionCounts(0, 0));
+                int mine = Math.max(0, confirmed.mine() + pending.getOrDefault(emoji, 0));
+                int total = mine + confirmed.theirs();
+                if (total == 0) continue;
+                Label count = new Label(total > 1 ? Integer.toString(total) : "");
+                HBox chip = new HBox(3, EmojiArtwork.icon(EmojiArtwork.imageFor(emoji), 16), count);
+                chip.getStyleClass().add("message-reaction-chip");
+                if (mine > 0) {
+                    chip.getStyleClass().add("my-reaction");
+                    Tooltip.install(chip, new Tooltip("Click to remove your reaction"));
+                    chip.setCursor(javafx.scene.Cursor.HAND);
+                    chip.setOnMouseClicked(event -> {
+                        if (event.getButton() == MouseButton.PRIMARY) sendReactionChange(message, emoji, false);
+                    });
+                }
+                badges.getChildren().add(chip);
+            }
+            if (badges.getChildren().isEmpty()) return null;
+            return badges;
+        }
+
+        private HBox createReactionBubble(VBox card, MessageStore.Message message) {
+            Button reactionButton = new Button();
+            reactionButton.setGraphic(reactionGlyph());
+            reactionButton.getStyleClass().add("message-reaction-trigger");
+            reactionButton.setTooltip(new Tooltip("React to message"));
+            reactionButton.setAccessibleText("React to message");
+            reactionButton.setVisible(false);
+            reactionButton.managedProperty().bind(reactionButton.visibleProperty());
+
+            HBox bubbleRow = new HBox(6);
+            bubbleRow.getStyleClass().add("message-bubble-row");
+            bubbleRow.setAlignment(message.outgoing() ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+            bubbleRow.setMaxWidth(680);
+            if (message.outgoing()) bubbleRow.getChildren().setAll(reactionButton, card);
+            else bubbleRow.getChildren().setAll(card, reactionButton);
+            bubbleRow.setOnMouseEntered(event -> reactionButton.setVisible(true));
+            bubbleRow.setOnMouseExited(event -> {
+                if (reactionMenu == null || !reactionMenu.isShowing()) reactionButton.setVisible(false);
+            });
+            reactionButton.setOnAction(event -> {
+                reactionMenu = quickReactionMenu(message, reactionButton, bubbleRow);
+                reactionMenu.show(reactionButton, Side.TOP, 0, -5);
+            });
+            return bubbleRow;
+        }
+
+        private ContextMenu reactionMenu;
+
+        private ContextMenu quickReactionMenu(MessageStore.Message message, Button anchor, HBox bubbleRow) {
+            ContextMenu menu = new ContextMenu();
+            menu.getStyleClass().add("quick-reaction-menu");
+            menu.setStyle("-fx-background-color: transparent; -fx-background-insets: 0; "
+                    + "-fx-background-radius: 22; -fx-border-color: transparent; "
+                    + "-fx-padding: 0; -fx-effect: none;");
+            HBox choices = new HBox(4);
+            choices.getStyleClass().add("quick-reaction-bar");
+            for (String emoji : List.of("👍", "❤️", "😂", "😮", "😢", "🙏")) {
+                Button choice = new Button();
+                choice.getStyleClass().add("quick-reaction-choice");
+                choice.setGraphic(EmojiArtwork.icon(EmojiArtwork.imageFor(emoji), 21));
+                choice.setAccessibleText(emoji);
+                if (ownReactions(message.id()).containsKey(emoji)) choice.getStyleClass().add("selected");
+                choice.setOnAction(event -> {
+                    menu.hide();
+                    sendReaction(message, emoji);
+                });
+                choices.getChildren().add(choice);
+            }
+            Button more = new Button("+");
+            more.getStyleClass().addAll("quick-reaction-choice", "quick-reaction-more");
+            more.setTooltip(new Tooltip("More emojis"));
+            more.setOnAction(event -> {
+                menu.hide();
+                EmojiPicker picker = new EmojiPicker(emoji -> sendReaction(message, emoji));
+                picker.setOnHidden(hidden -> {
+                    if (!bubbleRow.isHover()) anchor.setVisible(false);
+                });
+                anchor.setVisible(true);
+                picker.show(anchor, Side.TOP, 0, -5);
+            });
+            choices.getChildren().add(more);
+            CustomMenuItem item = new CustomMenuItem(choices, false);
+            item.getStyleClass().add("quick-reaction-item");
+            item.setStyle("-fx-background-color: transparent; -fx-background-insets: 0; "
+                    + "-fx-background-radius: 22; -fx-padding: 0; -fx-effect: none;");
+            menu.getItems().add(item);
+            menu.setOnHidden(event -> {
+                if (!bubbleRow.isHover()) anchor.setVisible(false);
+            });
+            menu.setOnShown(event -> {
+                Node popupRoot = menu.getScene().getRoot();
+                popupRoot.setStyle("-fx-background-color: transparent; -fx-background-insets: 0; "
+                        + "-fx-padding: 0; -fx-effect: none;");
+                javafx.scene.shape.Rectangle roundedClip = new javafx.scene.shape.Rectangle(
+                        popupRoot.getLayoutBounds().getWidth(), popupRoot.getLayoutBounds().getHeight());
+                roundedClip.setArcWidth(44);
+                roundedClip.setArcHeight(44);
+                popupRoot.setClip(roundedClip);
+            });
+            return menu;
+        }
+
+        private SVGPath reactionGlyph() {
+            SVGPath glyph = new SVGPath();
+            glyph.setContent("M12 3 A9 9 0 1 1 11.99 3 Z M8.5 9 H8.6 M15.4 9 H15.5 M8 13 Q12 17 16 13");
+            glyph.getStyleClass().add("message-reaction-glyph");
+            return glyph;
         }
     }
 

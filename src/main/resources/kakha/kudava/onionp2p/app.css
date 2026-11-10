@@ -165,8 +165,11 @@
 .chat-transcript { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-insets: 0; -fx-border-radius: 0; -fx-background-radius: 0; -fx-padding: 0 4 0 0; }
 .chat-transcript .viewport { -fx-background-color: transparent; }
 .chat-transcript .virtual-flow { -fx-background-color: transparent; }
-.chat-transcript .list-cell { -fx-background-color: transparent; -fx-padding: 4 6 4 6; }
+.chat-transcript .list-cell { -fx-background-color: transparent; -fx-padding: 4 12 4 12; }
 .chat-transcript .list-cell:filled:even, .chat-transcript .list-cell:filled:odd { -fx-background-color: transparent; }
+.chat-transcript .scroll-bar:horizontal { -fx-pref-height: 0; -fx-min-height: 0; -fx-max-height: 0; -fx-opacity: 0; -fx-padding: 0; }
+.chat-transcript .scroll-bar:horizontal > .increment-button,
+.chat-transcript .scroll-bar:horizontal > .decrement-button { -fx-pref-width: 0; -fx-min-width: 0; -fx-max-width: 0; -fx-pref-height: 0; -fx-min-height: 0; -fx-max-height: 0; -fx-padding: 0; -fx-opacity: 0; }
 .chat-date-row { -fx-padding: 5 0 7 0; }
 .chat-date-pill {
     -fx-background-color: #242b35;
@@ -182,6 +185,23 @@
 .message-timestamp { -fx-text-fill: #dbeafe; -fx-font-size: 11px; }
 .message-content { -fx-text-fill: #e5e7eb; -fx-font-size: 14px; }
 .emoji-message-content Text { -fx-fill: #e5e7eb; -fx-font-size: 14px; }
+.message-bubble-row { -fx-background-color: transparent; -fx-padding: 0; }
+.button.message-reaction-trigger { -fx-background-color: #202832; -fx-background-radius: 14; -fx-border-color: #394555; -fx-border-radius: 14; -fx-min-width: 26; -fx-pref-width: 26; -fx-max-width: 26; -fx-min-height: 26; -fx-pref-height: 26; -fx-max-height: 26; -fx-padding: 5; -fx-cursor: hand; }
+.button.message-reaction-trigger:hover { -fx-background-color: #303b49; }
+.message-reaction-glyph { -fx-fill: transparent; -fx-stroke: #d2dbe7; -fx-stroke-width: 1.5; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
+.quick-reaction-menu { -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 22; -fx-border-color: transparent; -fx-border-radius: 22; -fx-padding: 0; -fx-effect: none; }
+.context-menu.quick-reaction-menu, .quick-reaction-menu .container { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0; -fx-effect: none; }
+.quick-reaction-menu .quick-reaction-item, .quick-reaction-menu .quick-reaction-item:focused,
+.quick-reaction-menu .menu-item, .quick-reaction-menu .menu-item:focused { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-effect: none; }
+.quick-reaction-bar { -fx-alignment: center; -fx-spacing: 3; -fx-padding: 5; -fx-background-color: #20252d; -fx-background-radius: 22; -fx-border-color: #39414c; -fx-border-radius: 22; }
+.button.quick-reaction-choice { -fx-background-color: transparent; -fx-border-color: transparent; -fx-background-radius: 18; -fx-min-width: 34; -fx-pref-width: 34; -fx-max-width: 34; -fx-min-height: 34; -fx-pref-height: 34; -fx-max-height: 34; -fx-padding: 5; -fx-cursor: hand; }
+.button.quick-reaction-choice:hover, .button.quick-reaction-choice:focused { -fx-background-color: #343c47; }
+.button.quick-reaction-choice.selected { -fx-background-color: #2d343d; -fx-border-color: #707985; -fx-border-width: 1.5; -fx-border-radius: 18; }
+.button.quick-reaction-more { -fx-text-fill: #dce3ec; -fx-font-size: 21px; -fx-padding: 0 0 2 0; }
+.message-reaction-row { -fx-padding: 1 0 0 0; }
+.message-reaction-chip { -fx-alignment: center; -fx-padding: 3 6; -fx-background-color: #1b2836; -fx-background-radius: 12; -fx-border-color: #40536a; -fx-border-radius: 12; }
+.message-reaction-chip.my-reaction { -fx-background-color: #292f37; -fx-border-color: #68717d; -fx-border-width: 1.5; }
+.message-reaction-chip .label { -fx-text-fill: #cbd5e1; -fx-font-size: 10px; }
 .voice-note-card { -fx-padding: 7 12 7 12; }
 .voice-note-player { -fx-alignment: center-left; }
 .voice-note-player .profile-bubble {
