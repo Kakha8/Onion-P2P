@@ -262,16 +262,6 @@ final class MessengerPane extends BorderPane {
         conversationPresence.getStyleClass().add("conversation-presence");
         conversationPresence.setMinWidth(0);
         conversationPresence.managedProperty().bind(conversationAvatar.visibleProperty());
-        Button videoCallButton = new Button();
-        videoCallButton.setGraphic(videoCallGlyph());
-        videoCallButton.getStyleClass().add("conversation-action-button");
-        videoCallButton.setTooltip(new Tooltip("Video call"));
-        videoCallButton.setOnAction(event -> showCallsUnavailable());
-        Button voiceCallButton = new Button();
-        voiceCallButton.setGraphic(phoneGlyph());
-        voiceCallButton.getStyleClass().add("conversation-action-button");
-        voiceCallButton.setTooltip(new Tooltip("Voice call"));
-        voiceCallButton.setOnAction(event -> showCallsUnavailable());
         Button searchMessagesButton = new Button();
         searchMessagesButton.setGraphic(searchGlyph());
         searchMessagesButton.getStyleClass().add("conversation-action-button");
@@ -286,7 +276,7 @@ final class MessengerPane extends BorderPane {
         conversationIdentity.setMinWidth(0);
         HBox.setHgrow(conversationIdentity, Priority.ALWAYS);
         HBox conversationHeader = new HBox(8, conversationAvatar, conversationIdentity,
-                videoCallButton, voiceCallButton, searchMessagesButton, conversationMenu);
+                searchMessagesButton, conversationMenu);
         conversationHeader.getStyleClass().add("conversation-header");
         composer.setPromptText("Write a message…");
         composer.getStyleClass().add("chat-composer");
@@ -492,14 +482,72 @@ final class MessengerPane extends BorderPane {
         chatsNavigation.getStyleClass().addAll("rail-button", "rail-button-selected");
         chatsNavigation.setFocusTraversable(false);
 
-        Button callsNavigation = new Button();
-        callsNavigation.setGraphic(phoneGlyph());
-        callsNavigation.getStyleClass().add("rail-button");
-        callsNavigation.setAccessibleText("Calls");
-        callsNavigation.setTooltip(new Tooltip("Calls"));
-        callsNavigation.setOnAction(event -> showCallsUnavailable());
+        Button driveNavigation = new Button();
+        driveNavigation.setGraphic(driveGlyph());
+        driveNavigation.getStyleClass().add("rail-button");
+        driveNavigation.setAccessibleText("Drive");
+        driveNavigation.setTooltip(new Tooltip("Drive"));
+        driveNavigation.setFocusTraversable(false);
 
-        Label driveIcon = railIcon("Drive", "M3 13 L6 6 H18 L21 13 M3 13 H21 V19 H3 Z M17 16 H18");
+        Button myFilesNavigation = driveSectionButton("My files", folderGlyph());
+        Button sharedWithMeNavigation = driveSectionButton("Shared with me", sharedPeopleGlyph());
+        VBox driveNavigationPane = new VBox(8, new Label("Drive"), myFilesNavigation, sharedWithMeNavigation);
+        driveNavigationPane.getStyleClass().add("drive-navigation-pane");
+        driveNavigationPane.setPadding(new Insets(12, 8, 8, 8));
+        driveNavigationPane.setPrefWidth(235);
+        driveNavigationPane.setMinWidth(185);
+        driveNavigationPane.setMaxWidth(400);
+
+        VBox drivePageContent = new VBox(18);
+        drivePageContent.setPadding(new Insets(28, 32, 28, 32));
+        drivePageContent.getStyleClass().add("drive-page-content");
+        BorderPane drivePage = new BorderPane(drivePageContent);
+        drivePage.getStyleClass().add("drive-page");
+        drivePage.setMinWidth(360);
+
+        Runnable showMyFiles = () -> renderDrivePage(drivePageContent, true);
+        Runnable showSharedWithMe = () -> renderDrivePage(drivePageContent, false);
+        myFilesNavigation.setOnAction(event -> {
+            myFilesNavigation.getStyleClass().add("drive-nav-selected");
+            sharedWithMeNavigation.getStyleClass().remove("drive-nav-selected");
+            showMyFiles.run();
+        });
+        sharedWithMeNavigation.setOnAction(event -> {
+            sharedWithMeNavigation.getStyleClass().add("drive-nav-selected");
+            myFilesNavigation.getStyleClass().remove("drive-nav-selected");
+            showSharedWithMe.run();
+        });
+        myFilesNavigation.getStyleClass().add("drive-nav-selected");
+        showMyFiles.run();
+
+        StackPane leftSection = new StackPane(contactsPane, driveNavigationPane);
+        leftSection.getStyleClass().add("left-section-switcher");
+        driveNavigationPane.setVisible(false);
+        driveNavigationPane.setManaged(false);
+        StackPane mainSection = new StackPane(conversation, drivePage);
+        mainSection.getStyleClass().add("main-section-switcher");
+        drivePage.setVisible(false);
+        drivePage.setManaged(false);
+
+        Runnable showChats = () -> {
+            chatsNavigation.getStyleClass().add("rail-button-selected");
+            driveNavigation.getStyleClass().remove("rail-button-selected");
+            contactsPane.setVisible(true); contactsPane.setManaged(true);
+            driveNavigationPane.setVisible(false); driveNavigationPane.setManaged(false);
+            conversation.setVisible(true); conversation.setManaged(true);
+            drivePage.setVisible(false); drivePage.setManaged(false);
+        };
+        Runnable showDrive = () -> {
+            driveNavigation.getStyleClass().add("rail-button-selected");
+            chatsNavigation.getStyleClass().remove("rail-button-selected");
+            contactsPane.setVisible(false); contactsPane.setManaged(false);
+            driveNavigationPane.setVisible(true); driveNavigationPane.setManaged(true);
+            conversation.setVisible(false); conversation.setManaged(false);
+            drivePage.setVisible(true); drivePage.setManaged(true);
+        };
+        chatsNavigation.setOnAction(event -> showChats.run());
+        driveNavigation.setOnAction(event -> showDrive.run());
+
         Region railDivider = new Region();
         railDivider.getStyleClass().add("rail-divider");
         Region railSpacer = new Region();
@@ -530,18 +578,18 @@ final class MessengerPane extends BorderPane {
         torStartupPulse.setAutoReverse(true);
         torStartupPulse.setCycleCount(Timeline.INDEFINITE);
         torStartupPulse.play();
-        VBox navigationRail = new VBox(14, torIndicatorDot, chatsNavigation, callsNavigation,
-                driveIcon, railDivider, railSpacer, accountControls);
+        VBox navigationRail = new VBox(14, torIndicatorDot, chatsNavigation,
+                driveNavigation, railDivider, railSpacer, accountControls);
         navigationRail.getStyleClass().add("navigation-rail");
         navigationRail.setPrefWidth(58);
         navigationRail.setMinWidth(58);
         navigationRail.setMaxWidth(58);
-        HBox leftColumns = new HBox(navigationRail, contactsPane);
-        HBox.setHgrow(contactsPane, Priority.ALWAYS);
+        HBox leftColumns = new HBox(navigationRail, leftSection);
+        HBox.setHgrow(leftSection, Priority.ALWAYS);
         leftColumns.setMinWidth(243);
         leftColumns.setPrefWidth(293);
         leftColumns.setMaxWidth(458);
-        SplitPane mainSplit = new SplitPane(leftColumns, conversation);
+        SplitPane mainSplit = new SplitPane(leftColumns, mainSection);
         mainSplit.getStyleClass().add("main-split-pane");
         mainSplit.setDividerPositions(0.25);
         mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
@@ -1818,13 +1866,6 @@ final class MessengerPane extends BorderPane {
         }
     }
 
-    private static SVGPath phoneGlyph() {
-        SVGPath icon = new SVGPath();
-        icon.setContent("M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11.4 11.4 0 0 0 3.6.58 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .58 3.6 1 1 0 0 1-.25 1z");
-        icon.getStyleClass().add("conversation-action-glyph");
-        return icon;
-    }
-
     private static Label railIcon(String name, String path) {
         SVGPath glyph = new SVGPath();
         glyph.setContent(path);
@@ -1836,11 +1877,75 @@ final class MessengerPane extends BorderPane {
         return icon;
     }
 
-    private static SVGPath videoCallGlyph() {
+    private static Button driveSectionButton(String title, SVGPath glyph) {
+        Button button = new Button(title, glyph);
+        button.getStyleClass().add("drive-section-button");
+        button.setMaxWidth(Double.MAX_VALUE);
+        button.setAlignment(Pos.CENTER_LEFT);
+        button.setFocusTraversable(false);
+        return button;
+    }
+
+    private static SVGPath driveGlyph() {
         SVGPath icon = new SVGPath();
-        icon.setContent("M3 6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2.2l5 3.2V7l-5 3.2V8a2 2 0 0 0-2-2z");
-        icon.getStyleClass().add("conversation-action-glyph");
+        icon.setContent("M3 13 L6 6 H18 L21 13 M3 13 H21 V19 H3 Z M17 16 H18");
+        icon.getStyleClass().add("rail-icon-glyph");
         return icon;
+    }
+
+    private static SVGPath folderGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M3 6 H9 L11 8 H21 V19 H3 Z");
+        icon.getStyleClass().add("drive-section-glyph");
+        return icon;
+    }
+
+    private static SVGPath sharedPeopleGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M9 11 A3.5 3.5 0 1 0 9 4 A3.5 3.5 0 1 0 9 11 Z M2 20 V18 A4 4 0 0 1 6 14 H12 A4 4 0 0 1 16 18 V20 M16 5 A3 3 0 0 1 16 11 M18 14 A4 4 0 0 1 22 18 V20");
+        icon.getStyleClass().add("drive-section-glyph");
+        return icon;
+    }
+
+    private void renderDrivePage(VBox content, boolean myFiles) {
+        content.getChildren().clear();
+        SVGPath headingGlyph = myFiles ? folderGlyph() : sharedPeopleGlyph();
+        Label title = new Label(myFiles ? "My files" : "Shared with me", headingGlyph);
+        title.getStyleClass().add("drive-page-title");
+        Label subtitle = new Label(myFiles
+                ? "Folders you choose to share from this device will be managed here."
+                : "People who share files with you and their available files will appear here.");
+        subtitle.getStyleClass().add("drive-page-subtitle");
+        VBox heading = new VBox(5, title, subtitle);
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Button addFolder = new Button("Add folder");
+        addFolder.setGraphic(plusGlyph());
+        addFolder.getStyleClass().add("drive-add-folder-button");
+        addFolder.setDisable(!myFiles);
+        HBox header = new HBox(16, heading, spacer, addFolder);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.getStyleClass().add("drive-page-header");
+
+        SVGPath emptyGlyph = myFiles ? folderGlyph() : sharedPeopleGlyph();
+        Label emptyIcon = new Label(null, emptyGlyph);
+        emptyIcon.getStyleClass().add("drive-empty-icon");
+        Label emptyTitle = new Label(myFiles ? "No folders yet" : "No one has shared files with you yet");
+        emptyTitle.getStyleClass().add("drive-empty-title");
+        Label emptyDescription = new Label(myFiles
+                ? "Add a folder from this device to start organizing what you share."
+                : "People who share files with you will appear here. Select someone to browse their files.");
+        emptyDescription.getStyleClass().add("drive-empty-description");
+        emptyDescription.setWrapText(true);
+        emptyDescription.setMaxWidth(420);
+        VBox emptyState = new VBox(13, emptyIcon, emptyTitle, emptyDescription);
+        emptyState.setAlignment(Pos.CENTER);
+        emptyState.getStyleClass().add("drive-empty-state");
+        VBox.setVgrow(emptyState, Priority.ALWAYS);
+
+        content.getChildren().addAll(header, emptyState);
+        VBox.setVgrow(emptyState, Priority.ALWAYS);
     }
 
     private void searchConversation() {
@@ -1866,13 +1971,6 @@ final class MessengerPane extends BorderPane {
             alert.setHeaderText(null);
             alert.showAndWait();
         });
-    }
-
-    private void showCallsUnavailable() {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION,
-                "Voice and video calls are not available yet.", ButtonType.OK);
-        alert.setHeaderText(null);
-        alert.showAndWait();
     }
 
     private static SVGPath plusGlyph() {

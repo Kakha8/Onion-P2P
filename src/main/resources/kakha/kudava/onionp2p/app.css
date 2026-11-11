@@ -123,7 +123,7 @@
 .navigation-logo { -fx-text-fill: #3b82f6; -fx-font-size: 25px; -fx-font-weight: bold; -fx-padding: 0 0 8 0; }
 .rail-button, .rail-icon { -fx-alignment: center; -fx-background-color: transparent; -fx-border-color: transparent; -fx-background-radius: 14; -fx-min-width: 42; -fx-pref-width: 42; -fx-max-width: 42; -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0; }
 .rail-button:hover, .rail-button-selected { -fx-background-color: #2b323d; }
-.rail-button .chats-glyph, .rail-button .conversation-action-glyph { -fx-fill: #cbd5e1; -fx-scale-x: 0.76; -fx-scale-y: 0.76; }
+.rail-button .chats-glyph { -fx-fill: #cbd5e1; -fx-scale-x: 0.76; -fx-scale-y: 0.76; }
 .rail-icon-glyph { -fx-fill: transparent; -fx-stroke: #cbd5e1; -fx-stroke-width: 1.6; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
 .rail-divider { -fx-background-color: #3a424c; -fx-min-width: 32; -fx-max-width: 32; -fx-min-height: 1; -fx-pref-height: 1; -fx-max-height: 1; }
 .profile-bubble {
@@ -140,6 +140,28 @@
 .contacts-pane { -fx-background-color: #101419; -fx-padding: 8 8 4 8; }
 .contacts-header { -fx-alignment: center-left; -fx-padding: 4 4 8 4; }
 .contacts-title { -fx-text-fill: #f3f4f6; -fx-font-size: 20px; -fx-font-weight: 600; }
+.drive-navigation-pane { -fx-background-color: #101419; }
+.drive-navigation-pane > Label { -fx-text-fill: #f3f4f6; -fx-font-size: 20px; -fx-font-weight: 600; -fx-padding: 4 8 12 8; }
+.drive-section-button { -fx-alignment: center-left; -fx-spacing: 12; -fx-background-color: transparent; -fx-background-radius: 9; -fx-border-color: transparent; -fx-padding: 11 12; -fx-text-fill: #cbd5e1; -fx-font-size: 13px; -fx-cursor: hand; }
+.drive-section-button:hover { -fx-background-color: #1b222b; }
+.drive-section-button.drive-nav-selected { -fx-background-color: #202d3d; -fx-text-fill: #f3f4f6; }
+.drive-section-glyph { -fx-fill: transparent; -fx-stroke: #9eacbd; -fx-stroke-width: 1.6; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.82; -fx-scale-y: 0.82; }
+.drive-nav-selected .drive-section-glyph { -fx-stroke: #8bbaff; }
+.drive-page { -fx-background-color: #14181e; }
+.drive-page-content { -fx-background-color: transparent; }
+.drive-page-header { -fx-padding: 0 0 20 0; -fx-border-color: transparent transparent #29313b transparent; }
+.drive-page-title { -fx-text-fill: #f3f4f6; -fx-font-size: 21px; -fx-font-weight: 600; -fx-graphic-text-gap: 12; }
+.drive-page-title .drive-section-glyph { -fx-stroke: #8bbaff; -fx-scale-x: 1; -fx-scale-y: 1; }
+.drive-page-subtitle { -fx-text-fill: #8996a8; -fx-font-size: 12px; }
+.drive-add-folder-button { -fx-background-color: #3b82f6; -fx-background-radius: 8; -fx-border-color: transparent; -fx-padding: 9 14; -fx-text-fill: white; -fx-font-weight: 600; -fx-graphic-text-gap: 7; -fx-cursor: hand; }
+.drive-add-folder-button:hover { -fx-background-color: #4b91ff; }
+.drive-add-folder-button:disabled { -fx-opacity: 0.45; }
+.drive-add-folder-button .plus-glyph { -fx-fill: white; -fx-scale-x: 0.58; -fx-scale-y: 0.58; }
+.drive-empty-state { -fx-padding: 24; }
+.drive-empty-icon { -fx-alignment: center; -fx-min-width: 62; -fx-pref-width: 62; -fx-max-width: 62; -fx-min-height: 62; -fx-pref-height: 62; -fx-max-height: 62; -fx-background-color: #1d2631; -fx-background-radius: 31; }
+.drive-empty-icon .drive-section-glyph { -fx-stroke: #8bbaff; -fx-scale-x: 1.15; -fx-scale-y: 1.15; }
+.drive-empty-title { -fx-text-fill: #e5e7eb; -fx-font-size: 16px; -fx-font-weight: 600; }
+.drive-empty-description { -fx-text-fill: #8996a8; -fx-font-size: 12px; -fx-text-alignment: center; -fx-alignment: center; }
 .contact-search { -fx-alignment: center-left; -fx-padding: 0 12 0 13; -fx-min-height: 42; -fx-pref-height: 42; -fx-background-color: #25282b; -fx-background-radius: 22; -fx-border-color: transparent; -fx-spacing: 9; }
 .contact-search-icon { -fx-padding: 0; }
 .contact-search-glyph { -fx-fill: #a7adb4; -fx-scale-x: 0.78; -fx-scale-y: 0.78; }
