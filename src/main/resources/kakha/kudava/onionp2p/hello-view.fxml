@@ -16,6 +16,7 @@
 <?import javafx.scene.control.Separator?>
 <?import javafx.scene.image.Image?>
 <?import javafx.scene.image.ImageView?>
+<?import javafx.scene.shape.SVGPath?>
 <BorderPane fx:id="windowRoot" styleClass="app-root window-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.ui.HelloController">
     <top>
         <HBox fx:id="windowBar" styleClass="window-bar" alignment="CENTER_LEFT" spacing="0">
@@ -82,35 +83,50 @@
 
     <StackPane fx:id="contentStack" VBox.vgrow="ALWAYS">
         <VBox fx:id="messengerHost" spacing="4" minHeight="250"/>
-        <VBox fx:id="addContactPane" styleClass="add-contact-pane" spacing="14" alignment="TOP_LEFT" visible="false" managed="false">
-            <HBox alignment="CENTER_LEFT" spacing="12">
-                <Button text="‹" styleClass="rail-button" onAction="#onCloseAddContact"/>
-                <Label text="Add a contact" styleClass="add-contact-title"/>
-            </HBox>
-            <Label text="Import a contact link to pair securely." styleClass="add-contact-description" wrapText="true"/>
-            <Label fx:id="statusText" styleClass="add-contact-description" wrapText="true"/>
-            <VBox styleClass="my-link-section" spacing="8">
-                <Label text="Your contact link" styleClass="add-contact-section-title"/>
-                <Button fx:id="generateButton" styleClass="secondary-button" text="Generate public-key link" onAction="#onGenerateLink"/>
-                <VBox fx:id="linkPanel" spacing="4" visible="false" managed="false">
-                    <HBox spacing="6">
-                        <TextField fx:id="contactLink" editable="false" promptText="Your public-key link" HBox.hgrow="ALWAYS"/>
-                        <Button styleClass="secondary-button" text="Copy" onAction="#onCopyLink"/>
-                    </HBox>
+        <VBox fx:id="addContactPane" styleClass="add-contact-pane" spacing="0" alignment="TOP_CENTER" visible="false" managed="false">
+            <HBox styleClass="add-contact-header" alignment="CENTER_LEFT" spacing="14" maxWidth="760">
+                <Button styleClass="add-contact-back" onAction="#onCloseAddContact" accessibleText="Back">
+                    <graphic><SVGPath content="M14 5 L7 12 L14 19" styleClass="add-contact-back-glyph"/></graphic>
+                </Button>
+                <VBox spacing="3">
+                    <Label text="Add a contact" styleClass="add-contact-title"/>
+                    <Label text="Connect by exchanging trusted contact links." styleClass="add-contact-description"/>
                 </VBox>
-            </VBox>
-            <Separator/>
-            <HBox alignment="CENTER_LEFT" spacing="8">
-                <TextField fx:id="importLink" promptText="Paste a contact link" onAction="#onImportLink" HBox.hgrow="ALWAYS"/>
-                <Button fx:id="importButton" styleClass="primary-button" text="Import link" onAction="#onImportLink"/>
             </HBox>
-            <HBox alignment="CENTER_LEFT" spacing="6">
-                <ProgressIndicator fx:id="pairingProgress" prefWidth="18" prefHeight="18" maxWidth="18" maxHeight="18" visible="false" managed="false"/>
-                <Label fx:id="importStatus" wrapText="true" styleClass="add-contact-description"/>
-            </HBox>
-            <VBox fx:id="addressPanel" spacing="5" visible="false" managed="false">
-                <Label text="Contact rendezvous address" styleClass="add-contact-description"/>
-                <TextField fx:id="importedAddress" editable="false"/>
+            <VBox styleClass="add-contact-content" spacing="14" alignment="CENTER" maxWidth="720" VBox.vgrow="ALWAYS">
+                <VBox styleClass="contact-action-card" spacing="12">
+                    <VBox spacing="4">
+                        <Label text="Share your link" styleClass="contact-card-title"/>
+                        <Label text="Create your personal link, then send it to someone you trust." styleClass="add-contact-description" wrapText="true"/>
+                    </VBox>
+                    <Button fx:id="generateButton" styleClass="secondary-button contact-generate-button" text="Generate my link" onAction="#onGenerateLink"/>
+                    <VBox fx:id="linkPanel" styleClass="contact-link-panel" spacing="8" visible="false" managed="false">
+                        <HBox spacing="8" alignment="CENTER_LEFT">
+                            <TextField fx:id="contactLink" editable="false" promptText="Your public-key link" HBox.hgrow="ALWAYS"/>
+                            <Button styleClass="secondary-button" text="Copy link" onAction="#onCopyLink"/>
+                        </HBox>
+                    </VBox>
+                    <Label fx:id="statusText" styleClass="add-contact-description contact-action-status" wrapText="true"/>
+                </VBox>
+                <VBox styleClass="contact-action-card contact-add-section" spacing="12">
+                    <VBox spacing="4">
+                        <Label text="Add someone" styleClass="contact-card-title"/>
+                        <Label text="Paste the contact link they shared with you to start pairing." styleClass="add-contact-description" wrapText="true"/>
+                    </VBox>
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <TextField fx:id="importLink" styleClass="contact-import-field" promptText="Paste a contact link" onAction="#onImportLink" HBox.hgrow="ALWAYS"/>
+                        <Button fx:id="importButton" styleClass="primary-button" text="Add contact" onAction="#onImportLink"/>
+                    </HBox>
+                    <HBox alignment="CENTER_LEFT" spacing="8">
+                        <ProgressIndicator fx:id="pairingProgress" prefWidth="18" prefHeight="18" maxWidth="18" maxHeight="18" visible="false" managed="false"/>
+                        <Label fx:id="importStatus" wrapText="true" styleClass="add-contact-description"/>
+                    </HBox>
+                    <VBox fx:id="addressPanel" styleClass="contact-link-panel" spacing="5" visible="false" managed="false">
+                        <Label text="Contact rendezvous address" styleClass="add-contact-description"/>
+                        <TextField fx:id="importedAddress" editable="false"/>
+                    </VBox>
+                </VBox>
+                <Label text="Only add links you received directly from the person you want to contact." styleClass="contact-privacy-note" wrapText="true"/>
             </VBox>
         </VBox>
     </StackPane>

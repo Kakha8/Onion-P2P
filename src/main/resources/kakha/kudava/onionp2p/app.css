@@ -56,9 +56,23 @@
 .label { -fx-text-fill: #dce3ec; }
 .app-title { -fx-text-fill: #f3f4f6; -fx-font-size: 21px; -fx-font-weight: bold; }
 .connection-status { -fx-text-fill: #9aa3af; -fx-font-size: 12px; }
-.add-contact-pane { -fx-background-color: #171c23; -fx-background-radius: 16; -fx-border-color: #29313b; -fx-border-radius: 16; -fx-padding: 28; }
-.add-contact-title { -fx-text-fill: #f3f4f6; -fx-font-size: 22px; -fx-font-weight: bold; }
+.add-contact-pane { -fx-background-color: #141920; -fx-background-radius: 16; -fx-border-color: #29313b; -fx-border-radius: 16; -fx-padding: 30; }
+.add-contact-title { -fx-text-fill: #f3f4f6; -fx-font-size: 22px; -fx-font-weight: 600; }
 .add-contact-description { -fx-text-fill: #9aa3af; -fx-font-size: 13px; }
+.add-contact-header { -fx-padding: 3 0 22 0; }
+.button.add-contact-back { -fx-min-width: 30; -fx-pref-width: 30; -fx-max-width: 30; -fx-min-height: 34; -fx-pref-height: 34; -fx-max-height: 34; -fx-padding: 0; -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-insets: 0; -fx-background-radius: 0; -fx-border-radius: 0; -fx-effect: none; }
+.button.add-contact-back:hover, .button.add-contact-back:focused, .button.add-contact-back:armed { -fx-background-color: transparent; -fx-border-color: transparent; -fx-effect: none; }
+.add-contact-back-glyph { -fx-fill: transparent; -fx-stroke: #aeb9c8; -fx-stroke-width: 1.8; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
+.button.add-contact-back:hover .add-contact-back-glyph { -fx-stroke: #f3f4f6; }
+.add-contact-content { -fx-padding: 2 0 8 0; }
+.contact-action-card { -fx-padding: 18 0 22 0; -fx-background-color: transparent; -fx-background-radius: 0; -fx-border-color: transparent transparent #303741 transparent; -fx-border-width: 0 0 1 0; }
+.contact-add-section { -fx-border-color: transparent; -fx-padding: 18 0 8 0; }
+.contact-card-title { -fx-text-fill: #e8edf4; -fx-font-size: 16px; -fx-font-weight: 600; }
+.contact-generate-button { -fx-min-height: 36; -fx-alignment: center; -fx-background-radius: 6; -fx-border-radius: 6; }
+.contact-link-panel { -fx-padding: 10 0 0 0; -fx-background-color: transparent; -fx-background-radius: 0; -fx-border-color: #303741 transparent transparent transparent; -fx-border-width: 1 0 0 0; }
+.contact-link-panel .text-field, .contact-import-field { -fx-min-height: 38; -fx-pref-height: 38; -fx-min-width: 0; -fx-background-radius: 6; -fx-border-radius: 6; }
+.contact-action-status { -fx-padding: 0 0 0 1; }
+.contact-privacy-note { -fx-max-width: 640; -fx-text-fill: #737f8e; -fx-font-size: 11px; -fx-alignment: center; -fx-text-alignment: center; -fx-padding: 8 0 0 0; }
 
 .button {
     -fx-background-color: #2b323d;

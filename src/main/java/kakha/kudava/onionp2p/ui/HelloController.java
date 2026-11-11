@@ -271,7 +271,7 @@ public class HelloController {
                     authenticatedUsername = authenticated.username();
                     authPane.setVisible(false); authPane.setManaged(false);
                     appPane.setVisible(true); appPane.setManaged(true);
-                    statusText.setText("Welcome, " + authenticated.username() + ".");
+                    statusText.setText("Your link is generated on this device and stays yours.");
                     if (onAuthenticated != null) onAuthenticated.run();
                 });
             } catch (Exception e) {
@@ -396,6 +396,12 @@ public class HelloController {
 
     @FXML
     protected void onGenerateLink() {
+        if (linkPanel.isVisible()) {
+            linkPanel.setVisible(false);
+            linkPanel.setManaged(false);
+            generateButton.setText("Show my public-key link");
+            return;
+        }
         generateButton.setDisable(true);
         generateButton.setGraphic(spinner(18));
         statusText.setText("Generating your link…");
@@ -406,7 +412,7 @@ public class HelloController {
                     contactLink.setText(link);
                     linkPanel.setManaged(true);
                     linkPanel.setVisible(true);
-                    generateButton.setText("Show my public-key link");
+                    generateButton.setText("Hide my public-key link");
                     generateButton.setDisable(false);
                     generateButton.setGraphic(null);
                     statusText.setText("Share this link with your contact.");
