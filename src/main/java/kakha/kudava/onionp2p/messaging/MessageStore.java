@@ -1,4 +1,6 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.messaging;
+
+import kakha.kudava.onionp2p.account.AppData;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -7,10 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Local, plaintext conversation history. Transport payloads are encrypted separately. */
-final class MessageStore {
-    record Message(String id, String contactLink, boolean outgoing, String body,
+public final class MessageStore {
+    public record Message(String id, String contactLink, boolean outgoing, String body,
                    String attachmentName, String attachmentPath, long attachmentSize, long timestamp, long seenAt) {
-        Message(String id, String contactLink, boolean outgoing, String body, String attachmentName,
+        public Message(String id, String contactLink, boolean outgoing, String body, String attachmentName,
                 String attachmentPath, long attachmentSize, long timestamp) {
             this(id, contactLink, outgoing, body, attachmentName, attachmentPath, attachmentSize, timestamp, 0);
         }
@@ -18,11 +20,11 @@ final class MessageStore {
 
     private final String url;
 
-    MessageStore(Path directory) throws Exception {
+    public MessageStore(Path directory) throws Exception {
         Files.createDirectories(directory);
         Path file = directory.resolve("contacts.sqlite");
         if (!Files.exists(file)) Files.createFile(file);
-        ContactLink.restrictToOwner(file);
+        AppData.restrictToOwner(file);
         Class.forName("org.sqlite.JDBC");
         url = "jdbc:sqlite:" + file.toAbsolutePath();
         try (var connection = connect(); var statement = connection.createStatement()) {
@@ -44,16 +46,16 @@ final class MessageStore {
         return connection;
     }
 
-    synchronized void save(String contactLink, String id, boolean outgoing, String body, long timestamp) throws SQLException {
+    public synchronized void save(String contactLink, String id, boolean outgoing, String body, long timestamp) throws SQLException {
         save(contactLink, id, outgoing, body, null, null, 0, timestamp);
     }
 
-    synchronized void saveFile(String contactLink, String id, boolean outgoing, String name,
+    public synchronized void saveFile(String contactLink, String id, boolean outgoing, String name,
                                String path, long size, long timestamp) throws SQLException {
         saveFile(contactLink, id, outgoing, "", name, path, size, timestamp);
     }
 
-    synchronized void saveFile(String contactLink, String id, boolean outgoing, String caption, String name,
+    public synchronized void saveFile(String contactLink, String id, boolean outgoing, String caption, String name,
                                String path, long size, long timestamp) throws SQLException {
         save(contactLink, id, outgoing, caption, name, path, size, timestamp);
     }
@@ -74,7 +76,7 @@ final class MessageStore {
         }
     }
 
-    synchronized List<Message> all(String contactLink) throws SQLException {
+    public synchronized List<Message> all(String contactLink) throws SQLException {
         var messages = new ArrayList<Message>();
         try (var connection = connect(); var statement = connection.prepareStatement(
                 "SELECT message_id,direction,body,attachment_name,attachment_path,attachment_size,sent_at,seen_at FROM messages WHERE contact_link=? ORDER BY sent_at,message_id LIMIT 5000")) {
@@ -88,7 +90,7 @@ final class MessageStore {
         return List.copyOf(messages);
     }
 
-    synchronized boolean markSeen(String contactLink, String messageId, long seenAt) throws SQLException {
+    public synchronized boolean markSeen(String contactLink, String messageId, long seenAt) throws SQLException {
         try (var connection = connect(); var statement = connection.prepareStatement(
                 "UPDATE messages SET seen_at=CASE WHEN seen_at=0 THEN ? ELSE seen_at END WHERE contact_link=? AND message_id=? AND direction=1")) {
             statement.setLong(1, seenAt);

@@ -10,5 +10,6 @@ module kakha.kudava.onionp2p {
 
 
     opens kakha.kudava.onionp2p to javafx.fxml;
+    opens kakha.kudava.onionp2p.ui to javafx.fxml;
     exports kakha.kudava.onionp2p;
 }

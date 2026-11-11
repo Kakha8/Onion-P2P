@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.account;
 
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator;
 import org.bouncycastle.crypto.params.Argon2Parameters;
@@ -11,17 +11,17 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 
 /** Local profile metadata and Argon2id verifier, kept in the same owner-only SQLite file. */
-final class AccountStore {
-    record Profile(String username) {}
+public final class AccountStore {
+    public record Profile(String username) {}
     private static final int SALT_BYTES = 16, HASH_BYTES = 32;
     private static final int MEMORY_KIB = 19_456, ITERATIONS = 2, PARALLELISM = 1;
     private final String url;
 
-    AccountStore(Path directory) throws Exception {
+    public AccountStore(Path directory) throws Exception {
         Files.createDirectories(directory);
         Path file = directory.resolve("contacts.sqlite");
         if (!Files.exists(file)) Files.createFile(file);
-        ContactLink.restrictToOwner(file);
+        AppData.restrictToOwner(file);
         Class.forName("org.sqlite.JDBC");
         url = "jdbc:sqlite:" + file.toAbsolutePath();
         try (var connection = connect(); var statement = connection.createStatement()) {
@@ -37,14 +37,14 @@ final class AccountStore {
         return connection;
     }
 
-    synchronized Profile profile() throws SQLException {
+    public synchronized Profile profile() throws SQLException {
         try (var connection = connect(); var statement = connection.createStatement();
              var rows = statement.executeQuery("SELECT username FROM account WHERE id=1")) {
             return rows.next() ? new Profile(rows.getString(1)) : null;
         }
     }
 
-    synchronized void create(String username, char[] password) throws Exception {
+    public synchronized void create(String username, char[] password) throws Exception {
         byte[] salt = null, hash = null;
         try {
             String cleanName = validateUsername(username);
@@ -67,7 +67,7 @@ final class AccountStore {
         }
     }
 
-    synchronized Profile authenticate(String username, char[] password) throws Exception {
+    public synchronized Profile authenticate(String username, char[] password) throws Exception {
         byte[] salt = null, expected = null;
         try {
         validatePassword(password);
@@ -108,13 +108,13 @@ final class AccountStore {
         } finally { Arrays.fill(input, (byte) 0); }
     }
 
-    static String validateUsername(String username) {
+    public static String validateUsername(String username) {
         String clean = username == null ? "" : username.strip();
         if (!clean.matches("[A-Za-z0-9_.-]{3,32}"))
             throw new IllegalArgumentException("Username must be 3–32 characters: letters, numbers, dot, dash or underscore.");
         return clean;
     }
-    static void validatePassword(char[] password) {
+    public static void validatePassword(char[] password) {
         if (password == null || password.length < 12 || password.length > 1024)
             throw new IllegalArgumentException("Password must be at least 12 characters.");
     }

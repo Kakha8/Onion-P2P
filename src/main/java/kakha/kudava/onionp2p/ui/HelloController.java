@@ -1,4 +1,10 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.ui;
+
+import kakha.kudava.onionp2p.account.AccountStore;
+import kakha.kudava.onionp2p.account.AppData;
+import kakha.kudava.onionp2p.contacts.ContactLink;
+import kakha.kudava.onionp2p.contacts.ContactManager;
+import kakha.kudava.onionp2p.contacts.ContactRendezvous;
 
 import javafx.fxml.FXML;
 import javafx.application.Platform;
@@ -106,9 +112,9 @@ public class HelloController {
         windowRoot.addEventHandler(MouseEvent.MOUSE_RELEASED, event -> activeResizeCursor = Cursor.DEFAULT);
     }
 
-    void setOnAuthenticated(Runnable callback) { onAuthenticated = callback; }
+    public void setOnAuthenticated(Runnable callback) { onAuthenticated = callback; }
 
-    void beginAuthentication() {
+    public void beginAuthentication() {
         authPane.setManaged(true); authPane.setVisible(true);
         setAuthBusy(true, "Checking local account…");
         Thread.ofPlatform().daemon().name("account-load").start(() -> {
@@ -293,19 +299,19 @@ public class HelloController {
         if (busy) authMessage.setText(message);
     }
 
-    void torStarting() {
+    public void torStarting() {
         MessengerPane.updateTorIndicator("Starting Tor", null);
     }
 
-    void torReady(String onionAddress) {
+    public void torReady(String onionAddress) {
         MessengerPane.updateTorIndicator("Tor ready", onionAddress);
     }
 
-    void torFailed(String message) {
+    public void torFailed(String message) {
         MessengerPane.updateTorIndicator("Tor unavailable", null);
     }
 
-    void setManager(ContactManager manager) {
+    public void setManager(ContactManager manager) {
         this.manager = manager;
         var pane = new MessengerPane(manager, authenticatedUsername, this::showAddContactPane);
         messengerHost.getChildren().setAll(pane);
@@ -375,7 +381,7 @@ public class HelloController {
         });
     }
 
-    void contactEvent(ContactManager.Event event) {
+    public void contactEvent(ContactManager.Event event) {
         Platform.runLater(() -> {
             if (event.link().equals(selectedLink)) {
                 importStatus.setText(event.message());

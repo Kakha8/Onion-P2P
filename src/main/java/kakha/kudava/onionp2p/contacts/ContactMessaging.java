@@ -1,4 +1,7 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
+
+import kakha.kudava.onionp2p.account.AppData;
+import kakha.kudava.onionp2p.messaging.MessageStore;
 
 import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator;
@@ -27,11 +30,11 @@ import java.util.function.LongConsumer;
 import java.util.function.BooleanSupplier;
 
 /** One-message, authenticated end-to-end encrypted transport over a contact's Tor service. */
-final class ContactMessaging {
+public final class ContactMessaging {
     static final int MAGIC = 0x4f503035; // OP05 adds encrypted file captions
     static final int LEGACY_MAGIC = 0x4f503034;
-    static final int MAX_BODY_BYTES = 4096;
-    static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
+    public static final int MAX_BODY_BYTES = 4096;
+    public static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     private static final int CHUNK_BYTES = 64 * 1024;
     private static final SecureRandom RANDOM = new SecureRandom();
 

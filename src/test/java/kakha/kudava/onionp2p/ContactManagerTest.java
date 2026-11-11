@@ -1,5 +1,10 @@
 package kakha.kudava.onionp2p;
 
+import kakha.kudava.onionp2p.contacts.ContactLink;
+import kakha.kudava.onionp2p.contacts.ContactManager;
+import kakha.kudava.onionp2p.contacts.ContactStore;
+import kakha.kudava.onionp2p.tor.OnionServer;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;

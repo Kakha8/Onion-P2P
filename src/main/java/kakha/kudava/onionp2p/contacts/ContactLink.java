@@ -1,4 +1,7 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
+
+import kakha.kudava.onionp2p.account.AccountStore;
+import kakha.kudava.onionp2p.account.AppData;
 
 import javax.crypto.KeyAgreement;
 import java.io.IOException;
@@ -11,18 +14,18 @@ import java.security.spec.*;
 import java.util.*;
 
 /** v2 links also carry the advertised username; v1 remains importable as an unknown-name contact. */
-final class ContactLink {
-    static final String PREFIX_V1 = "onionp2p://contact/v1/x25519/";
-    static final String PREFIX = "onionp2p://contact/v2/";
-    record Parsed(String username, byte[] publicKey) {}
+public final class ContactLink {
+    public static final String PREFIX_V1 = "onionp2p://contact/v1/x25519/";
+    public static final String PREFIX = "onionp2p://contact/v2/";
+    public record Parsed(String username, byte[] publicKey) {}
 
     private ContactLink() {}
 
-    static synchronized String loadOrCreate(Path directory) throws IOException, GeneralSecurityException {
+    public static synchronized String loadOrCreate(Path directory) throws IOException, GeneralSecurityException {
         return PREFIX_V1 + Base64.getUrlEncoder().withoutPadding().encodeToString(publicKey(loadKey(directory)));
     }
 
-    static synchronized String loadOrCreate(Path directory, String username) throws IOException, GeneralSecurityException {
+    public static synchronized String loadOrCreate(Path directory, String username) throws IOException, GeneralSecurityException {
         String validName = AccountStore.validateUsername(username);
         String encodedName = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(validName.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -76,7 +79,7 @@ final class ContactLink {
         return parsed.publicKey();
     }
 
-    static Parsed parseLink(String input) {
+    public static Parsed parseLink(String input) {
         String link = input.strip();
         if (link.startsWith(PREFIX_V1)) return new Parsed("Unknown", parsePublicKey(link.substring(PREFIX_V1.length())));
         if (!link.startsWith(PREFIX)) throw new IllegalArgumentException("Use an onionp2p X25519 v1 or v2 contact link.");
@@ -117,13 +120,6 @@ final class ContactLink {
     }
 
     static void restrictToOwner(Path file) throws IOException {
-        var acl = Files.getFileAttributeView(file, AclFileAttributeView.class);
-        if (acl != null) {
-            acl.setAcl(List.of(AclEntry.newBuilder().setType(AclEntryType.ALLOW)
-                    .setPrincipal(Files.getOwner(file))
-                    .setPermissions(EnumSet.allOf(AclEntryPermission.class)).build()));
-        } else if (Files.getFileAttributeView(file, PosixFileAttributeView.class) != null) {
-            Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-        }
+        AppData.restrictToOwner(file);
     }
 }

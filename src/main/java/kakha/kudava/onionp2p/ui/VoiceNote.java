@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.ui;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;

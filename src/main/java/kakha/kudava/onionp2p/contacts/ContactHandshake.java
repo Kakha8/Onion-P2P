@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
 
 import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator;

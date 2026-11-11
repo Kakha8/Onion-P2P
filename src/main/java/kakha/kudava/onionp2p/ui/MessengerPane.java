@@ -1,4 +1,10 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.ui;
+
+import kakha.kudava.onionp2p.account.AppData;
+import kakha.kudava.onionp2p.contacts.ContactManager;
+import kakha.kudava.onionp2p.contacts.ContactMessaging;
+import kakha.kudava.onionp2p.contacts.ContactStore;
+import kakha.kudava.onionp2p.messaging.MessageStore;
 
 import javafx.animation.AnimationTimer;
 import javafx.animation.KeyFrame;
@@ -80,7 +86,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static kakha.kudava.onionp2p.ContactMessaging.MAX_BODY_BYTES;
+import static kakha.kudava.onionp2p.contacts.ContactMessaging.MAX_BODY_BYTES;
 
 /** Embedded chat pane backed by saved contacts and local message history. */
 final class MessengerPane extends BorderPane {

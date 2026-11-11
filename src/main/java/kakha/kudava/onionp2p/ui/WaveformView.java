@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.ui;
 
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;

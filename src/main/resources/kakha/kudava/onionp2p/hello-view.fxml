@@ -16,7 +16,7 @@
 <?import javafx.scene.control.Separator?>
 <?import javafx.scene.image.Image?>
 <?import javafx.scene.image.ImageView?>
-<BorderPane fx:id="windowRoot" styleClass="app-root window-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.HelloController">
+<BorderPane fx:id="windowRoot" styleClass="app-root window-root" xmlns:fx="http://javafx.com/fxml" fx:controller="kakha.kudava.onionp2p.ui.HelloController">
     <top>
         <HBox fx:id="windowBar" styleClass="window-bar" alignment="CENTER_LEFT" spacing="0">
             <Label text="Onion-P2P" styleClass="window-title" graphicTextGap="7">

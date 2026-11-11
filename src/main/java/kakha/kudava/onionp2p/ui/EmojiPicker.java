@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.ui;
 
 import javafx.application.Platform;
 import javafx.geometry.Pos;

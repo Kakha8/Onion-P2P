@@ -1,15 +1,17 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
+
+import kakha.kudava.onionp2p.account.AccountStore;
 
 import java.nio.file.*;
 import java.sql.*;
 import java.util.*;
 
 /** Stores only acknowledged contacts. Pending requests and private/session keys are not stored here. */
-final class ContactStore {
-    record Contact(String link, String onion, String username, long acknowledgedAt) {}
+public final class ContactStore {
+    public record Contact(String link, String onion, String username, long acknowledgedAt) {}
     private final String url;
 
-    ContactStore(Path directory) throws Exception {
+    public ContactStore(Path directory) throws Exception {
         Files.createDirectories(directory);
         Path file = directory.resolve("contacts.sqlite");
         if (!Files.exists(file)) Files.createFile(file);
@@ -44,7 +46,7 @@ final class ContactStore {
         }
     }
 
-    synchronized List<Contact> all() throws SQLException {
+    public synchronized List<Contact> all() throws SQLException {
         var contacts = new ArrayList<Contact>();
         try (var connection = connect(); var statement = connection.createStatement();
              var rows = statement.executeQuery("SELECT public_key_link,onion_address,display_name,acknowledged_at FROM contacts ORDER BY acknowledged_at")) {

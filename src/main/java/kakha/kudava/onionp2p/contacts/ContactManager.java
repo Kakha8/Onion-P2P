@@ -1,4 +1,9 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
+
+import kakha.kudava.onionp2p.account.AccountStore;
+import kakha.kudava.onionp2p.messaging.MessageStore;
+import kakha.kudava.onionp2p.tor.OnionServer;
+import kakha.kudava.onionp2p.tor.TorControl;
 
 import java.net.*;
 import java.io.IOException;
@@ -8,8 +13,8 @@ import java.util.concurrent.*;
 import java.util.function.Consumer;
 
 /** Pending imports remain in memory; only cryptographically acknowledged contacts enter SQLite. */
-final class ContactManager implements AutoCloseable {
-    record Event(String link, String message) {}
+public final class ContactManager implements AutoCloseable {
+    public record Event(String link, String message) {}
     private final Path directory;
     private final OnionServer tor;
     private final ContactStore store;
@@ -26,7 +31,7 @@ final class ContactManager implements AutoCloseable {
     private final Semaphore incoming = new Semaphore(256);
     private volatile boolean closed;
 
-    ContactManager(Path directory, OnionServer tor, Consumer<Event> events) throws Exception {
+    public ContactManager(Path directory, OnionServer tor, Consumer<Event> events) throws Exception {
         this.directory = directory; this.tor = tor; this.events = events;
         store = new ContactStore(directory);
         messageStore = new MessageStore(directory);
@@ -34,8 +39,8 @@ final class ContactManager implements AutoCloseable {
         localUsername = profile == null ? "local" : profile.username();
     }
 
-    List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
-    void setPresenceListener(Consumer<String> listener) {
+    public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
+    public void setPresenceListener(Consumer<String> listener) {
         presenceListener = listener == null ? ignored -> {} : listener;
     }
 
@@ -44,7 +49,7 @@ final class ContactManager implements AutoCloseable {
         catch (RuntimeException e) { System.err.println("Presence update failed: " + safeMessage(e)); }
     }
 
-    boolean isOnline(String link) throws Exception {
+    public boolean isOnline(String link) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
         // The local listener is only needed to receive connections. An outgoing presence
@@ -56,43 +61,43 @@ final class ContactManager implements AutoCloseable {
             return true;
         }
     }
-    List<MessageStore.Message> messages(String link) throws Exception {
+    public List<MessageStore.Message> messages(String link) throws Exception {
         return messageStore.all(canonicalLink(link));
     }
 
-    void sendReadReceipt(String link, String messageId) throws Exception {
+    public void sendReadReceipt(String link, String messageId) throws Exception {
         withMessageSession(link, ignored -> {}, () -> false, (entry, session, canonical) -> {
             ContactMessaging.sendReadReceipt(session.socket, entry.material, messageId, session.firstMessage);
             return null;
         });
     }
 
-    MessageStore.Message send(String link, String body) throws Exception {
+    public MessageStore.Message send(String link, String body) throws Exception {
         return send(link, body, ignored -> {});
     }
 
-    MessageStore.Message send(String link, String body, java.util.function.Consumer<String> status) throws Exception {
+    public MessageStore.Message send(String link, String body, java.util.function.Consumer<String> status) throws Exception {
         return withMessageSession(link, status, () -> false, (entry, session, canonical) ->
                 ContactMessaging.send(session.socket, entry.material, messageStore, canonical, body, session.firstMessage,
                         () -> status.accept("MESSAGE_SENT")));
     }
 
-    MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress) throws Exception {
+    public MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress) throws Exception {
         return sendFile(link, file, progress, ignored -> {});
     }
 
-    MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress,
+    public MessageStore.Message sendFile(String link, Path file, java.util.function.LongConsumer progress,
                                   java.util.function.Consumer<String> status) throws Exception {
         return sendFile(link, file, new java.util.concurrent.atomic.AtomicBoolean(), progress, status);
     }
 
-    MessageStore.Message sendFile(String link, Path file, java.util.concurrent.atomic.AtomicBoolean cancelled,
+    public MessageStore.Message sendFile(String link, Path file, java.util.concurrent.atomic.AtomicBoolean cancelled,
                                   java.util.function.LongConsumer progress,
                                   java.util.function.Consumer<String> status) throws Exception {
         return sendFile(link, file, "", cancelled, progress, status);
     }
 
-    MessageStore.Message sendFile(String link, Path file, String caption,
+    public MessageStore.Message sendFile(String link, Path file, String caption,
                                   java.util.concurrent.atomic.AtomicBoolean cancelled,
                                   java.util.function.LongConsumer progress,
                                   java.util.function.Consumer<String> status) throws Exception {
@@ -172,7 +177,7 @@ final class ContactManager implements AutoCloseable {
         if (cancelled.getAsBoolean()) throw new java.util.concurrent.CancellationException("File transfer cancelled.");
     }
 
-    void cancelTransfer(String link) {
+    public void cancelTransfer(String link) {
         MessageSession session = messageSessions.get(canonicalLink(link));
         if (session != null) {
             Socket socket = session.socket;
@@ -184,7 +189,7 @@ final class ContactManager implements AutoCloseable {
         MessageStore.Message send(Pending entry, MessageSession session, String canonical) throws Exception;
     }
 
-    synchronized ContactRendezvous.Addresses add(String input) throws Exception {
+    public synchronized ContactRendezvous.Addresses add(String input) throws Exception {
         return add(input, false);
     }
 
@@ -215,7 +220,7 @@ final class ContactManager implements AutoCloseable {
                 .encodeToString(parsed.username().getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "/" + key;
     }
 
-    void restore() throws Exception {
+    public void restore() throws Exception {
         for (var contact : store.all()) add(contact.link(), true);
     }
 

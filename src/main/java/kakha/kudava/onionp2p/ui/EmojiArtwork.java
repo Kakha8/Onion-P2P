@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.ui;
 
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -53,7 +53,9 @@ final class EmojiArtwork {
 
     private static Map<String, Image> load() {
         Map<String, Image> images = new HashMap<>();
-        try (var stream = EmojiArtwork.class.getResourceAsStream("emoji-artwork.zip")) {
+        // Keep the artwork archive at the shared resource root. This class moved into
+        // the UI package, so a package-relative lookup would silently miss the archive.
+        try (var stream = EmojiArtwork.class.getResourceAsStream("/kakha/kudava/onionp2p/emoji-artwork.zip")) {
             if (stream == null) return images;
             try (var archive = new ZipInputStream(stream)) {
                 for (var entry = archive.getNextEntry(); entry != null; entry = archive.getNextEntry()) {

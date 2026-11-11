@@ -1,5 +1,10 @@
 package kakha.kudava.onionp2p;
 
+import kakha.kudava.onionp2p.account.AppData;
+import kakha.kudava.onionp2p.contacts.ContactManager;
+import kakha.kudava.onionp2p.tor.OnionServer;
+import kakha.kudava.onionp2p.ui.HelloController;
+
 import javafx.application.Application;
 import javafx.beans.binding.Bindings;
 import javafx.fxml.FXMLLoader;
