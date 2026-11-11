@@ -1,26 +1,72 @@
 package kakha.kudava.onionp2p;
 
+import kakha.kudava.onionp2p.account.AppData;
+import kakha.kudava.onionp2p.contacts.ContactManager;
+import kakha.kudava.onionp2p.tor.OnionServer;
+import kakha.kudava.onionp2p.ui.HelloController;
+
 import javafx.application.Application;
+import javafx.beans.binding.Bindings;
 import javafx.fxml.FXMLLoader;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
+import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
+import javafx.stage.StageStyle;
 import javafx.stage.Stage;
 
 import java.io.IOException;
 
 public class HelloApplication extends Application {
+    private static final double MESSENGER_WIDTH = 860;
+    private static final double MESSENGER_HEIGHT = 600;
     private final OnionServer onionServer = new OnionServer();
     private ContactManager contacts;
 
     @Override
     public void start(Stage stage) throws Exception {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "onion-shutdown"));
+        stage.initStyle(StageStyle.TRANSPARENT);
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
-        Scene scene = new Scene(fxmlLoader.load(), 760, 780);
+        Parent root = fxmlLoader.load();
+        Rectangle windowOutline = new Rectangle();
+        windowOutline.setManaged(false);
+        windowOutline.setMouseTransparent(true);
+        windowOutline.setFill(Color.TRANSPARENT);
+        windowOutline.setStroke(Color.web("#46505d"));
+        windowOutline.setStrokeWidth(1.2);
+        windowOutline.setLayoutX(0.6);
+        windowOutline.setLayoutY(0.6);
+        StackPane windowFrame = new StackPane(root, windowOutline);
+        Scene scene = new Scene(windowFrame, 410, 474, Color.TRANSPARENT);
+        Rectangle windowClip = new Rectangle();
+        windowClip.widthProperty().bind(scene.widthProperty());
+        windowClip.heightProperty().bind(scene.heightProperty());
+        var cornerDiameter = Bindings.when(stage.maximizedProperty()).then(0.0).otherwise(16.0);
+        windowClip.arcWidthProperty().bind(cornerDiameter);
+        windowClip.arcHeightProperty().bind(cornerDiameter);
+        windowFrame.setClip(windowClip);
+        windowOutline.widthProperty().bind(scene.widthProperty().subtract(1.2));
+        windowOutline.heightProperty().bind(scene.heightProperty().subtract(1.2));
+        windowOutline.arcWidthProperty().bind(cornerDiameter);
+        windowOutline.arcHeightProperty().bind(cornerDiameter);
+        scene.getStylesheets().add(HelloApplication.class.getResource("app.css").toExternalForm());
         HelloController controller = fxmlLoader.getController();
-        controller.setOnAuthenticated(() -> startServices(controller));
+        controller.setOnAuthenticated(() -> {
+            stage.setResizable(true);
+            stage.setMinWidth(760);
+            stage.setMinHeight(MESSENGER_HEIGHT);
+            stage.setWidth(MESSENGER_WIDTH);
+            stage.setHeight(MESSENGER_HEIGHT);
+            stage.centerOnScreen();
+            startServices(controller);
+        });
         stage.setTitle("Onion-P2P");
-        stage.setMinWidth(480);
-        stage.setMinHeight(780);
+        stage.getIcons().add(new Image(HelloApplication.class.getResource("onion-owl.png").toExternalForm(),
+                256, 256, true, true));
+        stage.setResizable(false);
         stage.setScene(scene);
         stage.show();
         controller.beginAuthentication();

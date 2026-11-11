@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,8 +19,8 @@ class ContactHandshakeTest {
         assertTrue(aStore.all().isEmpty()); assertTrue(bStore.all().isEmpty());
         try (var am = ContactRendezvous.derive(a, bLink); var bm = ContactRendezvous.derive(b, aLink)) {
             for (int i = 0; i < 2; i++) {
-                exchange(am, bm, () -> aStore.acknowledge(bLink, am.addresses().remote()),
-                        () -> bStore.acknowledge(aLink, bm.addresses().remote()), null);
+                exchange(am, bm, () -> aStore.acknowledge(bLink, am.addresses().remote(), "bob"),
+                        () -> bStore.acknowledge(aLink, bm.addresses().remote(), "alice"), null);
             }
             assertEquals(1, new ContactStore(a).all().size());
             assertEquals(bLink, new ContactStore(a).all().getFirst().link());

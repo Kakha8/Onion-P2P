@@ -1,4 +1,6 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
+
+import kakha.kudava.onionp2p.account.AccountStore;
 
 import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator;
@@ -13,8 +15,8 @@ import java.util.Arrays;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 /** App-specific v1 rendezvous derivation; NOT the Briar wire protocol or a running Tor service. */
-final class ContactRendezvous {
-    record Addresses(String local, String remote) {}
+public final class ContactRendezvous {
+    public record Addresses(String local, String remote) {}
 
     record Material(Addresses addresses, String localUsername, String remoteUsername, byte[] localPublic, byte[] remotePublic,
                     byte[] sharedSecret, byte[] localSeed) implements AutoCloseable {
@@ -24,7 +26,7 @@ final class ContactRendezvous {
         }
     }
 
-    static Addresses importLink(Path directory, String link) throws IOException, GeneralSecurityException {
+    public static Addresses importLink(Path directory, String link) throws IOException, GeneralSecurityException {
         try (var material = derive(directory, link, "local")) { return material.addresses(); }
     }
 

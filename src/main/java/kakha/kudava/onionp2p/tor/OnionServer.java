@@ -1,4 +1,6 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.tor;
+
+import kakha.kudava.onionp2p.account.AppData;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.*;
@@ -22,8 +24,8 @@ public final class OnionServer implements AutoCloseable {
     private final CompletableFuture<Integer> socksReady = new CompletableFuture<>();
 
     public OnionServer() { this(AppData.directory()); }
-    OnionServer(Path data) { this.data = data.toAbsolutePath(); }
-    CompletableFuture<Integer> socksReady() { return socksReady; }
+    public OnionServer(Path data) { this.data = data.toAbsolutePath(); }
+    public CompletableFuture<Integer> socksReady() { return socksReady; }
 
     public void start() throws Exception {
         if (!System.getProperty("os.name").startsWith("Windows")
@@ -97,7 +99,7 @@ public final class OnionServer implements AutoCloseable {
         }
     }
 
-    static HttpServer createHttpServer() throws IOException {
+    public static HttpServer createHttpServer() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             try (exchange) {

@@ -1,5 +1,7 @@
 package kakha.kudava.onionp2p;
 
+import kakha.kudava.onionp2p.tor.OnionServer;
+
 import org.junit.jupiter.api.Test;
 import java.net.HttpURLConnection;
 import java.net.URI;

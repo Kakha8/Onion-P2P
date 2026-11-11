@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.tor;
 
 import java.io.*;
 import java.net.*;
@@ -8,12 +8,12 @@ import java.util.*;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 /** Short-lived, cookie-authenticated loopback control connections. Never logs control commands or keys. */
-final class TorControl implements AutoCloseable {
+public final class TorControl implements AutoCloseable {
     private final Socket socket = new Socket();
     private final BufferedReader input;
     private final BufferedWriter output;
 
-    TorControl(Path directory) throws IOException {
+    public TorControl(Path directory) throws IOException {
         String address = Files.readString(directory.resolve("control-port")).strip();
         if (!address.matches("PORT=127\\.0\\.0\\.1:[0-9]+")) throw new IOException("Invalid Tor control endpoint.");
         socket.connect(new InetSocketAddress("127.0.0.1", Integer.parseInt(address.substring(address.lastIndexOf(':') + 1))), 5000);
@@ -39,7 +39,7 @@ final class TorControl implements AutoCloseable {
         throw new IOException("Unexpected Tor control response.");
     }
 
-    int socksPort() throws IOException {
+    public int socksPort() throws IOException {
         for (String line : command("GETINFO net/listeners/socks")) {
             var matcher = java.util.regex.Pattern.compile("net/listeners/socks=\"127\\.0\\.0\\.1:(\\d+)\"").matcher(line);
             if (matcher.matches()) return Integer.parseInt(matcher.group(1));
@@ -47,7 +47,7 @@ final class TorControl implements AutoCloseable {
         throw new IOException("Tor SOCKS listener is unavailable.");
     }
 
-    void publish(byte[] seed, int localPort, String expectedAddress) throws Exception {
+    public void publish(byte[] seed, int localPort, String expectedAddress) throws Exception {
         // Tor's ED25519-V3 control format is the 64-byte expanded private key, not the 32-byte seed.
         byte[] expanded = MessageDigest.getInstance("SHA-512").digest(seed);
         expanded[0] &= (byte) 248;
@@ -61,12 +61,12 @@ final class TorControl implements AutoCloseable {
         } finally { Arrays.fill(expanded, (byte) 0); }
     }
 
-    void unpublish(String address) throws IOException {
+    public void unpublish(String address) throws IOException {
         if (!address.matches("[a-z2-7]{56}\\.onion")) throw new IOException("Invalid onion address.");
         command("DEL_ONION " + address.substring(0, 56));
     }
 
-    static Socket connect(int socksPort, String onion, int timeoutMillis) throws IOException {
+    public static Socket connect(int socksPort, String onion, int timeoutMillis) throws IOException {
         if (!onion.matches("[a-z2-7]{56}\\.onion")) throw new IOException("Invalid onion address.");
         Socket socket = new Socket();
         try {

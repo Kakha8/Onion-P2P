@@ -1,5 +1,8 @@
 package kakha.kudava.onionp2p;
 
+import kakha.kudava.onionp2p.contacts.ContactLink;
+import kakha.kudava.onionp2p.contacts.ContactRendezvous;
+
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;

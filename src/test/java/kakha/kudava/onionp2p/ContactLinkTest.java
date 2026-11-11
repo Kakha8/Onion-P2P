@@ -1,5 +1,7 @@
 package kakha.kudava.onionp2p;
 
+import kakha.kudava.onionp2p.contacts.ContactLink;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import javax.crypto.KeyAgreement;

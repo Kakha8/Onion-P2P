@@ -1,4 +1,4 @@
-package kakha.kudava.onionp2p;
+package kakha.kudava.onionp2p.contacts;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
