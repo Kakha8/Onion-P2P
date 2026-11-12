@@ -47,8 +47,10 @@ import javafx.scene.text.Text;
 import javafx.scene.text.TextAlignment;
 import javafx.scene.text.TextFlow;
 import javafx.stage.FileChooser;
+import javafx.stage.DirectoryChooser;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
@@ -66,14 +68,19 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Locale;
+import java.util.Comparator;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.ArrayDeque;
@@ -90,6 +97,8 @@ import static kakha.kudava.onionp2p.contacts.ContactMessaging.MAX_BODY_BYTES;
 
 /** Embedded chat pane backed by saved contacts and local message history. */
 final class MessengerPane extends BorderPane {
+    private enum DriveSortColumn { NAME, TYPE, SIZE }
+
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
     private static final DateTimeFormatter MESSAGE_TIME = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
     private static final DateTimeFormatter CHAT_DATE = DateTimeFormatter.ofPattern("MMM d, uuuu", Locale.ENGLISH);
@@ -187,6 +196,12 @@ final class MessengerPane extends BorderPane {
     private final Map<Path, CompletableFuture<VoiceNote>> voiceNotes = new HashMap<>();
     private final ExecutorService voiceNoteReader = Executors.newSingleThreadExecutor(runnable ->
             Thread.ofPlatform().daemon().name("voice-waveform").unstarted(runnable));
+    private final ExecutorService driveWorkers = Executors.newSingleThreadExecutor(runnable ->
+            Thread.ofPlatform().daemon().name("drive-import").unstarted(runnable));
+    private DriveSortColumn driveSortColumn = DriveSortColumn.NAME;
+    private boolean driveSortAscending = true;
+    private int drivePageSize = 25;
+    private int drivePageIndex;
     private long voicePlaybackRequest;
     private boolean activeVoiceTransfer;
     private boolean sending;
@@ -498,7 +513,7 @@ final class MessengerPane extends BorderPane {
         driveNavigationPane.setMinWidth(185);
         driveNavigationPane.setMaxWidth(400);
 
-        VBox drivePageContent = new VBox(18);
+        VBox drivePageContent = new VBox(10);
         drivePageContent.setPadding(new Insets(28, 32, 28, 32));
         drivePageContent.getStyleClass().add("drive-page-content");
         BorderPane drivePage = new BorderPane(drivePageContent);
@@ -1900,6 +1915,27 @@ final class MessengerPane extends BorderPane {
         return icon;
     }
 
+    private static SVGPath filePlusGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M6 3 H14 L19 8 V21 H6 Z M14 3 V8 H19 M12.5 12 V18 M9.5 15 H15.5");
+        icon.getStyleClass().add("drive-action-glyph");
+        return icon;
+    }
+
+    private static SVGPath folderPlusGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M2.5 6 H9 L11 8 H21.5 V19 H2.5 Z M12 10.5 V16.5 M9 13.5 H15");
+        icon.getStyleClass().add("drive-action-glyph");
+        return icon;
+    }
+
+    private static SVGPath fileGlyph() {
+        SVGPath icon = new SVGPath();
+        icon.setContent("M6 3 H14 L19 8 V21 H6 Z M14 3 V8 H19");
+        icon.getStyleClass().add("drive-entry-glyph");
+        return icon;
+    }
+
     private static SVGPath sharedPeopleGlyph() {
         SVGPath icon = new SVGPath();
         icon.setContent("M9 11 A3.5 3.5 0 1 0 9 4 A3.5 3.5 0 1 0 9 11 Z M2 20 V18 A4 4 0 0 1 6 14 H12 A4 4 0 0 1 16 18 V20 M16 5 A3 3 0 0 1 16 11 M18 14 A4 4 0 0 1 22 18 V20");
@@ -1908,33 +1944,292 @@ final class MessengerPane extends BorderPane {
     }
 
     private void renderDrivePage(VBox content, boolean myFiles) {
+        renderDrivePage(content, myFiles, AppData.directory().resolve("drive"));
+    }
+
+    private void renderDrivePage(VBox content, boolean myFiles, Path currentDirectory) {
         content.getChildren().clear();
         SVGPath headingGlyph = myFiles ? folderGlyph() : sharedPeopleGlyph();
         Label title = new Label(myFiles ? "My files" : "Shared with me", headingGlyph);
         title.getStyleClass().add("drive-page-title");
         Label subtitle = new Label(myFiles
-                ? "Folders you choose to share from this device will be managed here."
+                ? "Files and folders added from this device are managed here."
                 : "People who share files with you and their available files will appear here.");
         subtitle.getStyleClass().add("drive-page-subtitle");
         VBox heading = new VBox(5, title, subtitle);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
+        Button addFiles = new Button("Add files");
+        addFiles.setGraphic(filePlusGlyph());
+        addFiles.getStyleClass().add("drive-add-files-button");
+        addFiles.setDisable(!myFiles);
+
         Button addFolder = new Button("Add folder");
-        addFolder.setGraphic(plusGlyph());
+        addFolder.setGraphic(folderPlusGlyph());
         addFolder.getStyleClass().add("drive-add-folder-button");
         addFolder.setDisable(!myFiles);
-        HBox header = new HBox(16, heading, spacer, addFolder);
+        ProgressIndicator importing = new ProgressIndicator();
+        importing.setMaxSize(18, 18);
+        importing.setVisible(false);
+        importing.setManaged(false);
+        Label feedback = new Label();
+        feedback.setVisible(false);
+        feedback.setManaged(false);
+        feedback.getStyleClass().add("drive-page-subtitle");
+        addFiles.setOnAction(event -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("Add files to My files");
+            List<File> selectedFiles = chooser.showOpenMultipleDialog(getScene() == null ? null : getScene().getWindow());
+            if (selectedFiles != null && !selectedFiles.isEmpty()) {
+                importIntoDrive(selectedFiles.stream().map(File::toPath).toList(), content, currentDirectory, addFiles, addFolder, importing, feedback);
+            }
+        });
+        addFolder.setOnAction(event -> {
+            DirectoryChooser chooser = new DirectoryChooser();
+            chooser.setTitle("Add a folder to My files");
+            File selectedFolder = chooser.showDialog(getScene() == null ? null : getScene().getWindow());
+            if (selectedFolder != null) {
+                importIntoDrive(List.of(selectedFolder.toPath()), content, currentDirectory, addFiles, addFolder, importing, feedback);
+            }
+        });
+        HBox actionGroup = new HBox(8, importing, addFiles, addFolder);
+        actionGroup.setAlignment(Pos.CENTER_RIGHT);
+        actionGroup.getStyleClass().add("drive-header-actions");
+        HBox header = new HBox(16, heading, spacer, actionGroup);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("drive-page-header");
 
+        VBox pageBody = new VBox(0);
+        pageBody.setAlignment(Pos.TOP_LEFT);
+        if (myFiles) {
+            Path driveDirectory = AppData.directory().resolve("drive");
+            try {
+                Files.createDirectories(driveDirectory);
+                Path driveRoot = driveDirectory.toAbsolutePath().normalize();
+                Path visibleDirectory = currentDirectory.toAbsolutePath().normalize();
+                if (!visibleDirectory.startsWith(driveRoot)) visibleDirectory = driveRoot;
+                pageBody.getChildren().add(driveBreadcrumb(driveRoot, visibleDirectory, content));
+                List<Path> entries;
+                try (var children = Files.list(visibleDirectory)) {
+                    Comparator<Path> comparator = switch (driveSortColumn) {
+                        case NAME -> Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER);
+                        case TYPE -> Comparator.comparing(path -> Files.isDirectory(path) ? "Folder" : fileTypeLabel(path), String.CASE_INSENSITIVE_ORDER);
+                        case SIZE -> Comparator.comparingLong(path -> Files.isDirectory(path) ? 0 : fileSize(path));
+                    };
+                    comparator = comparator.thenComparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER);
+                    if (!driveSortAscending) comparator = comparator.reversed();
+                    entries = children.sorted(comparator).toList();
+                }
+                if (entries.isEmpty()) {
+                    VBox empty = emptyDriveState(true);
+                    if (!visibleDirectory.equals(driveRoot)) {
+                        ((Label) empty.getChildren().get(1)).setText("This folder is empty");
+                        ((Label) empty.getChildren().get(2)).setText("Add files here or go back to My files.");
+                    }
+                    pageBody.getChildren().add(empty);
+                } else {
+                    int pageCount = (entries.size() + drivePageSize - 1) / drivePageSize;
+                    drivePageIndex = Math.max(0, Math.min(drivePageIndex, pageCount - 1));
+                    int firstEntry = drivePageIndex * drivePageSize;
+                    int endEntry = Math.min(entries.size(), firstEntry + drivePageSize);
+                    pageBody.getChildren().add(driveTableHeader(content, visibleDirectory));
+                    for (Path entry : entries.subList(firstEntry, endEntry)) {
+                        HBox row = driveEntryRow(entry);
+                        row.setOnMouseClicked(event -> {
+                            if (event.getClickCount() == 2 && Files.isDirectory(entry)) {
+                                renderDrivePage(content, true, entry);
+                            }
+                        });
+                        pageBody.getChildren().add(row);
+                    }
+                    content.getProperties().put("drivePagination", drivePagination(content, visibleDirectory,
+                            entries.size(), firstEntry, endEntry, pageCount));
+                }
+            } catch (IOException error) {
+                feedback.setText("Could not read your Drive folder: " + error.getMessage());
+                pageBody.getChildren().add(emptyDriveState(true));
+            }
+        } else {
+            content.getProperties().remove("drivePagination");
+            pageBody.getChildren().add(emptyDriveState(false));
+        }
+        ScrollPane bodyViewport = new ScrollPane(pageBody);
+        bodyViewport.setFitToWidth(true);
+        bodyViewport.setFitToHeight(true);
+        bodyViewport.getStyleClass().add("drive-items-viewport");
+        VBox.setVgrow(bodyViewport, Priority.ALWAYS);
+        content.getChildren().addAll(header, feedback, bodyViewport);
+        Object pagination = content.getProperties().remove("drivePagination");
+        if (pagination instanceof Node node) content.getChildren().add(node);
+    }
+
+    private HBox driveBreadcrumb(Path root, Path current, VBox content) {
+        Button parentButton = new Button("‹");
+        parentButton.getStyleClass().add("drive-history-button");
+        parentButton.setAccessibleText("Back to parent folder");
+        parentButton.setDisable(current.equals(root));
+        parentButton.setOnAction(event -> {
+            Path parent = current.getParent();
+            if (parent != null && parent.startsWith(root)) renderDrivePage(content, true, parent);
+        });
+
+        HBox crumbs = new HBox(7);
+        crumbs.setMinWidth(0);
+        crumbs.setMaxWidth(Double.MAX_VALUE);
+        Button rootButton = new Button("My files");
+        rootButton.getStyleClass().add(current.equals(root) ? "drive-crumb-current" : "drive-crumb");
+        rootButton.setMinWidth(0);
+        rootButton.setMaxWidth(120);
+        rootButton.setTextOverrun(OverrunStyle.ELLIPSIS);
+        rootButton.setOnAction(event -> renderDrivePage(content, true, root));
+        crumbs.getChildren().add(rootButton);
+
+        List<Path> parts = new ArrayList<>();
+        for (Path part : root.relativize(current)) parts.add(part);
+        int visibleStart = Math.max(0, parts.size() - 2);
+        if (visibleStart > 0) {
+            Label slash = new Label("/");
+            slash.getStyleClass().add("drive-breadcrumb-slash");
+            slash.setAlignment(Pos.CENTER);
+            Path collapsedTarget = root;
+            for (int i = 0; i < visibleStart; i++) collapsedTarget = collapsedTarget.resolve(parts.get(i));
+            Path collapsedDestination = collapsedTarget;
+            Button collapsed = new Button("…");
+            collapsed.getStyleClass().add("drive-crumb");
+            collapsed.setAccessibleText("Open parent folders");
+            collapsed.setMinWidth(0);
+            collapsed.setMaxWidth(42);
+            collapsed.setOnAction(event -> renderDrivePage(content, true, collapsedDestination));
+            crumbs.getChildren().addAll(slash, collapsed);
+        }
+
+        Path cursor = root;
+        for (int i = 0; i < parts.size(); i++) {
+            Path part = parts.get(i);
+            cursor = cursor.resolve(part);
+            if (i < visibleStart) continue;
+            Label slash = new Label("/");
+            slash.getStyleClass().add("drive-breadcrumb-slash");
+            slash.setAlignment(Pos.CENTER);
+            Path target = cursor;
+            Button crumb = new Button(part.toString());
+            crumb.getStyleClass().add(cursor.equals(current) ? "drive-crumb-current" : "drive-crumb");
+            crumb.setMinWidth(0);
+            crumb.setMaxWidth(170);
+            crumb.setTextOverrun(OverrunStyle.ELLIPSIS);
+            crumb.setOnAction(event -> renderDrivePage(content, true, target));
+            crumbs.getChildren().addAll(slash, crumb);
+        }
+        HBox bar = new HBox(10, parentButton, crumbs);
+        HBox.setHgrow(crumbs, Priority.ALWAYS);
+        bar.setMaxWidth(Double.MAX_VALUE);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.getStyleClass().add("drive-breadcrumb-bar");
+        return bar;
+    }
+
+    private GridPane driveTableHeader(VBox content, Path directory) {
+        GridPane header = new GridPane();
+        header.setAlignment(Pos.CENTER);
+        header.getColumnConstraints().setAll(driveColumns());
+        Label name = driveColumnLabel("Name", DriveSortColumn.NAME, content, directory);
+        Label type = driveColumnLabel("Type", DriveSortColumn.TYPE, content, directory);
+        Label size = driveColumnLabel("Size", DriveSortColumn.SIZE, content, directory);
+        name.setAlignment(Pos.CENTER_LEFT);
+        header.add(name, 0, 0);
+        header.add(type, 1, 0);
+        header.add(size, 2, 0);
+        javafx.scene.layout.GridPane.setValignment(name, javafx.geometry.VPos.CENTER);
+        javafx.scene.layout.GridPane.setValignment(type, javafx.geometry.VPos.CENTER);
+        javafx.scene.layout.GridPane.setValignment(size, javafx.geometry.VPos.CENTER);
+        header.getStyleClass().add("drive-table-header");
+        return header;
+    }
+
+    private List<javafx.scene.layout.ColumnConstraints> driveColumns() {
+        List<javafx.scene.layout.ColumnConstraints> columns = new ArrayList<>();
+        for (double width : new double[]{56, 22, 22}) {
+            javafx.scene.layout.ColumnConstraints column = new javafx.scene.layout.ColumnConstraints();
+            column.setPercentWidth(width);
+            column.setHgrow(Priority.SOMETIMES);
+            columns.add(column);
+        }
+        return columns;
+    }
+
+    private Label driveColumnLabel(String text, DriveSortColumn column, VBox content, Path directory) {
+        String indicator = driveSortColumn == column ? (driveSortAscending ? "  ↑" : "  ↓") : "";
+        Label label = new Label(text + indicator);
+        label.getStyleClass().addAll("drive-table-heading", "drive-sort-heading");
+        label.setMaxWidth(Double.MAX_VALUE);
+        label.setAlignment(Pos.CENTER);
+        label.setAccessibleText("Sort by " + text + (driveSortColumn == column
+                ? (driveSortAscending ? " ascending" : " descending") : ""));
+        label.setOnMouseClicked(event -> {
+            if (driveSortColumn == column) driveSortAscending = !driveSortAscending;
+            else {
+                driveSortColumn = column;
+                driveSortAscending = true;
+            }
+            drivePageIndex = 0;
+            renderDrivePage(content, true, directory);
+        });
+        return label;
+    }
+
+    private HBox drivePagination(VBox content, Path directory, int totalEntries,
+                                 int firstEntry, int endEntry, int pageCount) {
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Label pageSizeLabel = new Label("Rows per page");
+        pageSizeLabel.getStyleClass().add("drive-pagination-label");
+        ComboBox<Integer> pageSize = new ComboBox<>(FXCollections.observableArrayList(10, 25, 50, 100));
+        pageSize.setValue(drivePageSize);
+        pageSize.getStyleClass().add("drive-page-size");
+        pageSize.setAccessibleText("Rows per page");
+        pageSize.setOnAction(event -> {
+            Integer selectedSize = pageSize.getValue();
+            if (selectedSize != null && selectedSize != drivePageSize) {
+                drivePageSize = selectedSize;
+                drivePageIndex = 0;
+                renderDrivePage(content, true, directory);
+            }
+        });
+        Label range = new Label((firstEntry + 1) + "–" + endEntry + " of " + totalEntries);
+        range.getStyleClass().add("drive-pagination-label");
+        Button previous = new Button("‹");
+        previous.getStyleClass().add("drive-page-button");
+        previous.setAccessibleText("Previous page");
+        previous.setDisable(drivePageIndex == 0);
+        previous.setOnAction(event -> {
+            drivePageIndex--;
+            renderDrivePage(content, true, directory);
+        });
+        Button next = new Button("›");
+        next.getStyleClass().add("drive-page-button");
+        next.setAccessibleText("Next page");
+        next.setDisable(drivePageIndex >= pageCount - 1);
+        next.setOnAction(event -> {
+            drivePageIndex++;
+            renderDrivePage(content, true, directory);
+        });
+        HBox controls = new HBox(8, pageSizeLabel, pageSize, range, previous, next);
+        controls.setAlignment(Pos.CENTER_RIGHT);
+        HBox footer = new HBox(spacer, controls);
+        footer.setAlignment(Pos.CENTER_RIGHT);
+        footer.getStyleClass().add("drive-pagination");
+        return footer;
+    }
+
+    private VBox emptyDriveState(boolean myFiles) {
         SVGPath emptyGlyph = myFiles ? folderGlyph() : sharedPeopleGlyph();
         Label emptyIcon = new Label(null, emptyGlyph);
         emptyIcon.getStyleClass().add("drive-empty-icon");
-        Label emptyTitle = new Label(myFiles ? "No folders yet" : "No one has shared files with you yet");
+        Label emptyTitle = new Label(myFiles ? "No files or folders yet" : "No one has shared files with you yet");
         emptyTitle.getStyleClass().add("drive-empty-title");
         Label emptyDescription = new Label(myFiles
-                ? "Add a folder from this device to start organizing what you share."
+                ? "Add files or a folder from this device. Copies are stored in the app's local Drive folder."
                 : "People who share files with you will appear here. Select someone to browse their files.");
         emptyDescription.getStyleClass().add("drive-empty-description");
         emptyDescription.setWrapText(true);
@@ -1943,9 +2238,129 @@ final class MessengerPane extends BorderPane {
         emptyState.setAlignment(Pos.CENTER);
         emptyState.getStyleClass().add("drive-empty-state");
         VBox.setVgrow(emptyState, Priority.ALWAYS);
+        return emptyState;
+    }
 
-        content.getChildren().addAll(header, emptyState);
-        VBox.setVgrow(emptyState, Priority.ALWAYS);
+    private HBox driveEntryRow(Path entry) {
+        boolean directory = Files.isDirectory(entry);
+        SVGPath glyph = directory ? folderGlyph() : fileGlyph();
+        glyph.getStyleClass().clear();
+        glyph.getStyleClass().add("drive-entry-glyph");
+        Label icon = new Label(null, glyph);
+        icon.getStyleClass().add("drive-entry-icon");
+        Label name = new Label(entry.getFileName().toString());
+        name.getStyleClass().add("drive-entry-name");
+        name.setTextOverrun(OverrunStyle.ELLIPSIS);
+        name.setMinWidth(0);
+        name.setMaxWidth(320);
+        HBox nameCell = new HBox(12, icon, name);
+        nameCell.setAlignment(Pos.CENTER_LEFT);
+        Label type = new Label(directory ? "Folder" : fileTypeLabel(entry));
+        Label size = new Label(directory ? "—" : formatBytes(fileSize(entry)));
+        type.getStyleClass().add("drive-table-cell");
+        size.getStyleClass().add("drive-table-cell");
+        type.setMaxWidth(Double.MAX_VALUE);
+        type.setAlignment(Pos.CENTER);
+        size.setMaxWidth(Double.MAX_VALUE);
+        size.setAlignment(Pos.CENTER);
+        GridPane cells = new GridPane();
+        cells.setAlignment(Pos.CENTER);
+        cells.getColumnConstraints().setAll(driveColumns());
+        cells.add(nameCell, 0, 0);
+        cells.add(type, 1, 0);
+        cells.add(size, 2, 0);
+        javafx.scene.layout.GridPane.setValignment(nameCell, javafx.geometry.VPos.CENTER);
+        javafx.scene.layout.GridPane.setValignment(type, javafx.geometry.VPos.CENTER);
+        javafx.scene.layout.GridPane.setValignment(size, javafx.geometry.VPos.CENTER);
+        cells.setMaxWidth(Double.MAX_VALUE);
+        HBox row = new HBox(cells);
+        HBox.setHgrow(cells, Priority.ALWAYS);
+        row.setAlignment(Pos.CENTER);
+        row.getStyleClass().add("drive-entry-row");
+        return row;
+    }
+
+    private static long fileSize(Path file) {
+        try { return Files.size(file); } catch (IOException ignored) { return 0; }
+    }
+
+    private void importIntoDrive(List<Path> sources, VBox content, Path currentDirectory, Button addFiles, Button addFolder,
+                                 ProgressIndicator importing, Label feedback) {
+        Path driveDirectory = AppData.directory().resolve("drive");
+        addFiles.setDisable(true);
+        addFolder.setDisable(true);
+        importing.setManaged(true);
+        importing.setVisible(true);
+        feedback.setText("Copying into " + driveDirectory + "…");
+        driveWorkers.execute(() -> {
+            Exception failure = null;
+            try {
+                Files.createDirectories(driveDirectory);
+                for (Path source : sources) copyIntoDrive(source, driveDirectory);
+            } catch (Exception error) {
+                failure = error;
+            }
+            Exception result = failure;
+            Platform.runLater(() -> {
+                if (content.getScene() == null) return;
+                if (result == null) {
+                    renderDrivePage(content, true, currentDirectory);
+                } else {
+                    addFiles.setDisable(false);
+                    addFolder.setDisable(false);
+                    importing.setVisible(false);
+                    importing.setManaged(false);
+                    feedback.setText("Could not add the selected item: " + result.getMessage());
+                }
+            });
+        });
+    }
+
+    private static void copyIntoDrive(Path source, Path driveDirectory) throws IOException {
+        Path normalizedSource = source.toAbsolutePath().normalize();
+        if (!Files.exists(normalizedSource)) throw new IOException("The selected item no longer exists.");
+        if (Files.isDirectory(normalizedSource)) {
+            Path normalizedDrive = driveDirectory.toAbsolutePath().normalize();
+            if (normalizedDrive.startsWith(normalizedSource)) {
+                throw new IOException("Choose a folder that does not contain the app's Drive folder.");
+            }
+            Path destination = uniqueDrivePath(driveDirectory, normalizedSource.getFileName().toString());
+            Files.walkFileTree(normalizedSource, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
+                    if (Files.isSymbolicLink(directory)) return FileVisitResult.SKIP_SUBTREE;
+                    Files.createDirectories(destination.resolve(normalizedSource.relativize(directory)));
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                    if (!Files.isSymbolicLink(file)) {
+                        Path target = destination.resolve(normalizedSource.relativize(file));
+                        Files.copy(file, target);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } else if (Files.isRegularFile(normalizedSource) && !Files.isSymbolicLink(normalizedSource)) {
+            Files.copy(normalizedSource, uniqueDrivePath(driveDirectory, normalizedSource.getFileName().toString()));
+        } else {
+            throw new IOException("Only regular files and folders can be added.");
+        }
+    }
+
+    private static Path uniqueDrivePath(Path directory, String fileName) {
+        Path candidate = directory.resolve(fileName);
+        if (!Files.exists(candidate)) return candidate;
+        String base = fileName;
+        String extension = "";
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0) {
+            base = fileName.substring(0, dot);
+            extension = fileName.substring(dot);
+        }
+        for (int suffix = 2; ; suffix++) {
+            candidate = directory.resolve(base + " (" + suffix + ")" + extension);
+            if (!Files.exists(candidate)) return candidate;
+        }
     }
 
     private void searchConversation() {
