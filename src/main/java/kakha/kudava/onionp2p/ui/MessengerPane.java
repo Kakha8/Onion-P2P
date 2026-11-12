@@ -48,6 +48,7 @@ import javafx.scene.text.TextAlignment;
 import javafx.scene.text.TextFlow;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
+import javafx.stage.StageStyle;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.GridPane;
@@ -111,6 +112,7 @@ final class MessengerPane extends BorderPane {
     private final ContactManager manager;
     private final String localUsername;
     private final Runnable onAddContact;
+    private Runnable showChatsAction;
     private final ListView<ContactStore.Contact> contactList = new ListView<>();
     private final ObservableList<ContactStore.Contact> allContacts = FXCollections.observableArrayList();
     private final FilteredList<ContactStore.Contact> filteredContacts = new FilteredList<>(allContacts, contact -> true);
@@ -552,6 +554,7 @@ final class MessengerPane extends BorderPane {
             conversation.setVisible(true); conversation.setManaged(true);
             drivePage.setVisible(false); drivePage.setManaged(false);
         };
+        showChatsAction = showChats;
         Runnable showDrive = () -> {
             driveNavigation.getStyleClass().add("rail-button-selected");
             chatsNavigation.getStyleClass().remove("rail-button-selected");
@@ -1936,6 +1939,17 @@ final class MessengerPane extends BorderPane {
         return icon;
     }
 
+    private static SVGPath driveMoreGlyph() {
+        return driveMenuGlyph("M12 5 L12 5 M12 12 L12 12 M12 19 L12 19");
+    }
+
+    private static SVGPath driveMenuGlyph(String path) {
+        SVGPath icon = new SVGPath();
+        icon.setContent(path);
+        icon.getStyleClass().add("drive-menu-glyph");
+        return icon;
+    }
+
     private static SVGPath sharedPeopleGlyph() {
         SVGPath icon = new SVGPath();
         icon.setContent("M9 11 A3.5 3.5 0 1 0 9 4 A3.5 3.5 0 1 0 9 11 Z M2 20 V18 A4 4 0 0 1 6 14 H12 A4 4 0 0 1 16 18 V20 M16 5 A3 3 0 0 1 16 11 M18 14 A4 4 0 0 1 22 18 V20");
@@ -1960,15 +1974,24 @@ final class MessengerPane extends BorderPane {
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        Button addFiles = new Button("Add files");
+        Button addFiles = new Button();
         addFiles.setGraphic(filePlusGlyph());
-        addFiles.getStyleClass().add("drive-add-files-button");
+        addFiles.getStyleClass().addAll("drive-add-files-button", "drive-icon-action-button");
+        addFiles.setAccessibleText("Add files");
+        addFiles.setTooltip(new Tooltip("Add files"));
         addFiles.setDisable(!myFiles);
-
-        Button addFolder = new Button("Add folder");
+        Button addFolder = new Button();
         addFolder.setGraphic(folderPlusGlyph());
-        addFolder.getStyleClass().add("drive-add-folder-button");
+        addFolder.getStyleClass().addAll("drive-add-folder-button", "drive-icon-action-button");
+        addFolder.setAccessibleText("Add folder");
+        addFolder.setTooltip(new Tooltip("Add folder"));
         addFolder.setDisable(!myFiles);
+        Button addButton = new Button("New");
+        addButton.setGraphic(plusGlyph());
+        addButton.getStyleClass().add("drive-new-button");
+        addButton.setAccessibleText("Create a folder or text file");
+        addButton.setTooltip(new Tooltip("Create a folder or text file"));
+        addButton.setDisable(!myFiles);
         ProgressIndicator importing = new ProgressIndicator();
         importing.setMaxSize(18, 18);
         importing.setVisible(false);
@@ -1987,11 +2010,19 @@ final class MessengerPane extends BorderPane {
         });
         addFolder.setOnAction(event -> {
             DirectoryChooser chooser = new DirectoryChooser();
-            chooser.setTitle("Add a folder to My files");
-            File selectedFolder = chooser.showDialog(getScene() == null ? null : getScene().getWindow());
-            if (selectedFolder != null) {
-                importIntoDrive(List.of(selectedFolder.toPath()), content, currentDirectory, addFiles, addFolder, importing, feedback);
+            chooser.setTitle("Add folder to My files");
+            File selected = chooser.showDialog(getScene() == null ? null : getScene().getWindow());
+            if (selected != null) {
+                importIntoDrive(List.of(selected.toPath()), content, currentDirectory, addFiles, addFolder, importing, feedback);
             }
+        });
+        addButton.setOnAction(event -> {
+            ContextMenu addMenu = new ContextMenu();
+            addMenu.getStyleClass().add("drive-entry-menu");
+            MenuItem createFolder = driveMenuItem("Folder", "M3 7h7l2 2h9v11H3z M3 9h18", () -> createDriveEntry(currentDirectory, content, true));
+            MenuItem createTextFile = driveMenuItem("Text file", "M6 3h8l4 4v14H6z M14 3v5h5", () -> createDriveEntry(currentDirectory, content, false));
+            addMenu.getItems().setAll(createFolder, createTextFile);
+            addMenu.show(addButton, Side.BOTTOM, 0, 2);
         });
         HBox actionGroup = new HBox(8, importing, addFiles, addFolder);
         actionGroup.setAlignment(Pos.CENTER_RIGHT);
@@ -2009,7 +2040,7 @@ final class MessengerPane extends BorderPane {
                 Path driveRoot = driveDirectory.toAbsolutePath().normalize();
                 Path visibleDirectory = currentDirectory.toAbsolutePath().normalize();
                 if (!visibleDirectory.startsWith(driveRoot)) visibleDirectory = driveRoot;
-                pageBody.getChildren().add(driveBreadcrumb(driveRoot, visibleDirectory, content));
+                pageBody.getChildren().add(driveBreadcrumb(driveRoot, visibleDirectory, content, addButton));
                 List<Path> entries;
                 try (var children = Files.list(visibleDirectory)) {
                     Comparator<Path> comparator = switch (driveSortColumn) {
@@ -2035,7 +2066,7 @@ final class MessengerPane extends BorderPane {
                     int endEntry = Math.min(entries.size(), firstEntry + drivePageSize);
                     pageBody.getChildren().add(driveTableHeader(content, visibleDirectory));
                     for (Path entry : entries.subList(firstEntry, endEntry)) {
-                        HBox row = driveEntryRow(entry);
+                        HBox row = driveEntryRow(entry, content);
                         row.setOnMouseClicked(event -> {
                             if (event.getClickCount() == 2 && Files.isDirectory(entry)) {
                                 renderDrivePage(content, true, entry);
@@ -2048,6 +2079,8 @@ final class MessengerPane extends BorderPane {
                 }
             } catch (IOException error) {
                 feedback.setText("Could not read your Drive folder: " + error.getMessage());
+                feedback.setManaged(true);
+                feedback.setVisible(true);
                 pageBody.getChildren().add(emptyDriveState(true));
             }
         } else {
@@ -2064,9 +2097,13 @@ final class MessengerPane extends BorderPane {
         if (pagination instanceof Node node) content.getChildren().add(node);
     }
 
-    private HBox driveBreadcrumb(Path root, Path current, VBox content) {
+    private HBox driveBreadcrumb(Path root, Path current, VBox content, Button addButton) {
         Button parentButton = new Button("‹");
         parentButton.getStyleClass().add("drive-history-button");
+        parentButton.setAlignment(Pos.CENTER);
+        parentButton.setMinHeight(30);
+        parentButton.setPrefHeight(30);
+        parentButton.setMaxHeight(30);
         parentButton.setAccessibleText("Back to parent folder");
         parentButton.setDisable(current.equals(root));
         parentButton.setOnAction(event -> {
@@ -2081,6 +2118,10 @@ final class MessengerPane extends BorderPane {
         rootButton.getStyleClass().add(current.equals(root) ? "drive-crumb-current" : "drive-crumb");
         rootButton.setMinWidth(0);
         rootButton.setMaxWidth(120);
+        rootButton.setAlignment(Pos.CENTER);
+        rootButton.setMinHeight(30);
+        rootButton.setPrefHeight(30);
+        rootButton.setMaxHeight(30);
         rootButton.setTextOverrun(OverrunStyle.ELLIPSIS);
         rootButton.setOnAction(event -> renderDrivePage(content, true, root));
         crumbs.getChildren().add(rootButton);
@@ -2100,6 +2141,10 @@ final class MessengerPane extends BorderPane {
             collapsed.setAccessibleText("Open parent folders");
             collapsed.setMinWidth(0);
             collapsed.setMaxWidth(42);
+            collapsed.setAlignment(Pos.CENTER);
+            collapsed.setMinHeight(30);
+            collapsed.setPrefHeight(30);
+            collapsed.setMaxHeight(30);
             collapsed.setOnAction(event -> renderDrivePage(content, true, collapsedDestination));
             crumbs.getChildren().addAll(slash, collapsed);
         }
@@ -2117,11 +2162,15 @@ final class MessengerPane extends BorderPane {
             crumb.getStyleClass().add(cursor.equals(current) ? "drive-crumb-current" : "drive-crumb");
             crumb.setMinWidth(0);
             crumb.setMaxWidth(170);
+            crumb.setAlignment(Pos.CENTER);
+            crumb.setMinHeight(30);
+            crumb.setPrefHeight(30);
+            crumb.setMaxHeight(30);
             crumb.setTextOverrun(OverrunStyle.ELLIPSIS);
             crumb.setOnAction(event -> renderDrivePage(content, true, target));
             crumbs.getChildren().addAll(slash, crumb);
         }
-        HBox bar = new HBox(10, parentButton, crumbs);
+        HBox bar = new HBox(10, parentButton, crumbs, addButton);
         HBox.setHgrow(crumbs, Priority.ALWAYS);
         bar.setMaxWidth(Double.MAX_VALUE);
         bar.setAlignment(Pos.CENTER_LEFT);
@@ -2149,7 +2198,7 @@ final class MessengerPane extends BorderPane {
 
     private List<javafx.scene.layout.ColumnConstraints> driveColumns() {
         List<javafx.scene.layout.ColumnConstraints> columns = new ArrayList<>();
-        for (double width : new double[]{56, 22, 22}) {
+        for (double width : new double[]{54, 19, 19, 8}) {
             javafx.scene.layout.ColumnConstraints column = new javafx.scene.layout.ColumnConstraints();
             column.setPercentWidth(width);
             column.setHgrow(Priority.SOMETIMES);
@@ -2241,7 +2290,7 @@ final class MessengerPane extends BorderPane {
         return emptyState;
     }
 
-    private HBox driveEntryRow(Path entry) {
+    private HBox driveEntryRow(Path entry, VBox content) {
         boolean directory = Files.isDirectory(entry);
         SVGPath glyph = directory ? folderGlyph() : fileGlyph();
         glyph.getStyleClass().clear();
@@ -2263,21 +2312,296 @@ final class MessengerPane extends BorderPane {
         type.setAlignment(Pos.CENTER);
         size.setMaxWidth(Double.MAX_VALUE);
         size.setAlignment(Pos.CENTER);
+        Button more = new Button();
+        more.setGraphic(driveMoreGlyph());
+        more.setTooltip(new Tooltip("More options"));
+        more.setAccessibleText("More options for " + entry.getFileName());
+        more.getStyleClass().add("drive-entry-more");
+        more.setOnAction(event -> showDriveEntryMenu(more, entry, content));
         GridPane cells = new GridPane();
         cells.setAlignment(Pos.CENTER);
         cells.getColumnConstraints().setAll(driveColumns());
         cells.add(nameCell, 0, 0);
         cells.add(type, 1, 0);
         cells.add(size, 2, 0);
+        cells.add(more, 3, 0);
         javafx.scene.layout.GridPane.setValignment(nameCell, javafx.geometry.VPos.CENTER);
         javafx.scene.layout.GridPane.setValignment(type, javafx.geometry.VPos.CENTER);
         javafx.scene.layout.GridPane.setValignment(size, javafx.geometry.VPos.CENTER);
+        javafx.scene.layout.GridPane.setValignment(more, javafx.geometry.VPos.CENTER);
         cells.setMaxWidth(Double.MAX_VALUE);
         HBox row = new HBox(cells);
         HBox.setHgrow(cells, Priority.ALWAYS);
         row.setAlignment(Pos.CENTER);
         row.getStyleClass().add("drive-entry-row");
         return row;
+    }
+
+    private void showDriveEntryMenu(Button anchor, Path entry, VBox content) {
+        ContextMenu menu = new ContextMenu();
+        menu.getStyleClass().add("drive-entry-menu");
+        MenuItem rename = driveMenuItem("Rename", "M4 20h16 M14.5 4.5l5 5 M13 6 5 14l-1 5 5-1 8-8", () -> renameDriveEntry(entry, content));
+        MenuItem share = driveMenuItem("Share", "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", () -> shareDriveEntry(entry));
+        MenuItem delete = driveMenuItem("Delete", "M3 6h18 M8 6V4h8v2 M6 6l1 15h10l1-15", () -> deleteDriveEntry(entry, content));
+        MenuItem properties = driveMenuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z", () -> showDriveProperties(entry));
+        menu.getItems().setAll(rename, share, delete, new SeparatorMenuItem(), properties);
+        menu.show(anchor, Side.BOTTOM, 0, 0);
+    }
+
+    private MenuItem driveMenuItem(String title, String iconPath, Runnable action) {
+        MenuItem item = new MenuItem(title);
+        item.setGraphic(driveMenuGlyph(iconPath));
+        item.setOnAction(event -> action.run());
+        return item;
+    }
+
+    private void createDriveEntry(Path currentDirectory, VBox content, boolean folder) {
+        Dialog<String> dialog = new Dialog<>();
+        String label = folder ? "Folder" : "Text file";
+        dialog.setTitle("Create " + label.toLowerCase(Locale.ROOT));
+        if (getScene() != null) dialog.initOwner(getScene().getWindow());
+        dialog.initStyle(StageStyle.TRANSPARENT);
+        DialogPane pane = dialog.getDialogPane();
+        pane.getStyleClass().add("drive-rename-dialog");
+        pane.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
+
+        String icon = folder ? "M3 7h7l2 2h9v11H3z M3 9h18" : "M6 3h8l4 4v14H6z M14 3v5h5";
+        HBox titleBar = driveDialogTitleBar(dialog, "New " + label.toLowerCase(Locale.ROOT), icon, false);
+        Label prompt = new Label(folder ? "Folder name" : "File name");
+        prompt.getStyleClass().add("drive-rename-prompt");
+        TextField nameField = new TextField(folder ? "New folder" : "New text file.txt");
+        nameField.getStyleClass().add("drive-rename-field");
+        nameField.setMaxWidth(Double.MAX_VALUE);
+        VBox body = new VBox(10, titleBar, prompt, nameField);
+        body.getStyleClass().add("drive-rename-body");
+        pane.setContent(body);
+        pane.getButtonTypes().setAll(
+                new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE),
+                new ButtonType("Create", ButtonBar.ButtonData.OK_DONE));
+        ((Button) pane.lookupButton(pane.getButtonTypes().get(1))).getStyleClass().add("drive-dialog-primary");
+        pane.setPrefWidth(390);
+        dialog.setResultConverter(button -> button.getButtonData() == ButtonBar.ButtonData.OK_DONE ? nameField.getText() : null);
+        dialog.setOnShown(event -> {
+            dialog.getDialogPane().getScene().setFill(javafx.scene.paint.Color.TRANSPARENT);
+            nameField.requestFocus();
+            nameField.selectAll();
+        });
+
+        dialog.showAndWait().ifPresent(rawName -> {
+            String name = rawName.strip();
+            if (name.isEmpty() || name.equals(".") || name.equals("..")
+                    || name.matches(".*[<>:\"/\\\\|?*\\p{Cntrl}].*")) {
+                showDriveAlert(Alert.AlertType.ERROR, "Invalid name", "Enter a valid file or folder name.");
+                return;
+            }
+            if (!folder && !name.toLowerCase(Locale.ROOT).endsWith(".txt")) name += ".txt";
+
+            Path root = AppData.directory().resolve("drive").toAbsolutePath().normalize();
+            Path directory = currentDirectory.toAbsolutePath().normalize();
+            if (!directory.startsWith(root)) directory = root;
+            Path destination = directory.resolve(name).normalize();
+            try {
+                Files.createDirectories(directory);
+                if (folder) Files.createDirectory(destination);
+                else Files.createFile(destination);
+                renderDrivePage(content, true, directory);
+            } catch (java.nio.file.FileAlreadyExistsException error) {
+                showDriveAlert(Alert.AlertType.ERROR, "Name already exists", "An item with that name is already in this folder.");
+            } catch (IOException error) {
+                showDriveAlert(Alert.AlertType.ERROR, "Could not create item", error.getMessage());
+            }
+        });
+    }
+
+    private void renameDriveEntry(Path entry, VBox content) {
+        Dialog<String> dialog = new Dialog<>();
+        dialog.setTitle("Rename");
+        dialog.initOwner(getScene().getWindow());
+        dialog.initStyle(StageStyle.TRANSPARENT);
+        DialogPane pane = dialog.getDialogPane();
+        pane.getStyleClass().add("drive-rename-dialog");
+        pane.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
+
+        HBox titleBar = driveDialogTitleBar(dialog, "Rename", "M4 20h16 M14.5 4.5l5 5 M13 6 5 14l-1 5 5-1 8-8", false);
+        Label itemName = new Label(entry.getFileName().toString());
+        itemName.getStyleClass().add("drive-rename-item");
+        Label prompt = new Label("New name");
+        prompt.getStyleClass().add("drive-rename-prompt");
+        TextField nameField = new TextField(entry.getFileName().toString());
+        nameField.getStyleClass().add("drive-rename-field");
+        nameField.setMaxWidth(Double.MAX_VALUE);
+        VBox form = new VBox(7, prompt, nameField);
+        VBox body = new VBox(5, titleBar, itemName, form);
+        body.getStyleClass().add("drive-rename-body");
+        pane.setContent(body);
+        pane.getButtonTypes().setAll(
+                new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE),
+                new ButtonType("Rename", ButtonBar.ButtonData.OK_DONE));
+        Button renameButton = (Button) pane.lookupButton(pane.getButtonTypes().get(1));
+        renameButton.getStyleClass().add("drive-dialog-primary");
+        pane.setPrefWidth(390);
+        dialog.setResultConverter(button -> button.getButtonData() == ButtonBar.ButtonData.OK_DONE ? nameField.getText() : null);
+        dialog.setOnShown(event -> {
+            dialog.getDialogPane().getScene().setFill(javafx.scene.paint.Color.TRANSPARENT);
+            nameField.requestFocus();
+            nameField.selectAll();
+        });
+
+        dialog.showAndWait().ifPresent(value -> {
+            String name = value.strip();
+            if (name.isEmpty() || name.equals(".") || name.equals("..") || name.contains("/") || name.contains("\\")) {
+                showDriveAlert(Alert.AlertType.ERROR, "Invalid name", "Enter a valid file or folder name.");
+                return;
+            }
+            Path destination = entry.resolveSibling(name);
+            if (Files.exists(destination)) {
+                showDriveAlert(Alert.AlertType.ERROR, "Name already exists", "An item with that name is already in this folder.");
+                return;
+            }
+            try {
+                Files.move(entry, destination);
+                renderDrivePage(content, true, entry.getParent());
+            } catch (IOException error) {
+                showDriveAlert(Alert.AlertType.ERROR, "Could not rename item", error.getMessage());
+            }
+        });
+    }
+
+    private HBox driveDialogTitleBar(Dialog<?> dialog, String text, String iconPath, boolean danger) {
+        SVGPath icon = driveMenuGlyph(iconPath);
+        if (danger) icon.getStyleClass().add("drive-delete-glyph");
+        Label title = new Label(text);
+        title.getStyleClass().add("drive-rename-title");
+        Button close = new Button("×");
+        close.getStyleClass().add("drive-dialog-close");
+        close.setAccessibleText("Close");
+        close.setOnAction(event -> dialog.close());
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox bar = new HBox(9, icon, title, spacer, close);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.getStyleClass().add("drive-dialog-titlebar");
+        double[] dragOffset = new double[2];
+        bar.setOnMousePressed(event -> {
+            if (event.getTarget() == close) return;
+            javafx.stage.Window window = dialog.getDialogPane().getScene().getWindow();
+            dragOffset[0] = event.getScreenX() - window.getX();
+            dragOffset[1] = event.getScreenY() - window.getY();
+        });
+        bar.setOnMouseDragged(event -> {
+            if (event.getTarget() == close) return;
+            javafx.stage.Window window = dialog.getDialogPane().getScene().getWindow();
+            window.setX(event.getScreenX() - dragOffset[0]);
+            window.setY(event.getScreenY() - dragOffset[1]);
+        });
+        return bar;
+    }
+
+    private void deleteDriveEntry(Path entry, VBox content) {
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.setTitle("Delete from My files");
+        confirmation.setHeaderText("Delete “" + entry.getFileName() + "”?");
+        confirmation.setContentText(Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                ? "This folder and everything inside it will be permanently deleted from this device."
+                : "This file will be permanently deleted from this device.");
+        confirmation.initOwner(getScene().getWindow());
+        confirmation.initStyle(StageStyle.TRANSPARENT);
+        confirmation.getDialogPane().getStyleClass().add("drive-delete-dialog");
+        confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
+        SVGPath deleteGlyph = driveMenuGlyph("M3 6h18 M8 6V4h8v2 M6 6l1 15h10l1-15");
+        deleteGlyph.getStyleClass().add("drive-delete-glyph");
+        confirmation.setGraphic(deleteGlyph);
+        Button deleteButton = (Button) confirmation.getDialogPane().lookupButton(ButtonType.OK);
+        deleteButton.setText("Delete");
+        deleteButton.getStyleClass().add("drive-dialog-danger");
+        confirmation.setOnShown(event -> confirmation.getDialogPane().getScene().setFill(javafx.scene.paint.Color.TRANSPARENT));
+        confirmation.showAndWait().filter(ButtonType.OK::equals).ifPresent(ignored -> {
+            try {
+                deleteDrivePath(entry);
+                renderDrivePage(content, true, entry.getParent());
+            } catch (IOException error) {
+                showDriveAlert(Alert.AlertType.ERROR, "Could not delete item", error.getMessage());
+            }
+        });
+    }
+
+    private static void deleteDrivePath(Path entry) throws IOException {
+        if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            Files.walkFileTree(entry, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                    Files.delete(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override public FileVisitResult postVisitDirectory(Path directory, IOException error) throws IOException {
+                    if (error != null) throw error;
+                    Files.delete(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } else {
+            Files.delete(entry);
+        }
+    }
+
+    private void shareDriveEntry(Path entry) {
+        if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            showDriveAlert(Alert.AlertType.INFORMATION, "Share folder", "Folder sharing is not available yet. Open the folder and share its files one at a time.");
+            return;
+        }
+        if (allContacts.isEmpty()) {
+            showDriveAlert(Alert.AlertType.INFORMATION, "No contacts yet", "Add a contact before sharing a file.");
+            return;
+        }
+        Dialog<ContactStore.Contact> dialog = new Dialog<>();
+        dialog.setTitle("Share file");
+        dialog.setHeaderText("Choose a contact for “" + entry.getFileName() + "”");
+        dialog.initOwner(getScene().getWindow());
+        ButtonType shareButton = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().setAll(shareButton, ButtonType.CANCEL);
+        ComboBox<ContactStore.Contact> contacts = new ComboBox<>(FXCollections.observableArrayList(allContacts));
+        contacts.setMaxWidth(Double.MAX_VALUE);
+        contacts.setCellFactory(list -> contactChoiceCell());
+        contacts.setButtonCell(contactChoiceCell());
+        if (selected != null) contacts.setValue(selected);
+        else contacts.getSelectionModel().selectFirst();
+        VBox content = new VBox(8, new Label("Send this file in an encrypted chat message:"), contacts);
+        content.setPadding(new Insets(8, 0, 0, 0));
+        dialog.getDialogPane().setContent(content);
+        dialog.setResultConverter(button -> button == shareButton ? contacts.getValue() : null);
+        dialog.showAndWait().ifPresent(contact -> {
+            if (showChatsAction != null) showChatsAction.run();
+            contactList.getSelectionModel().select(contact);
+            showAttachmentComposer(contact, List.of(entry));
+        });
+    }
+
+    private ListCell<ContactStore.Contact> contactChoiceCell() {
+        return new ListCell<>() {
+            @Override protected void updateItem(ContactStore.Contact contact, boolean empty) {
+                super.updateItem(contact, empty);
+                setText(empty || contact == null ? null : contact.username());
+            }
+        };
+    }
+
+    private void showDriveProperties(Path entry) {
+        String details = "Name: " + entry.getFileName() + "\nType: "
+                + (Files.isDirectory(entry) ? "Folder" : fileTypeLabel(entry)) + "\nLocation: " + entry.toAbsolutePath();
+        if (Files.isRegularFile(entry)) details += "\nSize: " + formatBytes(fileSize(entry));
+        try {
+            details += "\nModified: " + Files.getLastModifiedTime(entry).toInstant()
+                    .atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, yyyy HH:mm", Locale.ENGLISH));
+        } catch (IOException ignored) { }
+        showDriveAlert(Alert.AlertType.INFORMATION, "Properties", details);
+    }
+
+    private void showDriveAlert(Alert.AlertType type, String title, String message) {
+        Alert alert = new Alert(type, message, ButtonType.OK);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        if (getScene() != null) alert.initOwner(getScene().getWindow());
+        alert.showAndWait();
     }
 
     private static long fileSize(Path file) {

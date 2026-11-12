@@ -155,12 +155,14 @@
 .drive-page-subtitle { -fx-text-fill: #8996a8; -fx-font-size: 12px; }
 .drive-header-actions { -fx-alignment: center-right; }
 .drive-add-files-button, .drive-add-folder-button { -fx-background-radius: 8; -fx-padding: 9 14; -fx-font-weight: 600; -fx-graphic-text-gap: 7; -fx-cursor: hand; }
-.drive-add-files-button { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
-.drive-add-files-button:hover { -fx-background-color: #4b91ff; }
-.drive-add-folder-button { -fx-background-color: #202832; -fx-border-color: #344252; -fx-border-radius: 8; -fx-text-fill: #d8e0eb; }
-.drive-add-folder-button:hover { -fx-background-color: #293442; -fx-border-color: #46586d; }
+.drive-add-files-button, .drive-add-folder-button { -fx-background-color: #252c35; -fx-border-color: #3a4552; -fx-border-radius: 8; -fx-text-fill: #d8e0eb; }
+.drive-add-files-button:hover, .drive-add-folder-button:hover { -fx-background-color: #303945; -fx-border-color: #4a5868; }
+.drive-new-button { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-background-radius: 8; -fx-padding: 9 14; -fx-font-weight: 600; -fx-graphic-text-gap: 7; -fx-text-fill: white; -fx-cursor: hand; }
+.drive-new-button:hover { -fx-background-color: #4b91ff; }
 .drive-add-files-button:disabled, .drive-add-folder-button:disabled { -fx-opacity: 0.45; }
-.drive-action-glyph { -fx-fill: transparent; -fx-stroke: white; -fx-stroke-width: 1.7; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
+.drive-icon-action-button { -fx-min-width: 40; -fx-pref-width: 40; -fx-max-width: 40; -fx-min-height: 40; -fx-pref-height: 40; -fx-max-height: 40; -fx-padding: 0; -fx-graphic-text-gap: 0; -fx-background-radius: 8; }
+.drive-icon-action-button .drive-action-glyph { -fx-scale-x: 0.78; -fx-scale-y: 0.78; }
+.drive-action-glyph { -fx-fill: transparent; -fx-stroke: #d8e0eb; -fx-stroke-width: 1.7; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
 .drive-add-folder-button .drive-action-glyph { -fx-stroke: #d8e0eb; }
 .drive-items-viewport { -fx-background-color: transparent; -fx-background: transparent; -fx-border-color: transparent; -fx-padding: 0; }
 .drive-items-viewport > .viewport { -fx-background-color: transparent; }
@@ -177,6 +179,16 @@
 .drive-sort-heading:hover { -fx-text-fill: #dbe7f5; }
 .drive-entry-row { -fx-min-height: 58; -fx-pref-height: 58; -fx-padding: 0 14; -fx-border-color: transparent transparent #252c35 transparent; -fx-cursor: hand; }
 .drive-entry-row:hover { -fx-background-color: rgba(59, 130, 246, 0.07); }
+.drive-entry-more { -fx-background-color: transparent; -fx-border-color: transparent; -fx-background-radius: 16; -fx-min-width: 30; -fx-pref-width: 30; -fx-max-width: 30; -fx-min-height: 30; -fx-pref-height: 30; -fx-max-height: 30; -fx-padding: 3; -fx-cursor: hand; }
+.drive-entry-more:hover { -fx-background-color: #293442; }
+.drive-menu-glyph { -fx-fill: transparent; -fx-stroke: #aeb9c7; -fx-stroke-width: 1.8; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.drive-entry-more .drive-menu-glyph { -fx-stroke-width: 3; -fx-scale-x: 0.68; -fx-scale-y: 0.68; }
+.context-menu.drive-entry-menu { -fx-background-color: #1c222a; -fx-background-radius: 8; -fx-border-color: #35404d; -fx-border-radius: 8; -fx-padding: 5; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 14, 0.2, 0, 4); }
+.drive-entry-menu .menu-item { -fx-padding: 8 14 8 10; -fx-background-radius: 5; }
+.drive-entry-menu .menu-item .label { -fx-text-fill: #dce3ec; -fx-font-size: 12px; }
+.drive-entry-menu .menu-item:focused { -fx-background-color: #293442; }
+.drive-entry-menu .menu-item .drive-menu-glyph { -fx-min-width: 18; -fx-pref-width: 18; -fx-max-width: 18; -fx-min-height: 18; -fx-pref-height: 18; -fx-max-height: 18; }
+.drive-entry-menu .separator .line { -fx-border-color: #35404d transparent transparent transparent; }
 .drive-entry-icon { -fx-alignment: center; -fx-min-width: 36; -fx-pref-width: 36; -fx-max-width: 36; -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36; -fx-background-color: #202a37; -fx-background-radius: 7; }
 .drive-entry-glyph { -fx-fill: transparent; -fx-stroke: #8bbaff; -fx-stroke-width: 1.6; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.82; -fx-scale-y: 0.82; }
 .drive-entry-name { -fx-text-fill: #e5e7eb; -fx-font-size: 13px; }
@@ -515,3 +527,29 @@
     -fx-background-color: #657282;
 }
 .tooltip { -fx-background-color: #202832; -fx-text-fill: #e5e7eb; -fx-border-color: #344153; }
+.drive-rename-dialog { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #35404d; -fx-border-width: 1; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 16; }
+.drive-rename-dialog > *.button-bar { -fx-background-color: transparent; -fx-padding: 14 0 0 0; }
+.drive-rename-dialog > *.button-bar > *.container { -fx-background-color: transparent; }
+.drive-rename-dialog .drive-rename-body { -fx-spacing: 5; -fx-padding: 0; -fx-background-color: transparent; }
+.drive-rename-dialog .drive-rename-title { -fx-text-fill: #e8edf4; -fx-font-size: 16px; -fx-font-weight: 600; }
+.drive-rename-dialog .drive-dialog-titlebar { -fx-min-height: 30; -fx-pref-height: 30; -fx-padding: 0 0 5 0; -fx-background-color: transparent; -fx-cursor: move; }
+.drive-rename-dialog .drive-dialog-close { -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #8d99a8; -fx-font-size: 19px; -fx-cursor: hand; }
+.drive-rename-dialog .drive-dialog-close:hover { -fx-background-color: #293442; -fx-background-radius: 5; -fx-text-fill: #e8edf4; }
+.drive-rename-dialog .drive-rename-item { -fx-text-fill: #8996a8; -fx-font-size: 12px; -fx-padding: 0 0 10 28; }
+.drive-rename-dialog .drive-rename-prompt { -fx-text-fill: #c7d0dc; -fx-font-size: 12px; }
+.drive-rename-dialog .drive-rename-field { -fx-pref-height: 38; -fx-background-color: #1d242d; -fx-background-insets: 0; -fx-background-radius: 6; -fx-border-color: #344252; -fx-border-radius: 6; -fx-padding: 8 11; -fx-text-fill: #e5e7eb; -fx-prompt-text-fill: #8996a8; }
+.drive-rename-dialog .drive-rename-field:focused { -fx-border-color: #4b91ff; }
+.drive-rename-dialog .drive-menu-glyph { -fx-min-width: 18; -fx-pref-width: 18; -fx-max-width: 18; -fx-min-height: 18; -fx-pref-height: 18; -fx-max-height: 18; -fx-stroke: #8bbaff; -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.drive-rename-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 15; -fx-background-radius: 6; -fx-border-radius: 6; }
+.drive-rename-dialog .drive-dialog-primary { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
+.drive-rename-dialog .drive-dialog-primary:hover { -fx-background-color: #4b91ff; }
+.drive-delete-dialog { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #35404d; -fx-border-width: 1; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 14; }
+.drive-delete-dialog > .header-panel { -fx-background-color: transparent; -fx-padding: 4 4 8 4; }
+.drive-delete-dialog > .header-panel > .label { -fx-text-fill: #e8edf4; -fx-font-size: 16px; -fx-font-weight: 600; }
+.drive-delete-dialog > .content.label { -fx-background-color: transparent; -fx-text-fill: #aab5c3; -fx-font-size: 12px; -fx-padding: 0 4 8 4; }
+.drive-delete-dialog .drive-delete-glyph { -fx-min-width: 22; -fx-pref-width: 22; -fx-max-width: 22; -fx-min-height: 22; -fx-pref-height: 22; -fx-max-height: 22; -fx-fill: transparent; -fx-stroke: #f08a8a; -fx-stroke-width: 1.8; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.drive-delete-dialog > *.button-bar { -fx-background-color: transparent; -fx-padding: 12 0 0 0; }
+.drive-delete-dialog > *.button-bar > *.container { -fx-background-color: transparent; }
+.drive-delete-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 15; -fx-background-radius: 6; -fx-border-radius: 6; }
+.drive-delete-dialog .drive-dialog-danger { -fx-background-color: #a83e48; -fx-border-color: transparent; -fx-text-fill: white; }
+.drive-delete-dialog .drive-dialog-danger:hover { -fx-background-color: #c34a55; }
