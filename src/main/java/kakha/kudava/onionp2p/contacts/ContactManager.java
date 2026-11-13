@@ -4,6 +4,7 @@ import kakha.kudava.onionp2p.account.AccountStore;
 import kakha.kudava.onionp2p.messaging.MessageStore;
 import kakha.kudava.onionp2p.tor.OnionServer;
 import kakha.kudava.onionp2p.tor.TorControl;
+import kakha.kudava.onionp2p.drive.SharedDriveStore;
 
 import java.net.*;
 import java.io.IOException;
@@ -19,9 +20,11 @@ public final class ContactManager implements AutoCloseable {
     private final OnionServer tor;
     private final ContactStore store;
     private final MessageStore messageStore;
+    private final SharedDriveStore sharedDriveStore;
     private final String localUsername;
     private final Consumer<Event> events;
     private volatile Consumer<String> presenceListener = ignored -> {};
+    private volatile Consumer<String> driveShareListener = ignored -> {};
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
@@ -35,6 +38,7 @@ public final class ContactManager implements AutoCloseable {
         this.directory = directory; this.tor = tor; this.events = events;
         store = new ContactStore(directory);
         messageStore = new MessageStore(directory);
+        sharedDriveStore = new SharedDriveStore(directory);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
     }
@@ -42,6 +46,23 @@ public final class ContactManager implements AutoCloseable {
     public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
     public void setPresenceListener(Consumer<String> listener) {
         presenceListener = listener == null ? ignored -> {} : listener;
+    }
+    public void setDriveShareListener(Consumer<String> listener) {
+        driveShareListener = listener == null ? ignored -> {} : listener;
+    }
+    private void signalDriveShare(String link) {
+        try { driveShareListener.accept(link); }
+        catch (RuntimeException e) { System.err.println("Drive-share update failed: " + safeMessage(e)); }
+    }
+    public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
+
+    public void shareDriveFile(String link, Path file, java.util.function.LongConsumer progress,
+                               java.util.function.Consumer<String> status) throws Exception {
+        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+            ContactMessaging.sendDriveShare(session.socket, entry.material, sharedDriveStore, canonical, file,
+                    session.firstMessage, progress, () -> false);
+            return null;
+        });
     }
 
     private void signalContactOnline(String link) {
@@ -275,9 +296,10 @@ public final class ContactManager implements AutoCloseable {
                         socket.setSoTimeout(20000);
                         int protocol = new java.io.DataInputStream(socket.getInputStream()).readInt();
                         if (protocol == ContactHandshake.MAGIC) ContactHandshake.server(socket, entry.material, protocol, () -> save(entry));
-                        else if (protocol == ContactMessaging.MAGIC || protocol == ContactMessaging.LEGACY_MAGIC)
-                            ContactMessaging.receive(socket, entry.material, messageStore, entry.link,
-                                    protocol == ContactMessaging.MAGIC, () -> signalContactOnline(entry.link));
+                        else if (protocol == ContactMessaging.MAGIC || protocol == ContactMessaging.PREVIOUS_MAGIC
+                                || protocol == ContactMessaging.LEGACY_MAGIC)
+                            ContactMessaging.receive(socket, entry.material, messageStore, sharedDriveStore, entry.link,
+                                    protocol != ContactMessaging.LEGACY_MAGIC, () -> signalContactOnline(entry.link), () -> signalDriveShare(entry.link));
                         else throw new java.io.IOException("Unsupported contact protocol.");
                     }
                     catch (Exception e) {

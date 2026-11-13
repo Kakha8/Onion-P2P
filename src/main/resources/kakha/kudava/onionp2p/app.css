@@ -543,6 +543,29 @@
 .drive-rename-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 15; -fx-background-radius: 6; -fx-border-radius: 6; }
 .drive-rename-dialog .drive-dialog-primary { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
 .drive-rename-dialog .drive-dialog-primary:hover { -fx-background-color: #4b91ff; }
+.drive-share-dialog { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #35404d; -fx-border-width: 1; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 16; }
+.drive-share-dialog > *.button-bar { -fx-background-color: transparent; -fx-padding: 12 0 0 0; }
+.drive-share-dialog > *.button-bar > *.container { -fx-background-color: transparent; }
+.drive-share-dialog .drive-share-body { -fx-spacing: 10; -fx-padding: 0; -fx-background-color: transparent; }
+.drive-share-dialog .drive-rename-title { -fx-text-fill: #e8edf4; -fx-font-size: 16px; -fx-font-weight: 600; }
+.drive-share-dialog .drive-dialog-titlebar { -fx-min-height: 30; -fx-pref-height: 30; -fx-padding: 0 0 5 0; -fx-background-color: transparent; -fx-cursor: move; }
+.drive-share-dialog .drive-dialog-close { -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #8d99a8; -fx-font-size: 19px; -fx-cursor: hand; }
+.drive-share-dialog .drive-dialog-close:hover { -fx-background-color: #293442; -fx-background-radius: 5; -fx-text-fill: #e8edf4; }
+.drive-share-dialog .drive-menu-glyph { -fx-min-width: 18; -fx-pref-width: 18; -fx-max-width: 18; -fx-min-height: 18; -fx-pref-height: 18; -fx-max-height: 18; -fx-stroke: #8bbaff; -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.drive-share-dialog .drive-share-file-name { -fx-text-fill: #aab5c3; -fx-font-size: 12px; -fx-padding: 0 0 2 27; }
+.drive-share-dialog .drive-rename-prompt { -fx-text-fill: #c7d0dc; -fx-font-size: 12px; }
+.drive-share-dialog .drive-rename-field { -fx-pref-height: 38; -fx-background-color: #1d242d; -fx-background-insets: 0; -fx-background-radius: 6; -fx-border-color: #344252; -fx-border-radius: 6; -fx-padding: 8 11; -fx-text-fill: #e5e7eb; -fx-prompt-text-fill: #8996a8; }
+.drive-share-dialog .drive-rename-field:focused { -fx-border-color: #4b91ff; }
+.drive-share-dialog .drive-share-list { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #2b3541; -fx-border-radius: 7; -fx-padding: 4; }
+.drive-share-dialog .drive-share-list .list-cell { -fx-background-color: transparent; -fx-padding: 7 9; -fx-text-fill: #e5e7eb; }
+.drive-share-dialog .drive-share-list .list-cell:filled:hover { -fx-background-color: #202832; -fx-background-radius: 6; }
+.drive-share-dialog .drive-share-list .list-cell:filled:selected { -fx-background-color: #263443; -fx-background-radius: 6; }
+.drive-share-dialog .drive-share-avatar { -fx-min-width: 34; -fx-pref-width: 34; -fx-max-width: 34; -fx-min-height: 34; -fx-pref-height: 34; -fx-max-height: 34; -fx-alignment: center; -fx-background-color: #26384d; -fx-background-radius: 50%; -fx-text-fill: #9dc5ff; -fx-font-weight: 700; }
+.drive-share-dialog .drive-share-username { -fx-text-fill: #e8edf4; -fx-font-size: 13px; -fx-font-weight: 600; }
+.drive-share-dialog .drive-share-address { -fx-text-fill: #8290a1; -fx-font-size: 10px; }
+.drive-share-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 15; -fx-background-radius: 6; -fx-border-radius: 6; }
+.drive-share-dialog .drive-dialog-primary { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
+.drive-share-dialog .drive-dialog-primary:hover { -fx-background-color: #4b91ff; }
 .drive-delete-dialog { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #35404d; -fx-border-width: 1; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 14; }
 .drive-delete-dialog > .header-panel { -fx-background-color: transparent; -fx-padding: 4 4 8 4; }
 .drive-delete-dialog > .header-panel > .label { -fx-text-fill: #e8edf4; -fx-font-size: 16px; -fx-font-weight: 600; }

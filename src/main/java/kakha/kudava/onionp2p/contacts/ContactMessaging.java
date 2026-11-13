@@ -2,6 +2,7 @@ package kakha.kudava.onionp2p.contacts;
 
 import kakha.kudava.onionp2p.account.AppData;
 import kakha.kudava.onionp2p.messaging.MessageStore;
+import kakha.kudava.onionp2p.drive.SharedDriveStore;
 
 import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator;
@@ -31,7 +32,8 @@ import java.util.function.BooleanSupplier;
 
 /** One-message, authenticated end-to-end encrypted transport over a contact's Tor service. */
 public final class ContactMessaging {
-    static final int MAGIC = 0x4f503035; // OP05 adds encrypted file captions
+    static final int MAGIC = 0x4f503036; // OP06 adds dedicated Drive-share frames
+    static final int PREVIOUS_MAGIC = 0x4f503035; // OP05 adds encrypted file captions
     static final int LEGACY_MAGIC = 0x4f503034;
     public static final int MAX_BODY_BYTES = 4096;
     public static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
@@ -122,6 +124,19 @@ public final class ContactMessaging {
     static MessageStore.Message sendFile(Socket socket, ContactRendezvous.Material material, MessageStore store,
                                          String link, Path file, String caption, boolean newConnection,
                                          LongConsumer progress, BooleanSupplier cancelled) throws Exception {
+        return sendFileInternal(socket, material, store, null, link, file, caption, newConnection, progress, cancelled, false);
+    }
+
+    static void sendDriveShare(Socket socket, ContactRendezvous.Material material, SharedDriveStore sharedStore,
+                               String link, Path file, boolean newConnection, LongConsumer progress,
+                               BooleanSupplier cancelled) throws Exception {
+        sendFileInternal(socket, material, null, sharedStore, link, file, "", newConnection, progress, cancelled, true);
+    }
+
+    private static MessageStore.Message sendFileInternal(Socket socket, ContactRendezvous.Material material,
+                                         MessageStore store, SharedDriveStore sharedStore,
+                                         String link, Path file, String caption, boolean newConnection,
+                                         LongConsumer progress, BooleanSupplier cancelled, boolean driveShare) throws Exception {
         long fileSize = Files.size(file);
         if (fileSize < 0 || fileSize > MAX_FILE_BYTES)
             throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
@@ -135,7 +150,7 @@ public final class ContactMessaging {
         long timestamp = System.currentTimeMillis();
         byte[] idBytes = uuidBytes(id);
         byte[] nonce = new byte[12]; RANDOM.nextBytes(nonce);
-        byte type = 1;
+        byte type = (byte) (driveShare ? 4 : 1);
         byte[] aad = aad(idBytes, timestamp, type, material.localPublic(), material.remotePublic());
         byte[] messageKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "message");
         var cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -184,6 +199,7 @@ public final class ContactMessaging {
         socket.setSoTimeout(10 * 60 * 1000);
         checkCancelled(cancelled);
         awaitReceipt(input, material, nonce, aad);
+        if (driveShare) return null;
         store.saveFile(link, id, true, safeCaption, fileName, file.toAbsolutePath().toString(), fileSize, timestamp);
         return new MessageStore.Message(id, link, true, safeCaption, fileName, file.toAbsolutePath().toString(), fileSize, timestamp);
     }
@@ -192,17 +208,17 @@ public final class ContactMessaging {
         if (cancelled.getAsBoolean()) throw new java.util.concurrent.CancellationException("File transfer cancelled.");
     }
 
-    static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, String link,
-                        boolean captionFrames, Runnable onlineSignal) throws Exception {
+    static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
+                        boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal) throws Exception {
         socket.setSoTimeout(0);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
-        while (true) receiveOne(input, output, material, store, link, captionFrames, onlineSignal);
+        while (true) receiveOne(input, output, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal);
     }
 
     private static void receiveOne(DataInputStream input, DataOutputStream output,
-                                   ContactRendezvous.Material material, MessageStore store, String link,
-                                   boolean captionFrames, Runnable onlineSignal) throws Exception {
+                                   ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
+                                   boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal) throws Exception {
         byte[] idBytes = new byte[16]; input.readFully(idBytes);
         String id = uuidString(idBytes);
         long timestamp = input.readLong();
@@ -212,12 +228,12 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 ? MAX_FILE_BYTES + 4_400 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 4 ? MAX_FILE_BYTES + 4_400 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type != 0 && type != 1 && type != 2 && type != 3) throw new IOException("Unsupported message type.");
+        if (type != 0 && type != 1 && type != 2 && type != 3 && type != 4) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
-        if (type == 1) {
-            receiveFile(input, output, material, store, link, id, timestamp, nonce, aad, length, captionFrames);
+        if (type == 1 || type == 4) {
+            receiveFile(input, output, material, store, sharedStore, link, id, timestamp, nonce, aad, length, captionFrames, type == 4, driveShareSignal);
             return;
         }
         if (type == 2) {
@@ -271,16 +287,17 @@ public final class ContactMessaging {
     }
 
     private static void receiveFile(DataInputStream input, DataOutputStream output, ContactRendezvous.Material material,
-                                    MessageStore store, String link, String id, long timestamp, byte[] nonce,
-                                    byte[] aad, int ciphertextLength, boolean captionFrames) throws Exception {
+                                    MessageStore store, SharedDriveStore sharedStore, String link, String id, long timestamp, byte[] nonce,
+                                    byte[] aad, int ciphertextLength, boolean captionFrames, boolean driveShare,
+                                    Runnable driveShareSignal) throws Exception {
         byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
         var cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(messageKey, "AES"), new GCMParameterSpec(128, nonce));
         cipher.updateAAD(aad);
         Arrays.fill(messageKey, (byte) 0);
-        Path downloads = AppData.directory().resolve("downloads");
-        Files.createDirectories(downloads);
-        Path temporary = Files.createTempFile(downloads, ".onion-incoming-", ".part");
+        Path destinationDirectory = driveShare ? AppData.directory().resolve("drive").resolve("shared") : AppData.directory().resolve("downloads");
+        Files.createDirectories(destinationDirectory);
+        Path temporary = Files.createTempFile(destinationDirectory, ".onion-incoming-", ".part");
         String fileName = null;
         String caption = "";
         long expectedSize = -1;
@@ -315,12 +332,14 @@ public final class ContactMessaging {
                     } finally { Arrays.fill(buffer, (byte) 0); }
                 }
             }
-            Path destination = uniquePath(downloads, fileName);
+            Path destination = uniquePath(destinationDirectory, fileName);
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
             try {
-                store.saveFile(link, id, false, caption, fileName, destination.toAbsolutePath().toString(), expectedSize, timestamp);
+                if (driveShare) sharedStore.save(id, link, fileName, destination, expectedSize, timestamp);
+                else store.saveFile(link, id, false, caption, fileName, destination.toAbsolutePath().toString(), expectedSize, timestamp);
             } catch (Exception e) { Files.deleteIfExists(destination); throw e; }
             awaitReceiptSend(output, material, nonce, aad);
+            if (driveShare && driveShareSignal != null) driveShareSignal.run();
         } finally { Files.deleteIfExists(temporary); }
     }
 

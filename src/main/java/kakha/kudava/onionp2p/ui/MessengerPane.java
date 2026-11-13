@@ -5,6 +5,7 @@ import kakha.kudava.onionp2p.contacts.ContactManager;
 import kakha.kudava.onionp2p.contacts.ContactMessaging;
 import kakha.kudava.onionp2p.contacts.ContactStore;
 import kakha.kudava.onionp2p.messaging.MessageStore;
+import kakha.kudava.onionp2p.drive.SharedDriveStore;
 
 import javafx.animation.AnimationTimer;
 import javafx.animation.KeyFrame;
@@ -207,6 +208,7 @@ final class MessengerPane extends BorderPane {
     private long voicePlaybackRequest;
     private boolean activeVoiceTransfer;
     private boolean sending;
+    private Runnable refreshSharedDrive;
 
     private boolean loaded;
 
@@ -216,6 +218,9 @@ final class MessengerPane extends BorderPane {
         this.onAddContact = onAddContact;
         activePane = this;
         manager.setPresenceListener(this::contactCameOnline);
+        manager.setDriveShareListener(link -> Platform.runLater(() -> {
+            if (refreshSharedDrive != null) refreshSharedDrive.run();
+        }));
 
         contactList.setPlaceholder(new Label("No saved contacts yet."));
         contactList.setItems(filteredContacts);
@@ -524,6 +529,7 @@ final class MessengerPane extends BorderPane {
 
         Runnable showMyFiles = () -> renderDrivePage(drivePageContent, true);
         Runnable showSharedWithMe = () -> renderDrivePage(drivePageContent, false);
+        refreshSharedDrive = showSharedWithMe;
         myFilesNavigation.setOnAction(event -> {
             myFilesNavigation.getStyleClass().add("drive-nav-selected");
             sharedWithMeNavigation.getStyleClass().remove("drive-nav-selected");
@@ -2085,7 +2091,39 @@ final class MessengerPane extends BorderPane {
             }
         } else {
             content.getProperties().remove("drivePagination");
-            pageBody.getChildren().add(emptyDriveState(false));
+            try {
+                List<SharedDriveStore.SharedFile> shared = manager.sharedDriveFiles().stream()
+                        .filter(file -> Files.isRegularFile(Path.of(file.path())))
+                        .sorted(switch (driveSortColumn) {
+                            case NAME -> Comparator.comparing(SharedDriveStore.SharedFile::name, String.CASE_INSENSITIVE_ORDER);
+                            case TYPE -> Comparator.comparing(file -> fileTypeLabel(Path.of(file.name())), String.CASE_INSENSITIVE_ORDER);
+                            case SIZE -> Comparator.comparingLong(SharedDriveStore.SharedFile::size);
+                        }).toList();
+                if (!driveSortAscending) {
+                    var reversed = new ArrayList<>(shared);
+                    java.util.Collections.reverse(reversed);
+                    shared = List.copyOf(reversed);
+                }
+                if (shared.isEmpty()) pageBody.getChildren().add(emptyDriveState(false));
+                else {
+                    int pageCount = (shared.size() + drivePageSize - 1) / drivePageSize;
+                    drivePageIndex = Math.max(0, Math.min(drivePageIndex, pageCount - 1));
+                    int firstEntry = drivePageIndex * drivePageSize;
+                    int endEntry = Math.min(shared.size(), firstEntry + drivePageSize);
+                    pageBody.getChildren().add(sharedDriveTableHeader());
+                    Map<String, String> names = new HashMap<>();
+                    for (ContactStore.Contact contact : allContacts) names.put(contact.link(), contact.username());
+                    for (SharedDriveStore.SharedFile file : shared.subList(firstEntry, endEntry))
+                        pageBody.getChildren().add(sharedDriveEntryRow(file, names.getOrDefault(file.contactLink(), "Contact")));
+                    content.getProperties().put("drivePagination", drivePagination(content, AppData.directory().resolve("drive"),
+                            shared.size(), firstEntry, endEntry, pageCount));
+                }
+            } catch (Exception error) {
+                feedback.setText("Could not read Shared with me: " + error.getMessage());
+                feedback.setManaged(true);
+                feedback.setVisible(true);
+                pageBody.getChildren().add(emptyDriveState(false));
+            }
         }
         ScrollPane bodyViewport = new ScrollPane(pageBody);
         bodyViewport.setFitToWidth(true);
@@ -2194,6 +2232,67 @@ final class MessengerPane extends BorderPane {
         javafx.scene.layout.GridPane.setValignment(size, javafx.geometry.VPos.CENTER);
         header.getStyleClass().add("drive-table-header");
         return header;
+    }
+
+    private GridPane sharedDriveTableHeader() {
+        GridPane header = new GridPane();
+        header.getColumnConstraints().setAll(sharedDriveColumns());
+        for (int i = 0; i < 4; i++) {
+            Label label = new Label(List.of("Name", "Type", "Size", "Shared by").get(i));
+            label.getStyleClass().add("drive-table-heading");
+            label.setMaxWidth(Double.MAX_VALUE);
+            label.setAlignment(i == 0 ? Pos.CENTER_LEFT : Pos.CENTER);
+            header.add(label, i, 0);
+        }
+        header.getStyleClass().add("drive-table-header");
+        return header;
+    }
+
+    private List<javafx.scene.layout.ColumnConstraints> sharedDriveColumns() {
+        List<javafx.scene.layout.ColumnConstraints> columns = new ArrayList<>();
+        for (double width : new double[]{48, 17, 17, 18}) {
+            var column = new javafx.scene.layout.ColumnConstraints();
+            column.setPercentWidth(width);
+            column.setHgrow(Priority.SOMETIMES);
+            columns.add(column);
+        }
+        return columns;
+    }
+
+    private HBox sharedDriveEntryRow(SharedDriveStore.SharedFile file, String sender) {
+        Path path = Path.of(file.path());
+        SVGPath glyph = fileGlyph();
+        StackPane icon = new StackPane(glyph);
+        icon.getStyleClass().add("drive-entry-icon");
+        Label name = new Label(file.name());
+        name.getStyleClass().add("drive-entry-name");
+        name.setMaxWidth(Double.MAX_VALUE);
+        name.setTextOverrun(OverrunStyle.ELLIPSIS);
+        HBox nameCell = new HBox(12, icon, name);
+        nameCell.setAlignment(Pos.CENTER_LEFT);
+        Label type = new Label(fileTypeLabel(path));
+        Label size = new Label(formatBytes(file.size()));
+        Label sharedBy = new Label(sender);
+        for (Label label : List.of(type, size, sharedBy)) {
+            label.getStyleClass().add("drive-table-cell");
+            label.setMaxWidth(Double.MAX_VALUE);
+            label.setTextOverrun(OverrunStyle.ELLIPSIS);
+            label.setAlignment(Pos.CENTER);
+        }
+        GridPane cells = new GridPane();
+        cells.getColumnConstraints().setAll(sharedDriveColumns());
+        cells.add(nameCell, 0, 0); cells.add(type, 1, 0); cells.add(size, 2, 0); cells.add(sharedBy, 3, 0);
+        HBox row = new HBox(cells);
+        HBox.setHgrow(cells, Priority.ALWAYS);
+        row.getStyleClass().add("drive-entry-row");
+        row.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2 && Files.isRegularFile(path)) {
+                try { java.awt.Desktop.getDesktop().open(path.toFile()); }
+                catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
+            }
+        });
+        Tooltip.install(row, new Tooltip("Received from " + sender + " · double-click to open"));
+        return row;
     }
 
     private List<javafx.scene.layout.ColumnConstraints> driveColumns() {
@@ -2555,34 +2654,99 @@ final class MessengerPane extends BorderPane {
         }
         Dialog<ContactStore.Contact> dialog = new Dialog<>();
         dialog.setTitle("Share file");
-        dialog.setHeaderText("Choose a contact for “" + entry.getFileName() + "”");
         dialog.initOwner(getScene().getWindow());
-        ButtonType shareButton = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().setAll(shareButton, ButtonType.CANCEL);
-        ComboBox<ContactStore.Contact> contacts = new ComboBox<>(FXCollections.observableArrayList(allContacts));
-        contacts.setMaxWidth(Double.MAX_VALUE);
-        contacts.setCellFactory(list -> contactChoiceCell());
-        contacts.setButtonCell(contactChoiceCell());
-        if (selected != null) contacts.setValue(selected);
-        else contacts.getSelectionModel().selectFirst();
-        VBox content = new VBox(8, new Label("Send this file in an encrypted chat message:"), contacts);
-        content.setPadding(new Insets(8, 0, 0, 0));
-        dialog.getDialogPane().setContent(content);
-        dialog.setResultConverter(button -> button == shareButton ? contacts.getValue() : null);
-        dialog.showAndWait().ifPresent(contact -> {
-            if (showChatsAction != null) showChatsAction.run();
-            contactList.getSelectionModel().select(contact);
-            showAttachmentComposer(contact, List.of(entry));
+        dialog.initStyle(StageStyle.TRANSPARENT);
+        DialogPane pane = dialog.getDialogPane();
+        pane.getStyleClass().add("drive-share-dialog");
+        pane.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
+
+        HBox titleBar = driveDialogTitleBar(dialog, "Share file", "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", false);
+        Label fileName = new Label(entry.getFileName().toString());
+        fileName.getStyleClass().add("drive-share-file-name");
+        fileName.setMaxWidth(Double.MAX_VALUE);
+        fileName.setTextOverrun(OverrunStyle.ELLIPSIS);
+        Label prompt = new Label("Choose a contact to send this file to");
+        prompt.getStyleClass().add("drive-rename-prompt");
+        TextField search = new TextField();
+        search.setPromptText("Search contacts");
+        search.getStyleClass().add("drive-rename-field");
+
+        FilteredList<ContactStore.Contact> visibleContacts = new FilteredList<>(FXCollections.observableArrayList(allContacts), contact -> true);
+        search.textProperty().addListener((observable, before, after) -> {
+            String query = after == null ? "" : after.strip().toLowerCase(Locale.ROOT);
+            visibleContacts.setPredicate(contact -> query.isEmpty()
+                    || contact.username().toLowerCase(Locale.ROOT).contains(query));
+        });
+        ListView<ContactStore.Contact> contactChoices = new ListView<>(visibleContacts);
+        contactChoices.getStyleClass().add("drive-share-list");
+        contactChoices.setPrefHeight(Math.min(300, Math.max(110, allContacts.size() * 56)));
+        contactChoices.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(ContactStore.Contact contact, boolean empty) {
+                super.updateItem(contact, empty);
+                if (empty || contact == null) {
+                    setText(null);
+                    setGraphic(null);
+                    return;
+                }
+                Label avatar = new Label(profileInitial(contact.username()));
+                avatar.getStyleClass().add("drive-share-avatar");
+                Label username = new Label(contact.username());
+                username.getStyleClass().add("drive-share-username");
+                Label address = new Label(shortAddress(contact.onion()));
+                address.getStyleClass().add("drive-share-address");
+                VBox details = new VBox(2, username, address);
+                HBox row = new HBox(10, avatar, details);
+                row.setAlignment(Pos.CENTER_LEFT);
+                setText(null);
+                setGraphic(row);
+            }
+        });
+        if (selected != null && allContacts.contains(selected)) contactChoices.getSelectionModel().select(selected);
+        ButtonType continueType = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
+        pane.getButtonTypes().setAll(ButtonType.CANCEL, continueType);
+        Button continueButton = (Button) pane.lookupButton(continueType);
+        continueButton.getStyleClass().add("drive-dialog-primary");
+        continueButton.setDisable(contactChoices.getSelectionModel().getSelectedItem() == null);
+        contactChoices.getSelectionModel().selectedItemProperty().addListener((observable, before, after) ->
+                continueButton.setDisable(after == null));
+        VBox content = new VBox(10, titleBar, fileName, prompt, search, contactChoices);
+        content.getStyleClass().add("drive-share-body");
+        pane.setContent(content);
+        pane.setPrefWidth(430);
+        dialog.setResultConverter(button -> button == continueType ? contactChoices.getSelectionModel().getSelectedItem() : null);
+        dialog.setOnShown(event -> {
+            pane.getScene().setFill(javafx.scene.paint.Color.TRANSPARENT);
+            if (contactChoices.getSelectionModel().getSelectedItem() == null) contactChoices.getSelectionModel().selectFirst();
+            search.requestFocus();
+        });
+        dialog.showAndWait().ifPresent(contact -> shareDriveFileDirectly(contact, entry));
+    }
+
+    private void shareDriveFileDirectly(ContactStore.Contact contact, Path file) {
+        status.setText("Sharing " + file.getFileName() + " directly with " + contact.username() + "…");
+        driveWorkers.execute(() -> {
+            try {
+                manager.shareDriveFile(contact.link(), file, ignored -> {}, ignored -> {});
+                Platform.runLater(() -> {
+                    status.setText("Shared " + file.getFileName() + " with " + contact.username() + ".");
+                    showDriveAlert(Alert.AlertType.INFORMATION, "File shared", "The file was delivered directly to "
+                            + contact.username() + " and added to their Shared with me section.");
+                });
+            } catch (Exception error) {
+                Platform.runLater(() -> {
+                    status.setText("Could not share " + file.getFileName() + ".");
+                    showDriveAlert(Alert.AlertType.ERROR, "Could not share file",
+                            "The file could not be delivered to " + contact.username() + ". Make sure they are online and try again.\n\n"
+                                    + (error.getMessage() == null ? "Transfer failed." : error.getMessage()));
+                });
+            }
         });
     }
 
-    private ListCell<ContactStore.Contact> contactChoiceCell() {
-        return new ListCell<>() {
-            @Override protected void updateItem(ContactStore.Contact contact, boolean empty) {
-                super.updateItem(contact, empty);
-                setText(empty || contact == null ? null : contact.username());
-            }
-        };
+    private static String shortAddress(String address) {
+        if (address == null || address.isBlank()) return "";
+        String value = address.replaceFirst("^https?://", "").replaceAll("/+$", "");
+        return value.length() > 30 ? value.substring(0, 27) + "…" : value;
     }
 
     private void showDriveProperties(Path entry) {
