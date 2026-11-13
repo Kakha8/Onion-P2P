@@ -130,7 +130,48 @@ public final class ContactMessaging {
     static void sendDriveShare(Socket socket, ContactRendezvous.Material material, SharedDriveStore sharedStore,
                                String link, Path file, boolean newConnection, LongConsumer progress,
                                BooleanSupplier cancelled) throws Exception {
-        sendFileInternal(socket, material, null, sharedStore, link, file, "", newConnection, progress, cancelled, true);
+        long size = Files.size(file);
+        if (size < 0 || size > MAX_FILE_BYTES) throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
+        String name = safeFileName(file.getFileName().toString());
+        String shareId = UUID.randomUUID().toString();
+        long timestamp = System.currentTimeMillis();
+        byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
+        byte[] offer = ByteBuffer.allocate(16 + 2 + nameBytes.length + 8)
+                .put(uuidBytes(shareId)).putShort((short) nameBytes.length).put(nameBytes).putLong(size).array();
+        sharedStore.publish(shareId, link, name, file, size, timestamp);
+        try { sendControl(socket, material, (byte) 4, offer, newConnection); }
+        catch (Exception error) { sharedStore.unpublish(shareId); throw error; }
+        finally { Arrays.fill(nameBytes, (byte) 0); Arrays.fill(offer, (byte) 0); }
+    }
+
+    static void downloadDriveShare(Socket socket, ContactRendezvous.Material material, SharedDriveStore sharedStore,
+                                   String shareId, String link, boolean newConnection, Runnable updated) throws Exception {
+        sendControl(socket, material, (byte) 5, uuidBytes(shareId), newConnection);
+        socket.setSoTimeout(10 * 60 * 1000);
+        var input = new DataInputStream(socket.getInputStream());
+        var output = new DataOutputStream(socket.getOutputStream());
+        byte[] idBytes = new byte[16]; input.readFully(idBytes);
+        String messageId = uuidString(idBytes);
+        long timestamp = input.readLong();
+        byte[] nonce = new byte[12]; input.readFully(nonce);
+        byte type = input.readByte(); int length = input.readInt();
+        if (type == 7) {
+            if (length < 16 || length > 1024) throw new IOException("Invalid unavailable response.");
+            byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
+            byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] plaintext;
+            try { plaintext = crypt(Cipher.DECRYPT_MODE, messageKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            String reason;
+            try { reason = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(plaintext)).toString(); }
+            finally { Arrays.fill(plaintext, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad);
+            throw new IOException(reason.isBlank() ? "This shared file is no longer available." : reason);
+        }
+        if (type != 6 || length < 16 || length > MAX_FILE_BYTES + 4_400) throw new IOException("The sender did not provide the shared file.");
+        byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
+        receiveFile(input, output, material, null, sharedStore, link, messageId, timestamp, nonce, aad, length, true, true, shareId, updated);
     }
 
     private static MessageStore.Message sendFileInternal(Socket socket, ContactRendezvous.Material material,
@@ -150,7 +191,7 @@ public final class ContactMessaging {
         long timestamp = System.currentTimeMillis();
         byte[] idBytes = uuidBytes(id);
         byte[] nonce = new byte[12]; RANDOM.nextBytes(nonce);
-        byte type = (byte) (driveShare ? 4 : 1);
+        byte type = (byte) (driveShare ? 6 : 1);
         byte[] aad = aad(idBytes, timestamp, type, material.localPublic(), material.remotePublic());
         byte[] messageKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "message");
         var cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -228,12 +269,55 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 4 ? MAX_FILE_BYTES + 4_400 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 4 ? 512 : type == 5 ? 32 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type != 0 && type != 1 && type != 2 && type != 3 && type != 4) throw new IOException("Unsupported message type.");
+        if (type != 0 && type != 1 && type != 2 && type != 3 && type != 4 && type != 5 && type != 6 && type != 7) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
-        if (type == 1 || type == 4) {
-            receiveFile(input, output, material, store, sharedStore, link, id, timestamp, nonce, aad, length, captionFrames, type == 4, driveShareSignal);
+        if (type == 1) {
+            receiveFile(input, output, material, store, sharedStore, link, id, timestamp, nonce, aad, length, captionFrames, false, null, driveShareSignal);
+            return;
+        }
+        if (type == 4) {
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] payload;
+            try { payload = crypt(Cipher.DECRYPT_MODE, messageKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            try {
+                ByteBuffer metadata = ByteBuffer.wrap(payload);
+                if (metadata.remaining() < 26) throw new IOException("Invalid Drive share offer.");
+                byte[] shareIdBytes = new byte[16]; metadata.get(shareIdBytes);
+                int nameLength = Short.toUnsignedInt(metadata.getShort());
+                if (nameLength < 1 || nameLength > 255 || metadata.remaining() != nameLength + 8) throw new IOException("Invalid Drive share offer.");
+                byte[] nameBytes = new byte[nameLength]; metadata.get(nameBytes);
+                String name;
+                try { name = safeFileName(StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(nameBytes)).toString()); }
+                catch (java.nio.charset.CharacterCodingException e) { throw new IOException("Invalid shared filename.", e); }
+                finally { Arrays.fill(nameBytes, (byte) 0); }
+                long size = metadata.getLong();
+                if (size < 0 || size > MAX_FILE_BYTES) throw new IOException("Shared file exceeds the 1 GiB limit.");
+                sharedStore.recordOffer(uuidString(shareIdBytes), link, name, size, timestamp);
+            } finally { Arrays.fill(payload, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad);
+            if (driveShareSignal != null) driveShareSignal.run();
+            return;
+        }
+        if (type == 5) {
+            if (length != 32) throw new IOException("Invalid shared-file download request.");
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] payload;
+            try { payload = crypt(Cipher.DECRYPT_MODE, messageKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            if (payload.length != 16) { Arrays.fill(payload, (byte) 0); throw new IOException("Invalid shared-file ID."); }
+            String shareId = uuidString(payload); Arrays.fill(payload, (byte) 0);
+            awaitReceiptSend(output, material, nonce, aad);
+            SharedDriveStore.SharedFile offer = sharedStore.findPublished(shareId, link);
+            if (offer == null || !Files.isRegularFile(Path.of(offer.path()))) {
+                sendControl(output, input, material, (byte) 7, "The owner no longer has this shared file.".getBytes(StandardCharsets.UTF_8));
+            } else {
+                sendFileOverStreams(output, input, material, link, Path.of(offer.path()));
+            }
             return;
         }
         if (type == 2) {
@@ -289,7 +373,7 @@ public final class ContactMessaging {
     private static void receiveFile(DataInputStream input, DataOutputStream output, ContactRendezvous.Material material,
                                     MessageStore store, SharedDriveStore sharedStore, String link, String id, long timestamp, byte[] nonce,
                                     byte[] aad, int ciphertextLength, boolean captionFrames, boolean driveShare,
-                                    Runnable driveShareSignal) throws Exception {
+                                    String shareId, Runnable driveShareSignal) throws Exception {
         byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
         var cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(messageKey, "AES"), new GCMParameterSpec(128, nonce));
@@ -335,12 +419,72 @@ public final class ContactMessaging {
             Path destination = uniquePath(destinationDirectory, fileName);
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
             try {
-                if (driveShare) sharedStore.save(id, link, fileName, destination, expectedSize, timestamp);
+                if (driveShare && shareId != null) sharedStore.markDownloaded(shareId, destination);
                 else store.saveFile(link, id, false, caption, fileName, destination.toAbsolutePath().toString(), expectedSize, timestamp);
             } catch (Exception e) { Files.deleteIfExists(destination); throw e; }
             awaitReceiptSend(output, material, nonce, aad);
             if (driveShare && driveShareSignal != null) driveShareSignal.run();
         } finally { Files.deleteIfExists(temporary); }
+    }
+
+    private static void sendFileOverStreams(DataOutputStream output, DataInputStream input,
+                                            ContactRendezvous.Material material, String link, Path file) throws Exception {
+        long fileSize = Files.size(file);
+        if (fileSize < 0 || fileSize > MAX_FILE_BYTES) throw new IOException("Shared file exceeds the 1 GiB limit.");
+        String fileName = safeFileName(file.getFileName().toString());
+        byte[] nameBytes = fileName.getBytes(StandardCharsets.UTF_8);
+        byte[] emptyCaption = new byte[0];
+        long timestamp = System.currentTimeMillis(); byte[] idBytes = uuidBytes(UUID.randomUUID().toString());
+        byte[] nonce = new byte[12]; RANDOM.nextBytes(nonce); byte type = 6;
+        byte[] aad = aad(idBytes, timestamp, type, material.localPublic(), material.remotePublic());
+        byte[] messageKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "message");
+        var cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(messageKey, "AES"), new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(aad); Arrays.fill(messageKey, (byte) 0);
+        long encryptedLength = 2L + nameBytes.length + 4 + 8 + fileSize + 16;
+        output.write(idBytes); output.writeLong(timestamp); output.write(nonce); output.writeByte(type); output.writeInt(Math.toIntExact(encryptedLength));
+        byte[] metadata = ByteBuffer.allocate(2 + nameBytes.length + 4 + 8).putShort((short) nameBytes.length)
+                .put(nameBytes).putInt(0).putLong(fileSize).array();
+        byte[] encryptedMetadata = cipher.update(metadata); if (encryptedMetadata != null) output.write(encryptedMetadata);
+        Arrays.fill(metadata, (byte) 0); Arrays.fill(nameBytes, (byte) 0); Arrays.fill(emptyCaption, (byte) 0);
+        byte[] buffer = new byte[CHUNK_BYTES]; long sent = 0;
+        try (InputStream source = Files.newInputStream(file)) {
+            while (sent < fileSize) {
+                int count = source.read(buffer, 0, (int) Math.min(buffer.length, fileSize - sent));
+                if (count < 0) throw new IOException("Shared file changed while downloading.");
+                byte[] encrypted = cipher.update(buffer, 0, count); if (encrypted != null) output.write(encrypted); sent += count;
+            }
+            if (source.read() != -1) throw new IOException("Shared file changed while downloading.");
+        } finally { Arrays.fill(buffer, (byte) 0); }
+        output.write(cipher.doFinal()); output.flush();
+        awaitReceipt(input, material, nonce, aad);
+    }
+
+    private static void sendControl(Socket socket, ContactRendezvous.Material material, byte type, byte[] payload, boolean newConnection) throws Exception {
+        var output = new DataOutputStream(socket.getOutputStream());
+        var input = new DataInputStream(socket.getInputStream());
+        sendControl(output, input, material, type, payload, newConnection);
+    }
+
+    private static void sendControl(DataOutputStream output, DataInputStream input, ContactRendezvous.Material material,
+                                    byte type, byte[] payload) throws Exception {
+        sendControl(output, input, material, type, payload, false);
+    }
+
+    private static void sendControl(DataOutputStream output, DataInputStream input, ContactRendezvous.Material material,
+                                    byte type, byte[] payload, boolean newConnection) throws Exception {
+        String id = UUID.randomUUID().toString(); long timestamp = System.currentTimeMillis();
+        byte[] idBytes = uuidBytes(id); byte[] nonce = new byte[12]; RANDOM.nextBytes(nonce);
+        byte[] aad = aad(idBytes, timestamp, type, material.localPublic(), material.remotePublic());
+        byte[] messageKey = key(material.sharedSecret(), nonce, material.localPublic(), material.remotePublic(), "message");
+        byte[] ciphertext;
+        try { ciphertext = crypt(Cipher.ENCRYPT_MODE, messageKey, nonce, aad, payload); }
+        finally { Arrays.fill(messageKey, (byte) 0); }
+        if (newConnection) output.writeInt(MAGIC);
+        output.write(idBytes); output.writeLong(timestamp); output.write(nonce); output.writeByte(type);
+        output.writeInt(ciphertext.length); output.write(ciphertext); output.flush();
+        awaitReceipt(input, material, nonce, aad);
+        Arrays.fill(ciphertext, (byte) 0);
     }
 
     private static String safeFileName(String name) throws IOException {

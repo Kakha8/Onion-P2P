@@ -65,6 +65,14 @@ public final class ContactManager implements AutoCloseable {
         });
     }
 
+    public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status) throws Exception {
+        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+            ContactMessaging.downloadDriveShare(session.socket, entry.material, sharedDriveStore, shareId, canonical,
+                    session.firstMessage, () -> signalDriveShare(canonical));
+            return null;
+        });
+    }
+
     private void signalContactOnline(String link) {
         try { presenceListener.accept(link); }
         catch (RuntimeException e) { System.err.println("Presence update failed: " + safeMessage(e)); }

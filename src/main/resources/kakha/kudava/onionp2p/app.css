@@ -193,6 +193,10 @@
 .drive-entry-glyph { -fx-fill: transparent; -fx-stroke: #8bbaff; -fx-stroke-width: 1.6; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.82; -fx-scale-y: 0.82; }
 .drive-entry-name { -fx-text-fill: #e5e7eb; -fx-font-size: 13px; }
 .drive-table-cell { -fx-text-fill: #9aa7b8; -fx-font-size: 12px; }
+.drive-row-action { -fx-background-color: transparent; -fx-padding: 3; -fx-min-width: 26; -fx-pref-width: 26; -fx-max-width: 26; -fx-min-height: 26; -fx-pref-height: 26; -fx-max-height: 26; -fx-background-radius: 7; -fx-cursor: hand; }
+.drive-row-action:hover { -fx-background-color: #293442; }
+.drive-row-action .drive-menu-glyph { -fx-min-width: 17; -fx-pref-width: 17; -fx-max-width: 17; -fx-min-height: 17; -fx-pref-height: 17; -fx-max-height: 17; -fx-scale-x: 0.8; -fx-scale-y: 0.8; }
+.drive-share-available { -fx-text-fill: #8bbaff; }
 .drive-pagination { -fx-padding: 8 14 0 14; }
 .drive-pagination-label { -fx-text-fill: #8996a8; -fx-font-size: 11px; }
 .drive-page-size { -fx-pref-width: 78; -fx-min-width: 78; -fx-max-width: 78; -fx-background-color: #1b222b; -fx-border-color: #344252; -fx-border-radius: 6; -fx-background-radius: 6; -fx-font-size: 11px; }

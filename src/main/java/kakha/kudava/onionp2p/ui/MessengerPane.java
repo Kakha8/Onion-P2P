@@ -2093,7 +2093,7 @@ final class MessengerPane extends BorderPane {
             content.getProperties().remove("drivePagination");
             try {
                 List<SharedDriveStore.SharedFile> shared = manager.sharedDriveFiles().stream()
-                        .filter(file -> Files.isRegularFile(Path.of(file.path())))
+                        .filter(file -> file.path() == null || Files.isRegularFile(Path.of(file.path())))
                         .sorted(switch (driveSortColumn) {
                             case NAME -> Comparator.comparing(SharedDriveStore.SharedFile::name, String.CASE_INSENSITIVE_ORDER);
                             case TYPE -> Comparator.comparing(file -> fileTypeLabel(Path.of(file.name())), String.CASE_INSENSITIVE_ORDER);
@@ -2237,8 +2237,8 @@ final class MessengerPane extends BorderPane {
     private GridPane sharedDriveTableHeader() {
         GridPane header = new GridPane();
         header.getColumnConstraints().setAll(sharedDriveColumns());
-        for (int i = 0; i < 4; i++) {
-            Label label = new Label(List.of("Name", "Type", "Size", "Shared by").get(i));
+        for (int i = 0; i < 5; i++) {
+            Label label = new Label(List.of("Name", "Type", "Size", "Shared by", "Status").get(i));
             label.getStyleClass().add("drive-table-heading");
             label.setMaxWidth(Double.MAX_VALUE);
             label.setAlignment(i == 0 ? Pos.CENTER_LEFT : Pos.CENTER);
@@ -2250,7 +2250,7 @@ final class MessengerPane extends BorderPane {
 
     private List<javafx.scene.layout.ColumnConstraints> sharedDriveColumns() {
         List<javafx.scene.layout.ColumnConstraints> columns = new ArrayList<>();
-        for (double width : new double[]{48, 17, 17, 18}) {
+        for (double width : new double[]{43, 13, 13, 18, 13}) {
             var column = new javafx.scene.layout.ColumnConstraints();
             column.setPercentWidth(width);
             column.setHgrow(Priority.SOMETIMES);
@@ -2260,7 +2260,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private HBox sharedDriveEntryRow(SharedDriveStore.SharedFile file, String sender) {
-        Path path = Path.of(file.path());
+        Path path = file.path() == null ? null : Path.of(file.path());
         SVGPath glyph = fileGlyph();
         StackPane icon = new StackPane(glyph);
         icon.getStyleClass().add("drive-entry-icon");
@@ -2270,28 +2270,48 @@ final class MessengerPane extends BorderPane {
         name.setTextOverrun(OverrunStyle.ELLIPSIS);
         HBox nameCell = new HBox(12, icon, name);
         nameCell.setAlignment(Pos.CENTER_LEFT);
-        Label type = new Label(fileTypeLabel(path));
+        Label type = new Label(fileTypeLabel(Path.of(file.name())));
         Label size = new Label(formatBytes(file.size()));
         Label sharedBy = new Label(sender);
-        for (Label label : List.of(type, size, sharedBy)) {
+        Label state = new Label(file.downloaded() ? "Downloaded" : "Available");
+        if (!file.downloaded()) state.getStyleClass().add("drive-share-available");
+        for (Label label : List.of(type, size, sharedBy, state)) {
             label.getStyleClass().add("drive-table-cell");
             label.setMaxWidth(Double.MAX_VALUE);
             label.setTextOverrun(OverrunStyle.ELLIPSIS);
             label.setAlignment(Pos.CENTER);
         }
+        Button action = new Button();
+        action.setGraphic(driveMenuGlyph(file.downloaded()
+                ? "M5 12l4 4L19 6" : "M12 3v12 M7 10l5 5 5-5 M4 19h16"));
+        action.getStyleClass().add("drive-row-action");
+        action.setAccessibleText(file.downloaded() ? "Open downloaded file" : "Download shared file");
+        action.setTooltip(new Tooltip(file.downloaded() ? "Open" : "Download"));
+        action.setOnAction(event -> {
+            event.consume();
+            if (file.downloaded()) {
+                try { java.awt.Desktop.getDesktop().open(path.toFile()); }
+                catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
+            } else downloadSharedDriveFile(file, sender);
+        });
+        HBox statusCell = new HBox(4, state, action);
+        statusCell.setAlignment(Pos.CENTER);
         GridPane cells = new GridPane();
         cells.getColumnConstraints().setAll(sharedDriveColumns());
-        cells.add(nameCell, 0, 0); cells.add(type, 1, 0); cells.add(size, 2, 0); cells.add(sharedBy, 3, 0);
+        cells.add(nameCell, 0, 0); cells.add(type, 1, 0); cells.add(size, 2, 0); cells.add(sharedBy, 3, 0); cells.add(statusCell, 4, 0);
         HBox row = new HBox(cells);
         HBox.setHgrow(cells, Priority.ALWAYS);
         row.getStyleClass().add("drive-entry-row");
         row.setOnMouseClicked(event -> {
-            if (event.getClickCount() == 2 && Files.isRegularFile(path)) {
-                try { java.awt.Desktop.getDesktop().open(path.toFile()); }
-                catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
+            if (event.getClickCount() == 2) {
+                if (file.downloaded()) {
+                    try { java.awt.Desktop.getDesktop().open(path.toFile()); }
+                    catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
+                } else downloadSharedDriveFile(file, sender);
             }
         });
-        Tooltip.install(row, new Tooltip("Received from " + sender + " · double-click to open"));
+        Tooltip.install(row, new Tooltip(file.downloaded() ? "Shared by " + sender + " · double-click to open"
+                : "Shared by " + sender + " · double-click to download"));
         return row;
     }
 
@@ -2665,7 +2685,7 @@ final class MessengerPane extends BorderPane {
         fileName.getStyleClass().add("drive-share-file-name");
         fileName.setMaxWidth(Double.MAX_VALUE);
         fileName.setTextOverrun(OverrunStyle.ELLIPSIS);
-        Label prompt = new Label("Choose a contact to send this file to");
+        Label prompt = new Label("Choose who can access this file from Shared with me");
         prompt.getStyleClass().add("drive-rename-prompt");
         TextField search = new TextField();
         search.setPromptText("Search contacts");
@@ -2719,25 +2739,45 @@ final class MessengerPane extends BorderPane {
             if (contactChoices.getSelectionModel().getSelectedItem() == null) contactChoices.getSelectionModel().selectFirst();
             search.requestFocus();
         });
-        dialog.showAndWait().ifPresent(contact -> shareDriveFileDirectly(contact, entry));
+        dialog.showAndWait().ifPresent(contact -> shareDriveFileAccess(contact, entry));
     }
 
-    private void shareDriveFileDirectly(ContactStore.Contact contact, Path file) {
-        status.setText("Sharing " + file.getFileName() + " directly with " + contact.username() + "…");
+    private void shareDriveFileAccess(ContactStore.Contact contact, Path file) {
+        status.setText("Sharing access to " + file.getFileName() + " with " + contact.username() + "…");
         driveWorkers.execute(() -> {
             try {
                 manager.shareDriveFile(contact.link(), file, ignored -> {}, ignored -> {});
                 Platform.runLater(() -> {
                     status.setText("Shared " + file.getFileName() + " with " + contact.username() + ".");
-                    showDriveAlert(Alert.AlertType.INFORMATION, "File shared", "The file was delivered directly to "
-                            + contact.username() + " and added to their Shared with me section.");
+                    showDriveAlert(Alert.AlertType.INFORMATION, "File shared", "A download offer was added to "
+                            + contact.username() + "’s Shared with me section. The file stays on your device until they choose to download it.");
                 });
             } catch (Exception error) {
                 Platform.runLater(() -> {
                     status.setText("Could not share " + file.getFileName() + ".");
                     showDriveAlert(Alert.AlertType.ERROR, "Could not share file",
-                            "The file could not be delivered to " + contact.username() + ". Make sure they are online and try again.\n\n"
+                            "The share offer could not be delivered to " + contact.username() + ". Make sure they are online and try again.\n\n"
                                     + (error.getMessage() == null ? "Transfer failed." : error.getMessage()));
+                });
+            }
+        });
+    }
+
+    private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender) {
+        status.setText("Requesting " + file.name() + " from " + sender + "…");
+        driveWorkers.execute(() -> {
+            try {
+                manager.downloadSharedFile(file.contactLink(), file.id(), statusText -> Platform.runLater(() -> status.setText(statusText)));
+                Platform.runLater(() -> {
+                    status.setText("Downloaded " + file.name() + " to Drive’s Shared folder.");
+                    if (refreshSharedDrive != null) refreshSharedDrive.run();
+                });
+            } catch (Exception error) {
+                Platform.runLater(() -> {
+                    status.setText("Could not download " + file.name() + ".");
+                    showDriveAlert(Alert.AlertType.ERROR, "Could not download file",
+                            "Make sure " + sender + " is online and still sharing this file.\n\n"
+                                    + (error.getMessage() == null ? "Download failed." : error.getMessage()));
                 });
             }
         });
