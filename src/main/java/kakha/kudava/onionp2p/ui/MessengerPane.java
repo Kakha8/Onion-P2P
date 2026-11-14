@@ -100,6 +100,7 @@ import static kakha.kudava.onionp2p.contacts.ContactMessaging.MAX_BODY_BYTES;
 /** Embedded chat pane backed by saved contacts and local message history. */
 final class MessengerPane extends BorderPane {
     private enum DriveSortColumn { NAME, TYPE, SIZE }
+    private record ShareSelection(ContactStore.Contact contact, boolean remove) {}
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
     private static final DateTimeFormatter MESSAGE_TIME = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
@@ -205,6 +206,9 @@ final class MessengerPane extends BorderPane {
     private boolean driveSortAscending = true;
     private int drivePageSize = 25;
     private int drivePageIndex;
+    private final java.util.Set<Path> selectedDriveEntries = new java.util.LinkedHashSet<>();
+    private final Map<Path, HBox> visibleDriveRows = new HashMap<>();
+    private Button shareDriveButton;
     private long voicePlaybackRequest;
     private boolean activeVoiceTransfer;
     private boolean sending;
@@ -1992,6 +1996,13 @@ final class MessengerPane extends BorderPane {
         addFolder.setAccessibleText("Add folder");
         addFolder.setTooltip(new Tooltip("Add folder"));
         addFolder.setDisable(!myFiles);
+        Button shareFiles = new Button();
+        shareFiles.setGraphic(driveMenuGlyph("M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0"));
+        shareFiles.getStyleClass().addAll("drive-icon-action-button", "drive-add-folder-button");
+        shareFiles.setAccessibleText("Share files and folders");
+        shareFiles.setTooltip(new Tooltip("Select entries to share; Ctrl-click to select multiple"));
+        shareDriveButton = shareFiles;
+        shareFiles.setDisable(!myFiles || selectedDriveEntries.isEmpty());
         Button addButton = new Button("New");
         addButton.setGraphic(plusGlyph());
         addButton.getStyleClass().add("drive-new-button");
@@ -2030,7 +2041,8 @@ final class MessengerPane extends BorderPane {
             addMenu.getItems().setAll(createFolder, createTextFile);
             addMenu.show(addButton, Side.BOTTOM, 0, 2);
         });
-        HBox actionGroup = new HBox(8, importing, addFiles, addFolder);
+        shareFiles.setOnAction(event -> shareSelectedDriveEntries());
+        HBox actionGroup = new HBox(8, importing, shareFiles, addFiles, addFolder);
         actionGroup.setAlignment(Pos.CENTER_RIGHT);
         actionGroup.getStyleClass().add("drive-header-actions");
         HBox header = new HBox(16, heading, spacer, actionGroup);
@@ -2040,6 +2052,7 @@ final class MessengerPane extends BorderPane {
         VBox pageBody = new VBox(0);
         pageBody.setAlignment(Pos.TOP_LEFT);
         if (myFiles) {
+            visibleDriveRows.clear();
             Path driveDirectory = AppData.directory().resolve("drive");
             try {
                 Files.createDirectories(driveDirectory);
@@ -2074,10 +2087,22 @@ final class MessengerPane extends BorderPane {
                     for (Path entry : entries.subList(firstEntry, endEntry)) {
                         HBox row = driveEntryRow(entry, content);
                         row.setOnMouseClicked(event -> {
+                            if (event.getButton() != MouseButton.PRIMARY) return;
                             if (event.getClickCount() == 2 && Files.isDirectory(entry)) {
+                                selectedDriveEntries.clear();
                                 renderDrivePage(content, true, entry);
+                                return;
                             }
+                            Path selectedEntry = entry.toAbsolutePath().normalize();
+                            if (event.isControlDown()) {
+                                if (!selectedDriveEntries.add(selectedEntry)) selectedDriveEntries.remove(selectedEntry);
+                            } else {
+                                selectedDriveEntries.clear();
+                                selectedDriveEntries.add(selectedEntry);
+                            }
+                            refreshDriveSelectionUi();
                         });
+                        visibleDriveRows.put(entry.toAbsolutePath().normalize(), row);
                         pageBody.getChildren().add(row);
                     }
                     content.getProperties().put("drivePagination", drivePagination(content, visibleDirectory,
@@ -2093,10 +2118,10 @@ final class MessengerPane extends BorderPane {
             content.getProperties().remove("drivePagination");
             try {
                 List<SharedDriveStore.SharedFile> shared = manager.sharedDriveFiles().stream()
-                        .filter(file -> file.path() == null || Files.isRegularFile(Path.of(file.path())))
+                        .filter(file -> file.folder() || file.path() == null || Files.isRegularFile(Path.of(file.path())))
                         .sorted(switch (driveSortColumn) {
                             case NAME -> Comparator.comparing(SharedDriveStore.SharedFile::name, String.CASE_INSENSITIVE_ORDER);
-                            case TYPE -> Comparator.comparing(file -> fileTypeLabel(Path.of(file.name())), String.CASE_INSENSITIVE_ORDER);
+                            case TYPE -> Comparator.comparing(file -> file.folder() ? "Folder" : fileTypeLabel(Path.of(file.name())), String.CASE_INSENSITIVE_ORDER);
                             case SIZE -> Comparator.comparingLong(SharedDriveStore.SharedFile::size);
                         }).toList();
                 if (!driveSortAscending) {
@@ -2136,9 +2161,14 @@ final class MessengerPane extends BorderPane {
     }
 
     private HBox driveBreadcrumb(Path root, Path current, VBox content, Button addButton) {
-        Button parentButton = new Button("‹");
+        Button parentButton = new Button();
+        parentButton.setGraphic(driveMenuGlyph("M15 18 L9 12 L15 6"));
+        parentButton.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         parentButton.getStyleClass().add("drive-history-button");
         parentButton.setAlignment(Pos.CENTER);
+        parentButton.setMinWidth(30);
+        parentButton.setPrefWidth(30);
+        parentButton.setMaxWidth(30);
         parentButton.setMinHeight(30);
         parentButton.setPrefHeight(30);
         parentButton.setMaxHeight(30);
@@ -2150,6 +2180,7 @@ final class MessengerPane extends BorderPane {
         });
 
         HBox crumbs = new HBox(7);
+        crumbs.setAlignment(Pos.CENTER_LEFT);
         crumbs.setMinWidth(0);
         crumbs.setMaxWidth(Double.MAX_VALUE);
         Button rootButton = new Button("My files");
@@ -2250,7 +2281,7 @@ final class MessengerPane extends BorderPane {
 
     private List<javafx.scene.layout.ColumnConstraints> sharedDriveColumns() {
         List<javafx.scene.layout.ColumnConstraints> columns = new ArrayList<>();
-        for (double width : new double[]{43, 13, 13, 18, 13}) {
+        for (double width : new double[]{40, 12, 12, 17, 19}) {
             var column = new javafx.scene.layout.ColumnConstraints();
             column.setPercentWidth(width);
             column.setHgrow(Priority.SOMETIMES);
@@ -2261,7 +2292,7 @@ final class MessengerPane extends BorderPane {
 
     private HBox sharedDriveEntryRow(SharedDriveStore.SharedFile file, String sender) {
         Path path = file.path() == null ? null : Path.of(file.path());
-        SVGPath glyph = fileGlyph();
+        SVGPath glyph = file.folder() ? folderGlyph() : fileGlyph();
         StackPane icon = new StackPane(glyph);
         icon.getStyleClass().add("drive-entry-icon");
         Label name = new Label(file.name());
@@ -2270,8 +2301,8 @@ final class MessengerPane extends BorderPane {
         name.setTextOverrun(OverrunStyle.ELLIPSIS);
         HBox nameCell = new HBox(12, icon, name);
         nameCell.setAlignment(Pos.CENTER_LEFT);
-        Label type = new Label(fileTypeLabel(Path.of(file.name())));
-        Label size = new Label(formatBytes(file.size()));
+        Label type = new Label(file.folder() ? "Folder" : fileTypeLabel(Path.of(file.name())));
+        Label size = new Label(file.folder() ? "—" : formatBytes(file.size()));
         Label sharedBy = new Label(sender);
         Label state = new Label(file.downloaded() ? "Downloaded" : "Available");
         if (!file.downloaded()) state.getStyleClass().add("drive-share-available");
@@ -2282,19 +2313,30 @@ final class MessengerPane extends BorderPane {
             label.setAlignment(Pos.CENTER);
         }
         Button action = new Button();
-        action.setGraphic(driveMenuGlyph(file.downloaded()
+        action.setGraphic(driveMenuGlyph(file.folder() ? "M9 5l7 7-7 7" : file.downloaded()
                 ? "M5 12l4 4L19 6" : "M12 3v12 M7 10l5 5 5-5 M4 19h16"));
         action.getStyleClass().add("drive-row-action");
-        action.setAccessibleText(file.downloaded() ? "Open downloaded file" : "Download shared file");
-        action.setTooltip(new Tooltip(file.downloaded() ? "Open" : "Download"));
+        action.setAccessibleText(file.folder() ? "Browse shared folder" : file.downloaded() ? "Open downloaded file" : "Download shared file");
+        action.setTooltip(new Tooltip(file.folder() ? "Browse folder" : file.downloaded() ? "Open" : "Download"));
         action.setOnAction(event -> {
             event.consume();
-            if (file.downloaded()) {
+            if (file.folder()) {
+                new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers).show();
+            } else if (file.downloaded()) {
                 try { java.awt.Desktop.getDesktop().open(path.toFile()); }
                 catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
             } else downloadSharedDriveFile(file, sender);
         });
-        HBox statusCell = new HBox(4, state, action);
+        Button more = new Button();
+        more.setGraphic(driveMoreGlyph());
+        more.getStyleClass().add("drive-entry-more");
+        more.setAccessibleText("More options for shared file " + file.name());
+        ContextMenu rowMenu = new ContextMenu();
+        rowMenu.getStyleClass().add("drive-entry-menu");
+        rowMenu.getItems().add(driveMenuItem("Remove from Shared with me",
+                "M3 6h18 M8 6V4h8v2 M6 6l1 15h10l1-15", () -> removeReceivedDriveOffer(file)));
+        more.setOnAction(event -> rowMenu.show(more, Side.BOTTOM, 0, 0));
+        HBox statusCell = new HBox(4, state, action, more);
         statusCell.setAlignment(Pos.CENTER);
         GridPane cells = new GridPane();
         cells.getColumnConstraints().setAll(sharedDriveColumns());
@@ -2304,13 +2346,15 @@ final class MessengerPane extends BorderPane {
         row.getStyleClass().add("drive-entry-row");
         row.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
-                if (file.downloaded()) {
+                if (file.folder()) {
+                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers).show();
+                } else if (file.downloaded()) {
                     try { java.awt.Desktop.getDesktop().open(path.toFile()); }
                     catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
                 } else downloadSharedDriveFile(file, sender);
             }
         });
-        Tooltip.install(row, new Tooltip(file.downloaded() ? "Shared by " + sender + " · double-click to open"
+        Tooltip.install(row, new Tooltip(file.folder() ? "Shared by " + sender + " · double-click to browse folder" : file.downloaded() ? "Shared by " + sender + " · double-click to open"
                 : "Shared by " + sender + " · double-click to download"));
         return row;
     }
@@ -2433,7 +2477,6 @@ final class MessengerPane extends BorderPane {
         size.setAlignment(Pos.CENTER);
         Button more = new Button();
         more.setGraphic(driveMoreGlyph());
-        more.setTooltip(new Tooltip("More options"));
         more.setAccessibleText("More options for " + entry.getFileName());
         more.getStyleClass().add("drive-entry-more");
         more.setOnAction(event -> showDriveEntryMenu(more, entry, content));
@@ -2453,17 +2496,39 @@ final class MessengerPane extends BorderPane {
         HBox.setHgrow(cells, Priority.ALWAYS);
         row.setAlignment(Pos.CENTER);
         row.getStyleClass().add("drive-entry-row");
+        if (selectedDriveEntries.contains(entry.toAbsolutePath().normalize()))
+            row.getStyleClass().add("drive-entry-row-selected");
+        more.addEventHandler(MouseEvent.MOUSE_CLICKED, MouseEvent::consume);
         return row;
+    }
+
+    private void refreshDriveSelectionUi() {
+        visibleDriveRows.forEach((entry, row) -> {
+            if (selectedDriveEntries.contains(entry)) {
+                if (!row.getStyleClass().contains("drive-entry-row-selected"))
+                    row.getStyleClass().add("drive-entry-row-selected");
+            } else row.getStyleClass().remove("drive-entry-row-selected");
+        });
+        if (shareDriveButton != null) shareDriveButton.setDisable(selectedDriveEntries.isEmpty());
     }
 
     private void showDriveEntryMenu(Button anchor, Path entry, VBox content) {
         ContextMenu menu = new ContextMenu();
         menu.getStyleClass().add("drive-entry-menu");
-        MenuItem rename = driveMenuItem("Rename", "M4 20h16 M14.5 4.5l5 5 M13 6 5 14l-1 5 5-1 8-8", () -> renameDriveEntry(entry, content));
-        MenuItem share = driveMenuItem("Share", "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", () -> shareDriveEntry(entry));
-        MenuItem delete = driveMenuItem("Delete", "M3 6h18 M8 6V4h8v2 M6 6l1 15h10l1-15", () -> deleteDriveEntry(entry, content));
-        MenuItem properties = driveMenuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z", () -> showDriveProperties(entry));
-        menu.getItems().setAll(rename, share, delete, new SeparatorMenuItem(), properties);
+        menu.getItems().addAll(
+                driveMenuItem("Rename", "M4 20h16 M14.5 4.5l5 5 M13 6 5 14l-1 5 5-1 8-8", () -> renameDriveEntry(entry, content)),
+                driveMenuItem("Share", "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", () -> shareDriveEntry(entry)),
+                driveMenuItem("Delete", "M3 6h18 M8 6V4h8v2 M6 6l1 15h10l1-15", () -> deleteDriveEntry(entry, content)),
+                new SeparatorMenuItem(),
+                driveMenuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z", () -> showDriveProperties(entry)));
+        menu.setOnShown(event -> {
+            // The popup's scene root inherits .root's solid app background.
+            // Clear that outer layer so only the rounded ContextMenu is painted.
+            menu.getScene().setFill(javafx.scene.paint.Color.TRANSPARENT);
+            Node popupRoot = menu.getScene().getRoot();
+            popupRoot.setStyle("-fx-background-color: transparent; -fx-background-insets: 0; "
+                    + "-fx-border-color: transparent; -fx-effect: none;");
+        });
         menu.show(anchor, Side.BOTTOM, 0, 0);
     }
 
@@ -2579,6 +2644,11 @@ final class MessengerPane extends BorderPane {
             }
             try {
                 Files.move(entry, destination);
+                try { manager.driveEntryMoved(entry, destination); }
+                catch (Exception updateError) {
+                    Files.move(destination, entry);
+                    throw new IOException("Could not update shared access after renaming.", updateError);
+                }
                 renderDrivePage(content, true, entry.getParent());
             } catch (IOException error) {
                 showDriveAlert(Alert.AlertType.ERROR, "Could not rename item", error.getMessage());
@@ -2664,43 +2734,175 @@ final class MessengerPane extends BorderPane {
     }
 
     private void shareDriveEntry(Path entry) {
-        if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            showDriveAlert(Alert.AlertType.INFORMATION, "Share folder", "Folder sharing is not available yet. Open the folder and share its files one at a time.");
+        chooseShareContact(List.of(entry));
+    }
+
+    private void shareSelectedDriveEntries() {
+        Path root = AppData.directory().resolve("drive").toAbsolutePath().normalize();
+        java.util.LinkedHashSet<Path> selectedFiles = new java.util.LinkedHashSet<>();
+        try {
+            for (Path selected : List.copyOf(selectedDriveEntries)) {
+                Path entry = selected.toAbsolutePath().normalize();
+                if (!entry.startsWith(root) || !Files.exists(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                if (Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) selectedFiles.add(entry);
+                else if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) selectedFiles.add(entry);
+            }
+            List<Path> files = selectedFiles.stream().sorted().toList();
+            if (files.isEmpty()) {
+                showDriveAlert(Alert.AlertType.INFORMATION, "No files in selection",
+                        "Select files or folders containing files before sharing.");
+                return;
+            }
+            chooseShareContact(files);
+        } catch (Exception error) {
+            showDriveAlert(Alert.AlertType.ERROR, "Could not read selected folders", error.getMessage());
+        }
+    }
+
+    private void chooseDriveFilesToShare() {
+        Path root = AppData.directory().resolve("drive").toAbsolutePath().normalize();
+        List<Path> entries;
+        try {
+            Files.createDirectories(root);
+            try (var paths = Files.walk(root)) {
+                entries = paths.filter(path -> !path.equals(root)
+                                && (Files.isRegularFile(path) || Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)))
+                        .sorted().toList();
+            }
+        } catch (IOException error) {
+            showDriveAlert(Alert.AlertType.ERROR, "Could not read My files", error.getMessage());
             return;
         }
+        if (entries.isEmpty()) {
+            showDriveAlert(Alert.AlertType.INFORMATION, "No files or folders to share", "Add files or folders to My files before sharing.");
+            return;
+        }
+
+        Dialog<List<Path>> dialog = new Dialog<>();
+        dialog.setTitle("Share files");
+        dialog.initOwner(getScene().getWindow());
+        dialog.initStyle(StageStyle.TRANSPARENT);
+        DialogPane pane = dialog.getDialogPane();
+        pane.getStyleClass().add("drive-share-dialog");
+        pane.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
+        HBox titleBar = driveDialogTitleBar(dialog, "Share files", "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", false);
+        Label prompt = new Label("Ctrl-click to select files and folders. Folder access includes current and future contents.");
+        prompt.getStyleClass().add("drive-rename-prompt");
+        ListView<Path> choices = new ListView<>(FXCollections.observableArrayList(entries));
+        choices.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        choices.getStyleClass().add("drive-share-list");
+        choices.setPrefHeight(Math.min(360, Math.max(130, entries.size() * 52)));
+        choices.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(Path path, boolean empty) {
+                super.updateItem(path, empty);
+                if (empty || path == null) { setText(null); setGraphic(null); return; }
+                boolean folder = Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                Label glyph = new Label(null, folder ? folderGlyph() : fileGlyph());
+                glyph.getStyleClass().add("drive-entry-icon");
+                Label fileName = new Label(path.getFileName().toString());
+                fileName.getStyleClass().add("drive-share-username");
+                fileName.setTextOverrun(OverrunStyle.ELLIPSIS);
+                String parent = root.relativize(path).getParent() == null ? "My files" : root.relativize(path).getParent().toString();
+                Label location = new Label((folder ? "Folder · " : "File · ") + parent);
+                location.getStyleClass().add("drive-share-address");
+                VBox labels = new VBox(2, fileName, location);
+                HBox item = new HBox(10, glyph, labels);
+                item.setAlignment(Pos.CENTER_LEFT);
+                setText(null); setGraphic(item);
+            }
+        });
+        Label count = new Label("No items selected");
+        count.getStyleClass().add("drive-share-file-name");
+        choices.getSelectionModel().getSelectedItems().addListener((javafx.beans.InvalidationListener) ignored -> {
+            int selectedCount = choices.getSelectionModel().getSelectedItems().size();
+            count.setText(selectedCount == 0 ? "No items selected" : selectedCount + (selectedCount == 1 ? " item selected" : " items selected"));
+        });
+        ButtonType continueType = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
+        pane.getButtonTypes().setAll(ButtonType.CANCEL, continueType);
+        Button continueButton = (Button) pane.lookupButton(continueType);
+        continueButton.getStyleClass().add("drive-dialog-primary");
+        continueButton.setDisable(true);
+        choices.getSelectionModel().getSelectedItems().addListener((javafx.beans.InvalidationListener) ignored ->
+                continueButton.setDisable(choices.getSelectionModel().getSelectedItems().isEmpty()));
+        VBox body = new VBox(10, titleBar, prompt, choices, count);
+        body.getStyleClass().add("drive-share-body");
+        pane.setContent(body);
+        pane.setPrefWidth(480);
+        dialog.setResultConverter(button -> button == continueType
+                ? List.copyOf(choices.getSelectionModel().getSelectedItems()) : null);
+        dialog.setOnShown(event -> pane.getScene().setFill(javafx.scene.paint.Color.TRANSPARENT));
+        dialog.showAndWait().ifPresent(selectedEntries -> {
+            try {
+                java.util.LinkedHashSet<Path> selectedFiles = new java.util.LinkedHashSet<>();
+                for (Path entry : selectedEntries) {
+                    if (Files.isRegularFile(entry)) selectedFiles.add(entry);
+                    else if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) selectedFiles.add(entry);
+                }
+                List<Path> files = selectedFiles.stream().sorted().toList();
+                if (files.isEmpty()) {
+                    showDriveAlert(Alert.AlertType.INFORMATION, "No files in selection", "Selected folders are empty, so there are no files to share.");
+                    return;
+                }
+                chooseShareContact(files);
+            } catch (Exception error) {
+                showDriveAlert(Alert.AlertType.ERROR, "Could not read selected folders", error.getMessage());
+            }
+        });
+    }
+
+    private void chooseShareContact(List<Path> files) {
         if (allContacts.isEmpty()) {
             showDriveAlert(Alert.AlertType.INFORMATION, "No contacts yet", "Add a contact before sharing a file.");
             return;
         }
-        Dialog<ContactStore.Contact> dialog = new Dialog<>();
-        dialog.setTitle("Share file");
+        Map<String, SharedDriveStore.ShareCount> shareCounts;
+        try { shareCounts = manager.driveShareCounts(files); }
+        catch (Exception error) {
+            showDriveAlert(Alert.AlertType.ERROR, "Could not load sharing access", error.getMessage());
+            return;
+        }
+        Dialog<ShareSelection> dialog = new Dialog<>();
+        String shareTitle = files.size() == 1
+                ? (Files.isDirectory(files.getFirst()) ? "Share folder" : "Share file") : "Share items";
+        dialog.setTitle(shareTitle);
         dialog.initOwner(getScene().getWindow());
         dialog.initStyle(StageStyle.TRANSPARENT);
         DialogPane pane = dialog.getDialogPane();
         pane.getStyleClass().add("drive-share-dialog");
         pane.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
 
-        HBox titleBar = driveDialogTitleBar(dialog, "Share file", "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", false);
-        Label fileName = new Label(entry.getFileName().toString());
+        HBox titleBar = driveDialogTitleBar(dialog, shareTitle, "M18 8a3 3 0 1 0-2.9-3.8L8.6 10.7 M8.6 13.3l6.8 4.4 M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M21 19a3 3 0 1 1-6 0 3 3 0 0 1 6 0", false);
+        String names = files.size() == 1 ? files.get(0).getFileName().toString() : files.size() + " items selected";
+        Label fileName = new Label(names);
         fileName.getStyleClass().add("drive-share-file-name");
         fileName.setMaxWidth(Double.MAX_VALUE);
         fileName.setTextOverrun(OverrunStyle.ELLIPSIS);
-        Label prompt = new Label("Choose who can access this file from Shared with me");
+        Label prompt = new Label("Manage who can access these files.");
         prompt.getStyleClass().add("drive-rename-prompt");
         TextField search = new TextField();
         search.setPromptText("Search contacts");
         search.getStyleClass().add("drive-rename-field");
 
-        FilteredList<ContactStore.Contact> visibleContacts = new FilteredList<>(FXCollections.observableArrayList(allContacts), contact -> true);
+        FilteredList<ContactStore.Contact> sharedContacts = new FilteredList<>(FXCollections.observableArrayList(allContacts),
+                contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() > 0);
+        FilteredList<ContactStore.Contact> availableContacts = new FilteredList<>(FXCollections.observableArrayList(allContacts),
+                contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() < files.size());
         search.textProperty().addListener((observable, before, after) -> {
             String query = after == null ? "" : after.strip().toLowerCase(Locale.ROOT);
-            visibleContacts.setPredicate(contact -> query.isEmpty()
-                    || contact.username().toLowerCase(Locale.ROOT).contains(query));
+            java.util.function.Predicate<ContactStore.Contact> matches = contact -> query.isEmpty()
+                    || contact.username().toLowerCase(Locale.ROOT).contains(query)
+                    || contact.onion().toLowerCase(Locale.ROOT).contains(query);
+            sharedContacts.setPredicate(contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() > 0 && matches.test(contact));
+            availableContacts.setPredicate(contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() < files.size() && matches.test(contact));
         });
-        ListView<ContactStore.Contact> contactChoices = new ListView<>(visibleContacts);
-        contactChoices.getStyleClass().add("drive-share-list");
-        contactChoices.setPrefHeight(Math.min(300, Math.max(110, allContacts.size() * 56)));
-        contactChoices.setCellFactory(list -> new ListCell<>() {
+
+        Label sharedHeading = new Label("Shared with");
+        sharedHeading.getStyleClass().add("drive-share-section-title");
+        ListView<ContactStore.Contact> sharedList = new ListView<>(sharedContacts);
+        sharedList.getStyleClass().add("drive-share-list");
+        sharedList.setPrefHeight(Math.min(150, Math.max(68, sharedContacts.size() * 52)));
+        sharedList.setPlaceholder(new Label("No one has access yet"));
+        sharedList.setCellFactory(list -> new ListCell<>() {
             @Override protected void updateItem(ContactStore.Contact contact, boolean empty) {
                 super.updateItem(contact, empty);
                 if (empty || contact == null) {
@@ -2715,52 +2917,173 @@ final class MessengerPane extends BorderPane {
                 Label address = new Label(shortAddress(contact.onion()));
                 address.getStyleClass().add("drive-share-address");
                 VBox details = new VBox(2, username, address);
-                HBox row = new HBox(10, avatar, details);
+                Region spacer = new Region();
+                HBox.setHgrow(spacer, Priority.ALWAYS);
+                SharedDriveStore.ShareCount count = shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0));
+                Label access = new Label(shareAccessLabel(count, files.size()));
+                access.getStyleClass().add("drive-share-status");
+                Button remove = new Button();
+                remove.setGraphic(driveMenuGlyph("M18 6 6 18 M6 6l12 12"));
+                remove.getStyleClass().add("drive-share-remove");
+                remove.setAccessibleText("Remove sharing access for " + contact.username());
+                remove.setTooltip(new Tooltip("Remove access"));
+                remove.setOnAction(event -> {
+                    dialog.setResult(new ShareSelection(contact, true));
+                    dialog.close();
+                });
+                remove.addEventHandler(MouseEvent.MOUSE_CLICKED, MouseEvent::consume);
+                HBox row = new HBox(10, avatar, details, spacer, access, remove);
                 row.setAlignment(Pos.CENTER_LEFT);
                 setText(null);
                 setGraphic(row);
             }
         });
-        if (selected != null && allContacts.contains(selected)) contactChoices.getSelectionModel().select(selected);
-        ButtonType continueType = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
-        pane.getButtonTypes().setAll(ButtonType.CANCEL, continueType);
-        Button continueButton = (Button) pane.lookupButton(continueType);
-        continueButton.getStyleClass().add("drive-dialog-primary");
-        continueButton.setDisable(contactChoices.getSelectionModel().getSelectedItem() == null);
+
+        Label availableHeading = new Label("Share with");
+        availableHeading.getStyleClass().add("drive-share-section-title");
+        ListView<ContactStore.Contact> contactChoices = new ListView<>(availableContacts);
+        contactChoices.getStyleClass().add("drive-share-list");
+        contactChoices.setPrefHeight(Math.min(190, Math.max(76, availableContacts.size() * 56)));
+        contactChoices.setPlaceholder(new Label("Everyone already has access to these files"));
+        contactChoices.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(ContactStore.Contact contact, boolean empty) {
+                super.updateItem(contact, empty);
+                if (empty || contact == null) { setText(null); setGraphic(null); return; }
+                Label avatar = new Label(profileInitial(contact.username()));
+                avatar.getStyleClass().add("drive-share-avatar");
+                Label username = new Label(contact.username());
+                username.getStyleClass().add("drive-share-username");
+                Label address = new Label(shortAddress(contact.onion()));
+                address.getStyleClass().add("drive-share-address");
+                VBox details = new VBox(2, username, address);
+                Region spacer = new Region();
+                HBox.setHgrow(spacer, Priority.ALWAYS);
+                SharedDriveStore.ShareCount count = shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0));
+                Label partial = new Label(count.total() == 0 ? "" : shareAccessLabel(count, files.size()));
+                partial.getStyleClass().add("drive-share-status");
+                partial.setVisible(count.total() > 0);
+                partial.setManaged(count.total() > 0);
+                HBox row = new HBox(10, avatar, details, spacer, partial);
+                row.setAlignment(Pos.CENTER_LEFT);
+                setText(null);
+                setGraphic(row);
+            }
+        });
+        if (selected != null && availableContacts.stream().anyMatch(contact -> contact.link().equals(selected.link())))
+            contactChoices.getSelectionModel().select(selected);
+        ButtonType shareType = new ButtonType("Share", ButtonBar.ButtonData.OK_DONE);
+        pane.getButtonTypes().setAll(ButtonType.CANCEL, shareType);
+        Button shareButton = (Button) pane.lookupButton(shareType);
+        shareButton.getStyleClass().add("drive-dialog-primary");
+        ContactStore.Contact initialContact = contactChoices.getSelectionModel().getSelectedItem();
+        shareButton.setDisable(initialContact == null
+                || shareCounts.getOrDefault(initialContact.link(), new SharedDriveStore.ShareCount(0, 0)).total() == files.size());
         contactChoices.getSelectionModel().selectedItemProperty().addListener((observable, before, after) ->
-                continueButton.setDisable(after == null));
-        VBox content = new VBox(10, titleBar, fileName, prompt, search, contactChoices);
+                shareButton.setDisable(after == null || shareCounts.getOrDefault(after.link(), new SharedDriveStore.ShareCount(0, 0)).total() == files.size()));
+        VBox content = new VBox(8, titleBar, fileName, prompt, search, sharedHeading, sharedList,
+                availableHeading, contactChoices);
         content.getStyleClass().add("drive-share-body");
         pane.setContent(content);
-        pane.setPrefWidth(430);
-        dialog.setResultConverter(button -> button == continueType ? contactChoices.getSelectionModel().getSelectedItem() : null);
+        pane.setPrefWidth(460);
+        dialog.setResultConverter(button -> button == shareType
+                ? new ShareSelection(contactChoices.getSelectionModel().getSelectedItem(), false) : null);
         dialog.setOnShown(event -> {
             pane.getScene().setFill(javafx.scene.paint.Color.TRANSPARENT);
             if (contactChoices.getSelectionModel().getSelectedItem() == null) contactChoices.getSelectionModel().selectFirst();
             search.requestFocus();
         });
-        dialog.showAndWait().ifPresent(contact -> shareDriveFileAccess(contact, entry));
+        dialog.showAndWait().ifPresent(result -> {
+            if (result.remove()) stopSharingDriveAccess(result.contact(), files);
+            else shareDriveFileAccess(result.contact(), files);
+        });
     }
 
-    private void shareDriveFileAccess(ContactStore.Contact contact, Path file) {
-        status.setText("Sharing access to " + file.getFileName() + " with " + contact.username() + "…");
+    private static String shareAccessLabel(SharedDriveStore.ShareCount count, int totalFiles) {
+        if (count.queued() == 0) return count.delivered() == totalFiles
+                ? "Full access" : count.delivered() + " of " + totalFiles + " shared";
+        if (count.delivered() == 0 && count.queued() == totalFiles) return "Waiting for contact";
+        if (count.delivered() == 0) return count.queued() + " waiting";
+        return count.delivered() + " shared · " + count.queued() + " waiting";
+    }
+
+    private void shareDriveFileAccess(ContactStore.Contact contact, List<Path> files) {
+        status.setText("Sharing " + files.size() + (files.size() == 1 ? " file" : " files") + " with " + contact.username() + "…");
+        driveWorkers.execute(() -> {
+            for (Path file : files) {
+                try {
+                    if (!java.nio.file.Files.isRegularFile(file) && !java.nio.file.Files.isDirectory(file, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        throw new java.io.IOException("File is no longer available: " + file.getFileName());
+                } catch (Exception error) {
+                    String reason = error.getMessage() == null ? "File is unavailable." : error.getMessage();
+                    Platform.runLater(() -> {
+                        status.setText("Could not queue the selected shares.");
+                        showDriveAlert(Alert.AlertType.ERROR, "Could not share files", reason);
+                    });
+                    return;
+                }
+            }
+            ContactManager.DriveShareResult result;
+            try { result = manager.shareDriveFiles(contact.link(), files); }
+            catch (Exception error) {
+                String reason = error.getMessage() == null ? "Could not queue the selected shares." : error.getMessage();
+                Platform.runLater(() -> {
+                    status.setText("Could not queue the selected shares.");
+                    showDriveAlert(Alert.AlertType.ERROR, "Could not share files", reason);
+                });
+                return;
+            }
+            Platform.runLater(() -> {
+                if ((result.sharedNow() > 0 || result.queued() > 0) && refreshSharedDrive != null) refreshSharedDrive.run();
+                if (result.queued() > 0) {
+                    status.setText(result.queued() + (result.queued() == 1 ? " share is" : " shares are")
+                            + " waiting for " + contact.username() + " to come online.");
+                    String delivered = result.sharedNow() == 0 ? "" : result.sharedNow() + " shared now. ";
+                    showDriveAlert(Alert.AlertType.INFORMATION, "Share queued",
+                            delivered + result.queued() + (result.queued() == 1 ? " file is" : " files are")
+                                    + " saved and will be shared automatically when " + contact.username()
+                                    + " comes online. The files stay on your device until they choose to download them.");
+                } else {
+                    status.setText(result.alreadyShared() == files.size()
+                            ? "These files are already shared with " + contact.username() + "."
+                            : "Shared " + result.sharedNow() + (result.sharedNow() == 1 ? " file" : " files")
+                                    + " with " + contact.username() + ".");
+                    showDriveAlert(Alert.AlertType.INFORMATION, result.alreadyShared() == files.size() ? "Already shared" : "Files shared",
+                            result.alreadyShared() == files.size()
+                                    ? "The selected files already appear in " + contact.username() + "’s Shared with me section."
+                                    : result.sharedNow() + (result.sharedNow() == 1 ? " download offer was" : " download offers were")
+                                            + " added to " + contact.username() + "’s Shared with me section. Files stay on your device until they choose to download them.");
+                }
+            });
+        });
+    }
+
+    private void stopSharingDriveAccess(ContactStore.Contact contact, List<Path> files) {
+        status.setText("Removing " + files.size() + (files.size() == 1 ? " share" : " shares") + " for " + contact.username() + "…");
         driveWorkers.execute(() -> {
             try {
-                manager.shareDriveFile(contact.link(), file, ignored -> {}, ignored -> {});
+                int removed = 0;
+                for (Path file : files) removed += manager.stopSharingDriveFile(file, contact.link());
+                int removedCount = removed;
                 Platform.runLater(() -> {
-                    status.setText("Shared " + file.getFileName() + " with " + contact.username() + ".");
-                    showDriveAlert(Alert.AlertType.INFORMATION, "File shared", "A download offer was added to "
-                            + contact.username() + "’s Shared with me section. The file stays on your device until they choose to download it.");
+                    status.setText("Removed " + removedCount + (removedCount == 1 ? " share" : " shares") + " for " + contact.username() + ".");
+                    showDriveAlert(Alert.AlertType.INFORMATION, "Access removed",
+                            removedCount == 0 ? "This contact had no active shares for the selected files."
+                                    : "The selected files are no longer available to " + contact.username()
+                                            + ". Their saved offers may remain listed until they remove them.");
                 });
             } catch (Exception error) {
-                Platform.runLater(() -> {
-                    status.setText("Could not share " + file.getFileName() + ".");
-                    showDriveAlert(Alert.AlertType.ERROR, "Could not share file",
-                            "The share offer could not be delivered to " + contact.username() + ". Make sure they are online and try again.\n\n"
-                                    + (error.getMessage() == null ? "Transfer failed." : error.getMessage()));
-                });
+                Platform.runLater(() -> showDriveAlert(Alert.AlertType.ERROR, "Could not remove access", error.getMessage()));
             }
         });
+    }
+
+    private void removeReceivedDriveOffer(SharedDriveStore.SharedFile file) {
+        try {
+            manager.removeSharedDriveOffer(file.id(), file.contactLink());
+            if (refreshSharedDrive != null) refreshSharedDrive.run();
+        } catch (Exception error) {
+            showDriveAlert(Alert.AlertType.ERROR, "Could not remove share", error.getMessage());
+        }
     }
 
     private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender) {
@@ -2801,11 +3124,41 @@ final class MessengerPane extends BorderPane {
     }
 
     private void showDriveAlert(Alert.AlertType type, String title, String message) {
-        Alert alert = new Alert(type, message, ButtonType.OK);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        if (getScene() != null) alert.initOwner(getScene().getWindow());
-        alert.showAndWait();
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(title);
+        if (getScene() != null && getScene().getWindow() != null) dialog.initOwner(getScene().getWindow());
+        dialog.initStyle(StageStyle.TRANSPARENT);
+        DialogPane pane = dialog.getDialogPane();
+        pane.getStyleClass().add("drive-notice-dialog");
+        String css = getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm();
+        if (!pane.getStylesheets().contains(css)) pane.getStylesheets().add(css);
+        boolean error = type == Alert.AlertType.ERROR;
+        boolean warning = type == Alert.AlertType.WARNING;
+        String iconPath = error
+                ? "M18 6 6 18 M6 6l12 12 M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18Z"
+                : warning ? "M12 3 22 20H2Z M12 9v5 M12 17v.01"
+                : "M12 8v.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z";
+        HBox titleBar = driveDialogTitleBar(dialog, title, iconPath, error);
+        Label icon = new Label();
+        icon.setGraphic(driveMenuGlyph(iconPath));
+        icon.getStyleClass().add("drive-notice-icon");
+        if (error) icon.getStyleClass().add("drive-notice-error");
+        else if (warning) icon.getStyleClass().add("drive-notice-warning");
+        Label text = new Label(message == null || message.isBlank() ? "" : message);
+        text.getStyleClass().add("drive-notice-message");
+        text.setWrapText(true);
+        text.setMaxWidth(470);
+        HBox messageRow = new HBox(15, icon, text);
+        messageRow.setAlignment(Pos.TOP_LEFT);
+        VBox body = new VBox(12, titleBar, messageRow);
+        body.getStyleClass().add("drive-notice-body");
+        pane.setContent(body);
+        pane.getButtonTypes().setAll(ButtonType.OK);
+        Button okay = (Button) pane.lookupButton(ButtonType.OK);
+        okay.getStyleClass().add("drive-dialog-primary");
+        pane.setPrefWidth(520);
+        dialog.setOnShown(event -> pane.getScene().setFill(javafx.scene.paint.Color.TRANSPARENT));
+        dialog.showAndWait();
     }
 
     private static long fileSize(Path file) {

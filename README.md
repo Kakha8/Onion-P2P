@@ -4,6 +4,18 @@ Onion based Peer to Peer messenger prototype with a hello world onion server and
 
 Windows x64 / Java 21+. Tor is bundled in the application resources; no Tor install or runtime download is needed.
 
+## Drive folder sharing
+
+Select a folder in **Drive → My files**, open **Share**, and choose a paired contact. Ctrl-click supports a mixed selection of files and folders. Shares queued for an offline contact survive restart and are announced when that contact comes online. Sharing sends access metadata, not the folder's contents.
+
+The recipient opens the folder in **Shared with me** to browse its live contents. Double-click subfolders to enter them; **Refresh** fetches additions, removals, and renamed entries. A previous listing stays visible in the open browser if the owner cannot be reached. Both apps must be online to fetch current listings or download.
+
+**Download folder** downloads the current folder, including its hierarchy and empty subfolders. Select a file or subfolder to download only that item. A folder selector chooses the destination and initially points to `%LOCALAPPDATA%/Onion-P2P/drive/shared`. Folder downloads create a new directory rather than merging into an existing one; completed files remain if a later transfer fails. Files are limited to 1 GiB each. Listings allow up to 10,000 entries per directory, and a folder download allows up to 100,000 entries and 64 nesting levels.
+
+Folders retain their share IDs when renamed inside My files. Access is read only and checked for each listing and download. Remove access from the share window to stop future requests; independently shared files remain accessible through their separate grants, and previously downloaded copies remain on the recipient's device. Symbolic links and paths outside the shared folder are rejected.
+
+Update both devices before testing folder sharing; older builds do not understand folder offers or browsing requests. Existing folders previously flattened into individual file offers need to be shared again as folders.
+
 Run `./mvnw.cmd javafx:run` (or run `HelloApplication` in your IDE). The window starts a local HTTP server and Tor in the background. Watch the console for:
 
 ```text

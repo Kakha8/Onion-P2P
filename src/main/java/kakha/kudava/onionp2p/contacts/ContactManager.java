@@ -5,6 +5,7 @@ import kakha.kudava.onionp2p.messaging.MessageStore;
 import kakha.kudava.onionp2p.tor.OnionServer;
 import kakha.kudava.onionp2p.tor.TorControl;
 import kakha.kudava.onionp2p.drive.SharedDriveStore;
+import kakha.kudava.onionp2p.drive.FolderAccess;
 
 import java.net.*;
 import java.io.IOException;
@@ -16,6 +17,7 @@ import java.util.function.Consumer;
 /** Pending imports remain in memory; only cryptographically acknowledged contacts enter SQLite. */
 public final class ContactManager implements AutoCloseable {
     public record Event(String link, String message) {}
+    public record DriveShareResult(int sharedNow, int queued, int alreadyShared) {}
     private final Path directory;
     private final OnionServer tor;
     private final ContactStore store;
@@ -27,8 +29,16 @@ public final class ContactManager implements AutoCloseable {
     private volatile Consumer<String> driveShareListener = ignored -> {};
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
+    private final Set<String> driveShareChecks = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
         Thread thread = new Thread(r, "contact-retry"); thread.setDaemon(true); return thread;
+    });
+    private final ExecutorService driveShareRetries = Executors.newFixedThreadPool(2, r -> {
+        Thread thread = new Thread(r, "drive-share-retry"); thread.setDaemon(true); return thread;
+    });
+    private final ScheduledExecutorService driveShareRetryScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "drive-share-scheduler"); thread.setDaemon(true); return thread;
     });
     private final Set<Socket> connections = ConcurrentHashMap.newKeySet();
     private final Semaphore incoming = new Semaphore(256);
@@ -41,6 +51,7 @@ public final class ContactManager implements AutoCloseable {
         sharedDriveStore = new SharedDriveStore(directory);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
+        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 15, 15, TimeUnit.SECONDS);
     }
 
     public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
@@ -56,6 +67,31 @@ public final class ContactManager implements AutoCloseable {
     }
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
 
+    public int stopSharingDriveFile(Path file) throws Exception {
+        int removed = sharedDriveStore.unpublishForPath(file);
+        sharedDriveStore.removePendingShares(file);
+        return removed;
+    }
+
+    public int stopSharingDriveFile(Path file, String contactLink) throws Exception {
+        String canonical = canonicalLink(contactLink);
+        int removed = sharedDriveStore.unpublishForPathAndContact(file, canonical);
+        sharedDriveStore.removePendingShares(file, canonical);
+        return removed;
+    }
+
+    public boolean isDriveFileSharedWith(Path file, String contactLink) throws Exception {
+        return sharedDriveStore.isPublishedForPathAndContact(file, canonicalLink(contactLink));
+    }
+
+    public Map<String, SharedDriveStore.ShareCount> driveShareCounts(List<Path> files) throws Exception {
+        return sharedDriveStore.shareCountsForFiles(files);
+    }
+
+    public void removeSharedDriveOffer(String shareId, String contactLink) throws Exception {
+        sharedDriveStore.removeReceived(shareId, canonicalLink(contactLink));
+    }
+
     public void shareDriveFile(String link, Path file, java.util.function.LongConsumer progress,
                                java.util.function.Consumer<String> status) throws Exception {
         withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
@@ -63,6 +99,102 @@ public final class ContactManager implements AutoCloseable {
                     session.firstMessage, progress, () -> false);
             return null;
         });
+    }
+
+    /** Queue every selected file durably, then make one immediate delivery attempt. */
+    public DriveShareResult shareDriveFiles(String link, List<Path> files) throws Exception {
+        String canonical = canonicalLink(link);
+        Pending entry = pending.get(canonical);
+        if (entry == null || !entry.saved)
+            throw new IllegalStateException("This contact is not paired yet. Keep both apps open until pairing is acknowledged.");
+
+        var toQueue = new ArrayList<Path>();
+        int alreadyShared = 0;
+        for (Path file : files) {
+            Path normalized = file.toAbsolutePath().normalize();
+            if (java.nio.file.Files.isSymbolicLink(normalized) || (!java.nio.file.Files.isRegularFile(normalized) && !java.nio.file.Files.isDirectory(normalized)))
+                throw new java.io.IOException("File is no longer available: " + normalized.getFileName());
+            long size = java.nio.file.Files.isDirectory(normalized) ? -1 : java.nio.file.Files.size(normalized);
+            if (size > ContactMessaging.MAX_FILE_BYTES)
+                throw new IllegalArgumentException("Files must be 1 GiB or smaller: " + normalized.getFileName());
+            if (sharedDriveStore.isPublishedForPathAndContact(normalized, canonical)) alreadyShared++;
+            else toQueue.add(normalized);
+        }
+        sharedDriveStore.queueShares(canonical, toQueue);
+        int sent = deliverPendingDriveShares(canonical);
+        int queued = sharedDriveStore.pendingShares(canonical).size();
+        return new DriveShareResult(sent, queued, alreadyShared);
+    }
+
+    private int deliverPendingDriveShares(String contactLink) {
+        Object lock = driveShareLocks.computeIfAbsent(contactLink, ignored -> new Object());
+        synchronized (lock) {
+            if (closed) return 0;
+            Pending entry = pending.get(contactLink);
+            if (entry == null || !entry.saved) return 0;
+            int delivered = 0;
+            try {
+                for (var queued : sharedDriveStore.pendingShares(contactLink)) {
+                    Path file = Path.of(queued.path());
+                    try {
+                        if (!java.nio.file.Files.isRegularFile(file) && !java.nio.file.Files.isDirectory(file)) {
+                            sharedDriveStore.completePendingShare(contactLink, file);
+                            System.err.println("Discarded queued share for missing file: " + file.getFileName());
+                            continue;
+                        }
+                        if (sharedDriveStore.isPublishedForPathAndContact(file, contactLink)) {
+                            sharedDriveStore.completePendingShare(contactLink, file);
+                            continue;
+                        }
+                        sendDriveShareOnce(entry, contactLink, queued.id(), file);
+                        sharedDriveStore.completePendingShare(contactLink, file);
+                        delivered++;
+                        signalDriveShare(contactLink);
+                    } catch (Exception transportFailure) {
+                        // Keep this and all later selections queued; the next authenticated
+                        // online signal will retry them.
+                        System.err.println("Drive share remains queued for " + contactLink + ": " + safeMessage(transportFailure));
+                        break;
+                    }
+                }
+            } catch (Exception error) {
+                System.err.println("Could not process queued Drive shares: " + safeMessage(error));
+            }
+            return delivered;
+        }
+    }
+
+    private void sendDriveShareOnce(Pending entry, String canonical, String shareId, Path file) throws Exception {
+        MessageSession session = messageSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
+        synchronized (session) {
+            if (closed) throw new IllegalStateException("Contact service is stopped.");
+            if (session.socket != null && !session.socket.isClosed() && !session.firstMessage) {
+                try { ContactMessaging.ping(session.socket, entry.material); }
+                catch (Exception stale) {
+                    connections.remove(session.socket);
+                    try { session.socket.close(); } catch (Exception ignored) {}
+                    session.socket = null;
+                    session.firstMessage = true;
+                }
+            }
+            if (session.socket == null || session.socket.isClosed()) {
+                int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
+                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000);
+                session.firstMessage = true;
+                connections.add(session.socket);
+            }
+            try {
+                ContactMessaging.sendDriveShare(session.socket, entry.material, sharedDriveStore, canonical, shareId, file,
+                        session.firstMessage, ignored -> {}, () -> false);
+                session.firstMessage = false;
+            } catch (Exception error) {
+                connections.remove(session.socket);
+                try { session.socket.close(); } catch (Exception ignored) {}
+                session.socket = null;
+                session.firstMessage = true;
+                throw error;
+            }
+        }
     }
 
     public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status) throws Exception {
@@ -73,9 +205,78 @@ public final class ContactManager implements AutoCloseable {
         });
     }
 
+    public void driveEntryMoved(Path before, Path after) throws Exception { sharedDriveStore.moved(before, after); }
+
+    public List<FolderAccess.Entry> browseSharedFolder(String link, String id, String relative,
+                                                     java.util.function.Consumer<String> status) throws Exception {
+        var result = new java.util.concurrent.atomic.AtomicReference<List<FolderAccess.Entry>>();
+        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+            result.set(ContactMessaging.browseFolder(session.socket, entry.material, id, relative, session.firstMessage, sharedDriveStore, canonical));
+            return null;
+        });
+        signalDriveShare(canonicalLink(link));
+        return result.get();
+    }
+
+    public void downloadSharedFolderFile(String link, String id, String relative, Path directory,
+                                         java.util.function.Consumer<String> status) throws Exception {
+        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+            ContactMessaging.downloadFolderFile(session.socket, entry.material, id, relative, directory, canonical, session.firstMessage);
+            return null;
+        });
+    }
+
+    public void downloadSharedFolder(String link, String id, String relative, Path destination,
+                                     java.util.function.Consumer<String> status) throws Exception {
+        downloadSharedFolder(link, id, relative, destination, status, 0, new int[]{0});
+    }
+
+    private void downloadSharedFolder(String link, String id, String relative, Path destination,
+                                      java.util.function.Consumer<String> status, int depth, int[] count) throws Exception {
+        if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
+        var entries = browseSharedFolder(link, id, relative, status);
+        java.nio.file.Files.createDirectories(destination);
+        if (java.nio.file.Files.isSymbolicLink(destination)) throw new IOException("Download destination cannot be a link.");
+        for (var child : entries) {
+            if (++count[0] > 100000) throw new IOException("Folder download exceeds 100,000 entries.");
+            String path = relative.isEmpty() ? child.name() : relative + "/" + child.name();
+            status.accept("Downloading " + path + "…");
+            if (child.folder()) downloadSharedFolder(link, id, path, destination.resolve(child.name()), status, depth + 1, count);
+            else downloadSharedFolderFile(link, id, path, destination, status);
+        }
+    }
+
     private void signalContactOnline(String link) {
         try { presenceListener.accept(link); }
         catch (RuntimeException e) { System.err.println("Presence update failed: " + safeMessage(e)); }
+        if (!closed) {
+            try { driveShareRetries.execute(() -> {
+                int sent = deliverPendingDriveShares(link);
+                if (sent > 0) System.out.println("Delivered " + sent + " queued Drive share(s) to " + link);
+            }); } catch (RejectedExecutionException ignored) { }
+        }
+    }
+
+    /** Retry offline shares in the background, even while the user is viewing Drive. */
+    private void retryPendingDriveShares() {
+        if (closed || !tor.socksReady().isDone()) return;
+        try {
+            for (String link : sharedDriveStore.pendingShareContacts()) {
+                if (closed) return;
+                if (!driveShareChecks.add(link)) continue;
+                try {
+                    driveShareRetries.execute(() -> {
+                        try {
+                            if (isOnline(link)) deliverPendingDriveShares(link);
+                        } catch (Exception ignored) {
+                            // Offline contacts are expected; keep their queue for the next sweep.
+                        } finally { driveShareChecks.remove(link); }
+                    });
+                } catch (RejectedExecutionException ignored) { driveShareChecks.remove(link); return; }
+            }
+        } catch (Exception error) {
+            if (!closed) System.err.println("Could not check queued Drive shares: " + safeMessage(error));
+        }
     }
 
     public boolean isOnline(String link) throws Exception {
@@ -87,6 +288,7 @@ public final class ContactManager implements AutoCloseable {
         int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
         try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000)) {
             ContactMessaging.ping(socket, entry.material, true);
+            signalContactOnline(canonical);
             return true;
         }
     }
@@ -365,6 +567,8 @@ public final class ContactManager implements AutoCloseable {
         if (closed) return;
         closed = true;
         retries.shutdownNow();
+        driveShareRetries.shutdownNow();
+        driveShareRetryScheduler.shutdownNow();
         for (var socket : connections) try { socket.close(); } catch (Exception ignored) {}
         messageSessions.clear();
         for (var entry : pending.values()) remove(entry);

@@ -179,11 +179,14 @@
 .drive-sort-heading:hover { -fx-text-fill: #dbe7f5; }
 .drive-entry-row { -fx-min-height: 58; -fx-pref-height: 58; -fx-padding: 0 14; -fx-border-color: transparent transparent #252c35 transparent; -fx-cursor: hand; }
 .drive-entry-row:hover { -fx-background-color: rgba(59, 130, 246, 0.07); }
+.drive-entry-row-selected { -fx-background-color: #263443; }
+.drive-entry-row-selected:hover { -fx-background-color: #2d3b4b; }
 .drive-entry-more { -fx-background-color: transparent; -fx-border-color: transparent; -fx-background-radius: 16; -fx-min-width: 30; -fx-pref-width: 30; -fx-max-width: 30; -fx-min-height: 30; -fx-pref-height: 30; -fx-max-height: 30; -fx-padding: 3; -fx-cursor: hand; }
 .drive-entry-more:hover { -fx-background-color: #293442; }
 .drive-menu-glyph { -fx-fill: transparent; -fx-stroke: #aeb9c7; -fx-stroke-width: 1.8; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
 .drive-entry-more .drive-menu-glyph { -fx-stroke-width: 3; -fx-scale-x: 0.68; -fx-scale-y: 0.68; }
-.context-menu.drive-entry-menu { -fx-background-color: #1c222a; -fx-background-radius: 8; -fx-border-color: #35404d; -fx-border-radius: 8; -fx-padding: 5; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 14, 0.2, 0, 4); }
+.context-menu.drive-entry-menu { -fx-background-color: #1c222a; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: #35404d; -fx-border-insets: 0; -fx-border-radius: 8; -fx-padding: 5; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 14, 0.2, 0, 4); }
+.drive-entry-menu .container { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0; -fx-effect: none; }
 .drive-entry-menu .menu-item { -fx-padding: 8 14 8 10; -fx-background-radius: 5; }
 .drive-entry-menu .menu-item .label { -fx-text-fill: #dce3ec; -fx-font-size: 12px; }
 .drive-entry-menu .menu-item:focused { -fx-background-color: #293442; }
@@ -567,9 +570,36 @@
 .drive-share-dialog .drive-share-avatar { -fx-min-width: 34; -fx-pref-width: 34; -fx-max-width: 34; -fx-min-height: 34; -fx-pref-height: 34; -fx-max-height: 34; -fx-alignment: center; -fx-background-color: #26384d; -fx-background-radius: 50%; -fx-text-fill: #9dc5ff; -fx-font-weight: 700; }
 .drive-share-dialog .drive-share-username { -fx-text-fill: #e8edf4; -fx-font-size: 13px; -fx-font-weight: 600; }
 .drive-share-dialog .drive-share-address { -fx-text-fill: #8290a1; -fx-font-size: 10px; }
+.drive-share-dialog .drive-share-status { -fx-text-fill: #8eb8f5; -fx-font-size: 10px; -fx-background-color: #263443; -fx-background-radius: 10; -fx-padding: 4 8; }
+.drive-share-dialog .drive-share-section-title { -fx-text-fill: #d7e0eb; -fx-font-size: 12px; -fx-font-weight: 600; -fx-padding: 4 0 0 2; }
+.drive-share-dialog .drive-share-list .placeholder .label { -fx-text-fill: #8290a1; -fx-font-size: 11px; }
+.drive-share-dialog .drive-share-remove { -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28; -fx-padding: 4; -fx-background-color: transparent; -fx-border-color: transparent; -fx-cursor: hand; }
+.drive-share-dialog .drive-share-remove:hover { -fx-background-color: #382329; -fx-background-radius: 50%; }
+.drive-share-dialog .drive-share-remove .drive-menu-glyph { -fx-stroke: #9ba8b8; }
+.drive-share-dialog .drive-share-remove:hover .drive-menu-glyph { -fx-stroke: #f08a8a; }
 .drive-share-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 15; -fx-background-radius: 6; -fx-border-radius: 6; }
 .drive-share-dialog .drive-dialog-primary { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
 .drive-share-dialog .drive-dialog-primary:hover { -fx-background-color: #4b91ff; }
+.drive-share-dialog .drive-dialog-danger { -fx-background-color: #382329; -fx-border-color: #63343d; -fx-text-fill: #f08a8a; }
+.drive-share-dialog .drive-dialog-danger:hover { -fx-background-color: #4a2b33; }
+.drive-notice-dialog { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #35404d; -fx-border-width: 1; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 15; }
+.drive-notice-dialog > *.button-bar { -fx-background-color: transparent; -fx-padding: 10 0 0 0; }
+.drive-notice-dialog > *.button-bar > *.container { -fx-background-color: transparent; }
+.drive-notice-dialog .drive-notice-body { -fx-spacing: 14; -fx-background-color: transparent; }
+.drive-notice-dialog .drive-rename-title { -fx-text-fill: #e8edf4; -fx-font-size: 15px; -fx-font-weight: 600; }
+.drive-notice-dialog .drive-dialog-titlebar { -fx-min-height: 30; -fx-pref-height: 30; -fx-padding: 0 0 5 0; -fx-background-color: transparent; -fx-cursor: move; }
+.drive-notice-dialog .drive-dialog-close { -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #8d99a8; -fx-font-size: 19px; -fx-cursor: hand; }
+.drive-notice-dialog .drive-dialog-close:hover { -fx-background-color: #293442; -fx-background-radius: 5; -fx-text-fill: #e8edf4; }
+.drive-notice-dialog .drive-menu-glyph { -fx-min-width: 20; -fx-pref-width: 20; -fx-max-width: 20; -fx-min-height: 20; -fx-pref-height: 20; -fx-max-height: 20; -fx-fill: transparent; -fx-stroke: #8bbaff; -fx-stroke-width: 1.8; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.76; -fx-scale-y: 0.76; }
+.drive-notice-dialog .drive-notice-icon { -fx-min-width: 42; -fx-pref-width: 42; -fx-max-width: 42; -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-alignment: center; -fx-background-color: #202c3a; -fx-background-radius: 50%; }
+.drive-notice-dialog .drive-notice-error { -fx-background-color: #382329; }
+.drive-notice-dialog .drive-notice-error .drive-menu-glyph { -fx-stroke: #f08a8a; }
+.drive-notice-dialog .drive-notice-warning { -fx-background-color: #393222; }
+.drive-notice-dialog .drive-notice-warning .drive-menu-glyph { -fx-stroke: #e8bd69; }
+.drive-notice-dialog .drive-notice-message { -fx-text-fill: #d7e0eb; -fx-font-size: 13px; -fx-line-spacing: 3px; }
+.drive-notice-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 16; -fx-background-radius: 6; -fx-border-radius: 6; }
+.drive-notice-dialog .drive-dialog-primary { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
+.drive-notice-dialog .drive-dialog-primary:hover { -fx-background-color: #4b91ff; }
 .drive-delete-dialog { -fx-background-color: #151a20; -fx-background-insets: 0; -fx-border-color: #35404d; -fx-border-width: 1; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 14; }
 .drive-delete-dialog > .header-panel { -fx-background-color: transparent; -fx-padding: 4 4 8 4; }
 .drive-delete-dialog > .header-panel > .label { -fx-text-fill: #e8edf4; -fx-font-size: 16px; -fx-font-weight: 600; }
