@@ -213,11 +213,15 @@ final class MessengerPane extends BorderPane {
     private boolean activeVoiceTransfer;
     private boolean sending;
     private Runnable refreshSharedDrive;
+    private final DownloadsPane downloadsPane;
 
     private boolean loaded;
 
     MessengerPane(ContactManager manager, String username, Runnable onAddContact) {
         this.manager = manager;
+        downloadsPane = new DownloadsPane(manager.downloads().queue(), () -> {
+            if (refreshSharedDrive != null) refreshSharedDrive.run();
+        });
         localUsername = username;
         this.onAddContact = onAddContact;
         activePane = this;
@@ -623,7 +627,10 @@ final class MessengerPane extends BorderPane {
         mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
         mainSplit.getDividers().getFirst().positionProperty()
                 .addListener((obs, oldPosition, newPosition) -> clampContactColumn(mainSplit, leftColumns));
-        setCenter(mainSplit);
+        StackPane workspace = new StackPane(mainSplit, downloadsPane);
+        StackPane.setAlignment(downloadsPane, Pos.BOTTOM_RIGHT);
+        StackPane.setMargin(downloadsPane, new Insets(12));
+        setCenter(workspace);
         getStyleClass().add("messenger-pane");
         contactList.getStyleClass().add("contact-list");
         setPadding(Insets.EMPTY);
@@ -631,7 +638,7 @@ final class MessengerPane extends BorderPane {
 
         poll = new Timeline(new KeyFrame(Duration.seconds(2), e -> refreshMessages()));
         poll.setCycleCount(Timeline.INDEFINITE);
-        presencePoll = new Timeline(new KeyFrame(Duration.seconds(15), e -> checkContactsPresence()));
+        presencePoll = new Timeline(new KeyFrame(Duration.seconds(5), e -> checkContactsPresence()));
         presencePoll.setCycleCount(Timeline.INDEFINITE);
         seenPoll = new Timeline(new KeyFrame(Duration.millis(500), e -> markVisibleIncomingMessagesSeen()));
         seenPoll.setCycleCount(Timeline.INDEFINITE);
@@ -717,9 +724,9 @@ final class MessengerPane extends BorderPane {
         long now = System.currentTimeMillis();
         for (ContactStore.Contact contact : contacts) {
             Presence previous = presence.get(contact.link());
-            // Presence changes are also pushed over authenticated PINGs. This is the
-            // fallback for missed announcements and matches the 15-second poll cadence.
-            if (previous != null && now - previous.checkedAt() < TimeUnit.SECONDS.toMillis(15)) continue;
+            // Retry unreachable contacts promptly; online contacts keep the quieter cadence.
+            long retrySeconds = previous != null && previous.online() ? 15 : 5;
+            if (previous != null && now - previous.checkedAt() < TimeUnit.SECONDS.toMillis(retrySeconds)) continue;
             if (!checkingPresence.add(contact.link())) continue;
             long requestStartedAt = System.currentTimeMillis();
             presence.putIfAbsent(contact.link(), Presence.checking());
@@ -2042,7 +2049,12 @@ final class MessengerPane extends BorderPane {
             addMenu.show(addButton, Side.BOTTOM, 0, 2);
         });
         shareFiles.setOnAction(event -> shareSelectedDriveEntries());
-        HBox actionGroup = new HBox(8, importing, shareFiles, addFiles, addFolder);
+        Button downloadsButton = new Button();
+        downloadsButton.setGraphic(driveMenuGlyph("M12 3v12 M7 10l5 5 5-5 M4 19h16"));
+        downloadsButton.getStyleClass().addAll("drive-icon-action-button", "drive-add-folder-button");
+        downloadsButton.setAccessibleText("Downloads"); downloadsButton.setTooltip(new Tooltip("Downloads"));
+        downloadsButton.setOnAction(event -> downloadsPane.reveal());
+        HBox actionGroup = new HBox(8, importing, downloadsButton, shareFiles, addFiles, addFolder);
         actionGroup.setAlignment(Pos.CENTER_RIGHT);
         actionGroup.getStyleClass().add("drive-header-actions");
         HBox header = new HBox(16, heading, spacer, actionGroup);
@@ -2321,7 +2333,7 @@ final class MessengerPane extends BorderPane {
         action.setOnAction(event -> {
             event.consume();
             if (file.folder()) {
-                new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers).show();
+                new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, downloadsPane::reveal).show();
             } else if (file.downloaded()) {
                 try { java.awt.Desktop.getDesktop().open(path.toFile()); }
                 catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
@@ -2347,7 +2359,7 @@ final class MessengerPane extends BorderPane {
         row.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 if (file.folder()) {
-                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers).show();
+                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, downloadsPane::reveal).show();
                 } else if (file.downloaded()) {
                     try { java.awt.Desktop.getDesktop().open(path.toFile()); }
                     catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
@@ -3069,7 +3081,7 @@ final class MessengerPane extends BorderPane {
                     showDriveAlert(Alert.AlertType.INFORMATION, "Access removed",
                             removedCount == 0 ? "This contact had no active shares for the selected files."
                                     : "The selected files are no longer available to " + contact.username()
-                                            + ". Their saved offers may remain listed until they remove them.");
+                                            + ". Their share list will update automatically when both apps are connected.");
                 });
             } catch (Exception error) {
                 Platform.runLater(() -> showDriveAlert(Alert.AlertType.ERROR, "Could not remove access", error.getMessage()));
@@ -3087,23 +3099,8 @@ final class MessengerPane extends BorderPane {
     }
 
     private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender) {
-        status.setText("Requesting " + file.name() + " from " + sender + "…");
-        driveWorkers.execute(() -> {
-            try {
-                manager.downloadSharedFile(file.contactLink(), file.id(), statusText -> Platform.runLater(() -> status.setText(statusText)));
-                Platform.runLater(() -> {
-                    status.setText("Downloaded " + file.name() + " to Drive’s Shared folder.");
-                    if (refreshSharedDrive != null) refreshSharedDrive.run();
-                });
-            } catch (Exception error) {
-                Platform.runLater(() -> {
-                    status.setText("Could not download " + file.name() + ".");
-                    showDriveAlert(Alert.AlertType.ERROR, "Could not download file",
-                            "Make sure " + sender + " is online and still sharing this file.\n\n"
-                                    + (error.getMessage() == null ? "Download failed." : error.getMessage()));
-                });
-            }
-        });
+        manager.downloads().file(file, sender);
+        downloadsPane.reveal();
     }
 
     private static String shortAddress(String address) {

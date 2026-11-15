@@ -16,6 +16,10 @@ Folders retain their share IDs when renamed inside My files. Access is read only
 
 Update both devices before testing folder sharing; older builds do not understand folder offers or browsing requests. Existing folders previously flattened into individual file offers need to be shared again as folders.
 
+When contacts reconnect, the owner sends an authenticated inventory of their active shares. Offers that have been revoked are removed automatically from the recipient's Shared with me section, including folder offers. Offline or failed checks do not remove cached shares. Removing access also attempts to send the update immediately; downloaded copies are kept on disk.
+
+Drive downloads open a floating **Downloads** panel with live progress, waiting, verification, completion, and failure states. Offline downloads wait for the owner and retry automatically, including when an authenticated presence check reports them online. The panel can be minimized or hidden while work continues; reopen it with the download icon in the Drive header. Each active item can be cancelled and failed items can be retried. File and folder downloads use the same panel. Completed folder members are kept across connection retries; an interrupted file restarts from the beginning. This download queue lasts for the current app session.
+
 Run `./mvnw.cmd javafx:run` (or run `HelloApplication` in your IDE). The window starts a local HTTP server and Tor in the background. Watch the console for:
 
 ```text

@@ -88,6 +88,43 @@ class FolderSharingTest {
     }
 
     @Test @Timeout(30)
+    void reconnectRemovesRevokedOffersOnlyAndKeepsDownloadedCopies() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("owner-db"));
+        var recipient = new SharedDriveStore(temp.resolve("recipient-db"));
+        Path folder = Files.createDirectory(temp.resolve("folder"));
+        Path file = Files.writeString(temp.resolve("source.txt"), "source");
+        Path downloaded = Files.writeString(temp.resolve("saved-copy.txt"), "keep my copy");
+        String folderId = UUID.randomUUID().toString(), fileId = UUID.randomUUID().toString();
+        String otherOwnerId = UUID.randomUUID().toString();
+        owner.publish(folderId, "recipient", "folder", folder, -1, 0);
+        owner.publish(fileId, "recipient", "source.txt", file, Files.size(file), 0);
+        recipient.recordOffer(folderId, "owner", "folder", -1, 0);
+        recipient.recordOffer(fileId, "owner", "source.txt", Files.size(file), 0);
+        recipient.markDownloaded(fileId, downloaded);
+        recipient.recordOffer(otherOwnerId, "someone-else", "unrelated", -1, 0);
+
+        // Owner revokes while disconnected: recipient must retain its cached offers.
+        owner.unpublish(fileId);
+        assertEquals(3, recipient.all().size());
+        try (var session = new Session(recipient, "owner", false)) {
+            ContactMessaging.syncDriveShares(session.client, material(true), owner, "recipient", true);
+            assertEquals(Set.of(folderId, otherOwnerId), recipient.all().stream().map(SharedDriveStore.SharedFile::id).collect(java.util.stream.Collectors.toSet()));
+            assertEquals("keep my copy", Files.readString(downloaded));
+            ContactMessaging.syncDriveShares(session.client, material(true), owner, "recipient", false);
+            assertEquals(2, recipient.all().size());
+        }
+        owner.unpublish(folderId);
+        try (var session = new Session(recipient, "owner", false)) {
+            // An authenticated empty inventory must remove the last revoked folder.
+            ContactMessaging.syncDriveShares(session.client, material(true), owner, "recipient", true);
+            assertEquals(List.of(otherOwnerId), recipient.all().stream().map(SharedDriveStore.SharedFile::id).toList());
+        }
+        recipient.recordOffer(fileId, "owner", "source.txt", Files.size(file), 0);
+        assertThrows(IllegalArgumentException.class, () -> recipient.reconcileReceived("owner", List.of("invalid")));
+        assertEquals(2, recipient.all().size());
+    }
+
+    @Test @Timeout(30)
     void existingSingleFileSharesStillDownload() throws Exception {
         var owner = new SharedDriveStore(temp.resolve("owner"));
         var receiver = new SharedDriveStore(temp.resolve("receiver"));
@@ -103,6 +140,37 @@ class FolderSharingTest {
             ContactMessaging.downloadDriveShare(session.client, material(false), receiver, id, "owner", true, null);
             assertTrue(receiver.all().getFirst().downloaded());
             assertEquals("Existing file share", Files.readString(Path.of(receiver.all().getFirst().path())));
+        } finally {
+            if (previous == null) System.clearProperty("onion.dataDir"); else System.setProperty("onion.dataDir", previous);
+        }
+    }
+
+    @Test @Timeout(30)
+    void reportsNetworkProgressBeforeMarkingDownloadComplete() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("owner"));
+        var receiver = new SharedDriveStore(temp.resolve("receiver"));
+        Path source = temp.resolve("large.bin"); byte[] content = new byte[2 * 1024 * 1024];
+        new Random(42).nextBytes(content); Files.write(source, content);
+        String id = UUID.randomUUID().toString();
+        try (var session = new Session(receiver, "owner", false)) {
+            ContactMessaging.sendDriveShare(session.client, material(true), owner, "recipient", id, source, true, ignored -> {}, () -> false);
+        }
+        String previous = System.getProperty("onion.dataDir");
+        System.setProperty("onion.dataDir", temp.resolve("downloads").toString());
+        var callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        var intermediate = new java.util.concurrent.atomic.AtomicBoolean();
+        var verifying = new java.util.concurrent.atomic.AtomicBoolean();
+        try (var session = new Session(owner, "recipient", true)) {
+            ContactMessaging.downloadDriveShare(session.client, material(false), receiver, id, "owner", true, null,
+                    new kakha.kudava.onionp2p.drive.DownloadQueue.Progress() {
+                        public void update(long received, long total) {
+                            callbacks.incrementAndGet();
+                            if (received > 0 && received < total) intermediate.set(true);
+                        }
+                        public void stage(String detail) { verifying.set(true); }
+                    });
+            assertTrue(callbacks.get() > 2); assertTrue(intermediate.get()); assertTrue(verifying.get());
+            assertArrayEquals(content, Files.readAllBytes(Path.of(receiver.all().getFirst().path())));
         } finally {
             if (previous == null) System.clearProperty("onion.dataDir"); else System.setProperty("onion.dataDir", previous);
         }

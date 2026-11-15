@@ -218,6 +218,37 @@ public final class SharedDriveStore {
         }
     }
 
+    public synchronized List<String> publishedIds(String contactLink) throws SQLException {
+        var ids = new ArrayList<String>();
+        try (var c = connect(); var s = c.prepareStatement("SELECT share_id FROM drive_share_offers WHERE contact_link=? ORDER BY share_id")) {
+            s.setString(1, contactLink);
+            try (var rows = s.executeQuery()) { while (rows.next()) ids.add(rows.getString(1)); }
+        }
+        return List.copyOf(ids);
+    }
+
+    /** Apply only a complete authenticated owner inventory. Downloaded files stay on disk. */
+    public synchronized int reconcileReceived(String ownerLink, List<String> activeIds) throws SQLException {
+        for (String id : activeIds) UUID.fromString(id);
+        try (var c = connect()) {
+            c.setAutoCommit(false);
+            try (var statement = c.createStatement()) {
+                statement.execute("CREATE TEMP TABLE active_drive_shares (share_id TEXT PRIMARY KEY)");
+                try (var insert = c.prepareStatement("INSERT OR IGNORE INTO active_drive_shares VALUES(?)")) {
+                    for (String id : activeIds) { insert.setString(1, id); insert.addBatch(); }
+                    insert.executeBatch();
+                }
+                int removed = 0;
+                for (String table : List.of("shared_drive_offers", "shared_drive_files")) {
+                    try (var delete = c.prepareStatement("DELETE FROM " + table + " WHERE contact_link=? AND NOT EXISTS (SELECT 1 FROM active_drive_shares a WHERE a.share_id=" + table + ".share_id)")) {
+                        delete.setString(1, ownerLink); removed += delete.executeUpdate();
+                    }
+                }
+                c.commit(); return removed;
+            } catch (SQLException error) { c.rollback(); throw error; }
+        }
+    }
+
     public synchronized SharedFile findPublished(String id, String requesterLink) throws SQLException {
         try (var c = connect(); var s = c.prepareStatement("SELECT share_id,contact_link,name,file_path,file_size,shared_at FROM drive_share_offers WHERE share_id=? AND contact_link=?")) {
             s.setString(1, id); s.setString(2, requesterLink);

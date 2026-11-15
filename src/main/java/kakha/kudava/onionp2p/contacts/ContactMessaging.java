@@ -4,6 +4,7 @@ import kakha.kudava.onionp2p.account.AppData;
 import kakha.kudava.onionp2p.messaging.MessageStore;
 import kakha.kudava.onionp2p.drive.SharedDriveStore;
 import kakha.kudava.onionp2p.drive.FolderAccess;
+import kakha.kudava.onionp2p.drive.DownloadQueue;
 
 import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator;
@@ -39,6 +40,7 @@ public final class ContactMessaging {
     public static final int MAX_BODY_BYTES = 4096;
     public static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     private static final int CHUNK_BYTES = 64 * 1024;
+    private static final int MAX_SHARE_INVENTORY = 100000;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private ContactMessaging() {}
@@ -153,8 +155,13 @@ public final class ContactMessaging {
 
     static void downloadDriveShare(Socket socket, ContactRendezvous.Material material, SharedDriveStore sharedStore,
                                    String shareId, String link, boolean newConnection, Runnable updated) throws Exception {
+        downloadDriveShare(socket, material, sharedStore, shareId, link, newConnection, updated, null);
+    }
+
+    static void downloadDriveShare(Socket socket, ContactRendezvous.Material material, SharedDriveStore sharedStore,
+                                   String shareId, String link, boolean newConnection, Runnable updated, DownloadQueue.Progress progress) throws Exception {
         sendControl(socket, material, (byte) 5, uuidBytes(shareId), newConnection);
-        socket.setSoTimeout(10 * 60 * 1000);
+        socket.setSoTimeout(30000);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
         byte[] idBytes = new byte[16]; input.readFully(idBytes);
@@ -178,7 +185,16 @@ public final class ContactMessaging {
         }
         if (type != 6 || length < 16 || length > MAX_FILE_BYTES + 4_400) throw new IOException("The sender did not provide the shared file.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
-        receiveFile(input, output, material, null, sharedStore, link, messageId, timestamp, nonce, aad, length, true, true, shareId, updated);
+        receiveFile(input, output, material, null, sharedStore, link, messageId, timestamp, nonce, aad, length, true, true, shareId, updated, null, progress);
+    }
+
+    static void syncDriveShares(Socket socket, ContactRendezvous.Material material, SharedDriveStore store,
+                                String recipient, boolean first) throws Exception {
+        var ids = store.publishedIds(recipient);
+        if (ids.size() > MAX_SHARE_INVENTORY) throw new IOException("Too many shares to reconcile.");
+        var payload = ByteBuffer.allocate(4 + 16 * ids.size()).putInt(ids.size());
+        for (String id : ids) payload.put(uuidBytes(id));
+        sendControl(socket, material, (byte) 11, payload.array(), first);
     }
 
     static java.util.List<FolderAccess.Entry> browseFolder(Socket socket, ContactRendezvous.Material material,
@@ -198,13 +214,18 @@ public final class ContactMessaging {
 
     static void downloadFolderFile(Socket socket, ContactRendezvous.Material material, String shareId,
                                    String relative, Path directory, String link, boolean first) throws Exception {
+        downloadFolderFile(socket, material, shareId, relative, directory, link, first, null);
+    }
+
+    static void downloadFolderFile(Socket socket, ContactRendezvous.Material material, String shareId,
+                                   String relative, Path directory, String link, boolean first, DownloadQueue.Progress progress) throws Exception {
         sendFolderRequest(socket, material, (byte) 10, shareId, relative, first);
-        socket.setSoTimeout(10 * 60 * 1000);
+        socket.setSoTimeout(30000);
         var response = readDriveResponse(socket, material);
         if (response.type() != 6 || response.length() < 16 || response.length() > MAX_FILE_BYTES + 4400)
             throw new IOException("The sender did not provide the file.");
         receiveFile(response.input(), response.output(), material, null, null, link, response.id(), response.timestamp(),
-                response.nonce(), response.aad(), response.length(), true, true, null, null, directory);
+                response.nonce(), response.aad(), response.length(), true, true, null, null, directory, progress);
     }
 
     private static void sendFolderRequest(Socket socket, ContactRendezvous.Material material, byte type,
@@ -334,10 +355,31 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type < 0 || type > 10 || type == 9) throw new IOException("Unsupported message type.");
+        if (type < 0 || type > 11 || type == 9) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
+        if (type == 11) {
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] payload;
+            try { payload = crypt(Cipher.DECRYPT_MODE, messageKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(messageKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            int removed;
+            try {
+                ByteBuffer inventory = ByteBuffer.wrap(payload);
+                if (inventory.remaining() < 4) throw new IOException("Invalid share inventory.");
+                int count = inventory.getInt();
+                if (count < 0 || count > MAX_SHARE_INVENTORY || inventory.remaining() != count * 16)
+                    throw new IOException("Invalid share inventory.");
+                var active = new java.util.ArrayList<String>(count);
+                for (int i = 0; i < count; i++) { byte[] bytes = new byte[16]; inventory.get(bytes); active.add(uuidString(bytes)); }
+                removed = sharedStore.reconcileReceived(link, active);
+            } finally { Arrays.fill(payload, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad);
+            if (removed > 0 && driveShareSignal != null) driveShareSignal.run();
+            return;
+        }
         if (type == 1) {
             receiveFile(input, output, material, store, sharedStore, link, id, timestamp, nonce, aad, length, captionFrames, false, null, driveShareSignal);
             return;
@@ -482,6 +524,14 @@ public final class ContactMessaging {
                                     MessageStore store, SharedDriveStore sharedStore, String link, String id, long timestamp, byte[] nonce,
                                     byte[] aad, int ciphertextLength, boolean captionFrames, boolean driveShare,
                                     String shareId, Runnable driveShareSignal, Path targetDirectory) throws Exception {
+        receiveFile(input, output, material, store, sharedStore, link, id, timestamp, nonce, aad, ciphertextLength,
+                captionFrames, driveShare, shareId, driveShareSignal, targetDirectory, null);
+    }
+
+    private static void receiveFile(DataInputStream input, DataOutputStream output, ContactRendezvous.Material material,
+                                    MessageStore store, SharedDriveStore sharedStore, String link, String id, long timestamp, byte[] nonce,
+                                    byte[] aad, int ciphertextLength, boolean captionFrames, boolean driveShare,
+                                    String shareId, Runnable driveShareSignal, Path targetDirectory, DownloadQueue.Progress progress) throws Exception {
         byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
         var cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(messageKey, "AES"), new GCMParameterSpec(128, nonce));
@@ -494,7 +544,10 @@ public final class ContactMessaging {
         String caption = "";
         long expectedSize = -1;
         try {
-            try (var decrypted = new DataInputStream(new CipherInputStream(new LimitedInputStream(input, ciphertextLength), cipher))) {
+            // Measure socket reads: GCM providers may buffer plaintext until authentication.
+            // Reporting only decrypted writes would leave the bar frozen during the transfer.
+            if (progress != null) progress.update(0, ciphertextLength);
+            try (var decrypted = new DataInputStream(new CipherInputStream(new LimitedInputStream(input, ciphertextLength, progress), cipher))) {
                 int nameLength = decrypted.readUnsignedShort();
                 if (nameLength < 1 || nameLength > 255) throw new IOException("Invalid attachment name.");
                 byte[] nameBytes = new byte[nameLength]; decrypted.readFully(nameBytes);
@@ -524,6 +577,7 @@ public final class ContactMessaging {
                     } finally { Arrays.fill(buffer, (byte) 0); }
                 }
             }
+            if (progress != null) progress.stage("Verifying download…");
             Path destination = uniquePath(destinationDirectory, fileName);
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
             try {
@@ -638,15 +692,21 @@ public final class ContactMessaging {
     private static final class LimitedInputStream extends InputStream {
         private final InputStream source;
         private long remaining;
-        LimitedInputStream(InputStream source, long length) { this.source = source; remaining = length; }
+        private final long length;
+        private final DownloadQueue.Progress progress;
+        LimitedInputStream(InputStream source, long length) { this(source, length, null); }
+        LimitedInputStream(InputStream source, long length, DownloadQueue.Progress progress) {
+            this.source = source; remaining = length; this.length = length; this.progress = progress;
+        }
+        private void advanced() { if (progress != null) progress.update(length - remaining, length); }
         @Override public int read() throws IOException {
             if (remaining == 0) return -1;
-            int value = source.read(); if (value >= 0) remaining--; return value;
+            int value = source.read(); if (value >= 0) { remaining--; advanced(); } return value;
         }
         @Override public int read(byte[] bytes, int offset, int length) throws IOException {
             if (remaining == 0) return -1;
             int count = source.read(bytes, offset, (int) Math.min(length, remaining));
-            if (count > 0) remaining -= count;
+            if (count > 0) { remaining -= count; advanced(); }
             return count;
         }
         @Override public void close() { /* The socket stream remains open for later chat messages. */ }

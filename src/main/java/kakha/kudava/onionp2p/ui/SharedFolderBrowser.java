@@ -22,6 +22,8 @@ final class SharedFolderBrowser {
     private final ContactManager manager;
     private final SharedDriveStore.SharedFile share;
     private final ExecutorService workers;
+    private final String sender;
+    private final Runnable showDownloads;
     private final Dialog<Void> dialog = new Dialog<>();
     private final ListView<FolderAccess.Entry> files = new ListView<>();
     private final Label location = new Label();
@@ -34,8 +36,9 @@ final class SharedFolderBrowser {
     private boolean busy;
 
     SharedFolderBrowser(Window owner, ContactManager manager, SharedDriveStore.SharedFile share,
-                        String sender, ExecutorService workers) {
+                        String sender, ExecutorService workers, Runnable showDownloads) {
         this.manager = manager; this.share = share; this.workers = workers;
+        this.sender = sender; this.showDownloads = showDownloads;
         dialog.initOwner(owner); dialog.initStyle(StageStyle.TRANSPARENT); dialog.setTitle(share.name());
         DialogPane pane = dialog.getDialogPane();
         pane.getStyleClass().add("drive-share-dialog");
@@ -86,7 +89,7 @@ final class SharedFolderBrowser {
     private String childPath(String name) { return relative.isEmpty() ? name : relative + "/" + name; }
     private void busy(boolean value) {
         busy = value; loading.setVisible(value); loading.setManaged(value);
-        back.setDisable(value || relative.isEmpty()); refresh.setDisable(value); download.setDisable(value); files.setDisable(value);
+        back.setDisable(value || relative.isEmpty()); refresh.setDisable(value); files.setDisable(value);
     }
     private void load(String path) {
         relative = path; int request = ++generation;
@@ -122,27 +125,8 @@ final class SharedFolderBrowser {
         try { Files.createDirectories(defaults); chooser.setInitialDirectory(defaults.toFile()); } catch (Exception ignored) {}
         var chosen = chooser.showDialog(dialog.getDialogPane().getScene().getWindow());
         if (chosen == null) return;
-        busy(true); status.setText("Preparing download…");
-        workers.execute(() -> {
-            try {
-                Path destination = chosen.toPath();
-                if (folder) {
-                    FolderAccess.validateName(name);
-                    // Atomically reserve a new directory; never merge with a previous download.
-                    for (int i = 0; ; i++) {
-                        Path candidate = chosen.toPath().resolve(name + (i == 0 ? "" : " (" + i + ")"));
-                        try { Files.createDirectory(candidate); destination = candidate; break; }
-                        catch (FileAlreadyExistsException exists) { if (i > 10000) throw exists; }
-                    }
-                }
-                java.util.function.Consumer<String> progress = text -> Platform.runLater(() -> status.setText(text));
-                if (folder) manager.downloadSharedFolder(share.contactLink(), share.id(), path, destination, progress);
-                else manager.downloadSharedFolderFile(share.contactLink(), share.id(), path, destination, progress);
-                Path saved = destination;
-                Platform.runLater(() -> { busy(false); status.setText("Downloaded to " + saved); });
-            } catch (Exception error) {
-                Platform.runLater(() -> { busy(false); status.setText("Download stopped: " + error.getMessage() + ". Completed files have been kept."); });
-            }
-        });
+        manager.downloads().folderItem(share, sender, path, name, folder, selected == null ? -1 : selected.size(), chosen.toPath());
+        dialog.close();
+        showDownloads.run();
     }
 }

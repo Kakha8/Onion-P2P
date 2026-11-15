@@ -1,0 +1,68 @@
+package kakha.kudava.onionp2p.drive;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import java.io.EOFException;
+import java.nio.file.Path;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+@Timeout(10)
+class DownloadQueueTest {
+    @Test void waitsOfflineThenAutomaticallyDownloadsOnReconnect() throws Exception {
+        AtomicBoolean online = new AtomicBoolean(); AtomicInteger work = new AtomicInteger();
+        var done = new CountDownLatch(1); var progressSeen = new AtomicBoolean();
+        try (var queue = new DownloadQueue(owner -> online.get(), 20)) {
+            queue.setListener(items -> items.forEach(item -> {
+                if (item.received() == 40 && item.state() == DownloadQueue.State.DOWNLOADING) progressSeen.set(true);
+                if (item.state() == DownloadQueue.State.COMPLETE) done.countDown();
+            }));
+            String id = queue.add("request", "alice", "Alice", "test.zip", 100, progress -> {
+                work.incrementAndGet(); progress.update(40, 100); progress.update(100, 100); return Path.of("saved.zip");
+            });
+            assertEquals(DownloadQueue.State.WAITING, queue.items().getFirst().state());
+            assertTrue(queue.items().getFirst().detail().contains("come online")); assertEquals(0, work.get());
+            online.set(true); queue.wake("alice");
+            assertTrue(done.await(5, TimeUnit.SECONDS)); assertEquals(1, work.get()); assertTrue(progressSeen.get());
+            assertEquals(id, queue.items().getFirst().id()); assertEquals(100, queue.items().getFirst().received());
+        }
+    }
+    @Test void interruptedDownloadRetriesWithoutManualRefresh() throws Exception {
+        var attempts = new AtomicInteger(); var done = new CountDownLatch(1); var waitingAfterDrop = new AtomicBoolean();
+        try (var queue = new DownloadQueue(owner -> true, 20)) {
+            queue.setListener(items -> items.forEach(item -> {
+                if (attempts.get() == 1 && item.state() == DownloadQueue.State.WAITING) waitingAfterDrop.set(true);
+                if (item.state() == DownloadQueue.State.COMPLETE) done.countDown();
+            }));
+            queue.add("request", "alice", "Alice", "test", 100, progress -> {
+                if (attempts.incrementAndGet() == 1) { progress.update(30, 100); throw new EOFException("Disconnected"); }
+                progress.update(100, 100); return Path.of("saved");
+            });
+            assertTrue(done.await(5, TimeUnit.SECONDS)); assertEquals(2, attempts.get()); assertTrue(waitingAfterDrop.get());
+        }
+    }
+    @Test void cancellationWhileWaitingNeverRunsTransferAndDuplicatesAreDeduplicated() throws Exception {
+        var work = new AtomicInteger();
+        try (var queue = new DownloadQueue(owner -> false, 20)) {
+            DownloadQueue.Work action = progress -> { work.incrementAndGet(); return Path.of("saved"); };
+            String first = queue.add("same", "alice", "Alice", "test", 100, action);
+            assertEquals(first, queue.add("same", "alice", "Alice", "test", 100, action));
+            assertEquals(1, queue.items().size()); queue.cancel(first); queue.wake("alice");
+            assertEquals(DownloadQueue.State.CANCELLED, queue.items().getFirst().state()); assertEquals(0, work.get());
+        }
+    }
+    @Test void revokedSharesFailRatherThanWaitForeverAndOtherDownloadsContinue() throws Exception {
+        var done = new CountDownLatch(1); var failure = new CountDownLatch(1);
+        try (var queue = new DownloadQueue(owner -> true, 20)) {
+            queue.setListener(items -> items.forEach(item -> {
+                if (item.state() == DownloadQueue.State.FAILED) failure.countDown();
+                if (item.state() == DownloadQueue.State.COMPLETE) done.countDown();
+            }));
+            queue.add("revoked", "alice", "Alice", "revoked", 100, progress -> { throw new java.io.IOException("Folder access was removed."); });
+            queue.add("valid", "bob", "Bob", "valid", 100, progress -> Path.of("saved"));
+            assertTrue(failure.await(5, TimeUnit.SECONDS)); assertTrue(done.await(5, TimeUnit.SECONDS));
+            assertEquals(DownloadQueue.State.FAILED, queue.items().getFirst().state());
+        }
+    }
+}

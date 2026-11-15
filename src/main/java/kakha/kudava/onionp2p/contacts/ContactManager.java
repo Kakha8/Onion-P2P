@@ -6,6 +6,8 @@ import kakha.kudava.onionp2p.tor.OnionServer;
 import kakha.kudava.onionp2p.tor.TorControl;
 import kakha.kudava.onionp2p.drive.SharedDriveStore;
 import kakha.kudava.onionp2p.drive.FolderAccess;
+import kakha.kudava.onionp2p.drive.DownloadQueue;
+import kakha.kudava.onionp2p.drive.SharedDownloads;
 
 import java.net.*;
 import java.io.IOException;
@@ -23,6 +25,7 @@ public final class ContactManager implements AutoCloseable {
     private final ContactStore store;
     private final MessageStore messageStore;
     private final SharedDriveStore sharedDriveStore;
+    private final SharedDownloads downloads;
     private final String localUsername;
     private final Consumer<Event> events;
     private volatile Consumer<String> presenceListener = ignored -> {};
@@ -31,6 +34,9 @@ public final class ContactManager implements AutoCloseable {
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
     private final Set<String> driveShareChecks = ConcurrentHashMap.newKeySet();
+    private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
+    private final Set<String> driveSyncDirty = ConcurrentHashMap.newKeySet();
+    private final ConcurrentMap<String, Long> lastDriveSync = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
         Thread thread = new Thread(r, "contact-retry"); thread.setDaemon(true); return thread;
     });
@@ -51,6 +57,7 @@ public final class ContactManager implements AutoCloseable {
         sharedDriveStore = new SharedDriveStore(directory);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
+        downloads = new SharedDownloads(this);
         driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 15, 15, TimeUnit.SECONDS);
     }
 
@@ -66,10 +73,12 @@ public final class ContactManager implements AutoCloseable {
         catch (RuntimeException e) { System.err.println("Drive-share update failed: " + safeMessage(e)); }
     }
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
+    public SharedDownloads downloads() { return downloads; }
 
     public int stopSharingDriveFile(Path file) throws Exception {
         int removed = sharedDriveStore.unpublishForPath(file);
         sharedDriveStore.removePendingShares(file);
+        for (var entry : pending.values()) if (entry.saved) requestDriveSync(entry.link, true);
         return removed;
     }
 
@@ -77,6 +86,7 @@ public final class ContactManager implements AutoCloseable {
         String canonical = canonicalLink(contactLink);
         int removed = sharedDriveStore.unpublishForPathAndContact(file, canonical);
         sharedDriveStore.removePendingShares(file, canonical);
+        requestDriveSync(canonical, true);
         return removed;
     }
 
@@ -198,9 +208,13 @@ public final class ContactManager implements AutoCloseable {
     }
 
     public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status) throws Exception {
+        downloadSharedFile(link, shareId, status, null);
+    }
+
+    public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status, DownloadQueue.Progress progress) throws Exception {
         withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
             ContactMessaging.downloadDriveShare(session.socket, entry.material, sharedDriveStore, shareId, canonical,
-                    session.firstMessage, () -> signalDriveShare(canonical));
+                    session.firstMessage, () -> signalDriveShare(canonical), progress);
             return null;
         });
     }
@@ -220,8 +234,13 @@ public final class ContactManager implements AutoCloseable {
 
     public void downloadSharedFolderFile(String link, String id, String relative, Path directory,
                                          java.util.function.Consumer<String> status) throws Exception {
+        downloadSharedFolderFile(link, id, relative, directory, status, null);
+    }
+
+    public void downloadSharedFolderFile(String link, String id, String relative, Path directory,
+                                         java.util.function.Consumer<String> status, DownloadQueue.Progress progress) throws Exception {
         withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
-            ContactMessaging.downloadFolderFile(session.socket, entry.material, id, relative, directory, canonical, session.firstMessage);
+            ContactMessaging.downloadFolderFile(session.socket, entry.material, id, relative, directory, canonical, session.firstMessage, progress);
             return null;
         });
     }
@@ -247,14 +266,39 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private void signalContactOnline(String link) {
+        downloads.queue().wake(link);
         try { presenceListener.accept(link); }
         catch (RuntimeException e) { System.err.println("Presence update failed: " + safeMessage(e)); }
-        if (!closed) {
-            try { driveShareRetries.execute(() -> {
-                int sent = deliverPendingDriveShares(link);
-                if (sent > 0) System.out.println("Delivered " + sent + " queued Drive share(s) to " + link);
-            }); } catch (RejectedExecutionException ignored) { }
-        }
+        requestDriveSync(link, false);
+    }
+
+    private void requestDriveSync(String link, boolean changed) {
+        if (closed) return;
+        if (changed) driveSyncDirty.add(link);
+        if (!driveSyncDirty.contains(link) && System.currentTimeMillis() - lastDriveSync.getOrDefault(link, 0L) < 30000) return;
+        if (!driveSyncInFlight.add(link)) return;
+        try {
+            driveShareRetries.execute(() -> {
+                boolean completed = false;
+                try {
+                    deliverPendingDriveShares(link);
+                    driveSyncDirty.remove(link);
+                    withMessageSession(link, ignored -> {}, () -> false, (entry, session, canonical) -> {
+                        ContactMessaging.syncDriveShares(session.socket, entry.material, sharedDriveStore, canonical, session.firstMessage);
+                        return null;
+                    });
+                    lastDriveSync.put(link, System.currentTimeMillis());
+                    completed = true;
+                } catch (Exception error) {
+                    // The stored owner inventory is the durable source of truth. Retry on reconnect.
+                    driveSyncDirty.add(link);
+                    if (!closed) System.err.println("Share reconciliation waiting for contact: " + safeMessage(error));
+                } finally {
+                    driveSyncInFlight.remove(link);
+                    if (completed && driveSyncDirty.contains(link)) requestDriveSync(link, false);
+                }
+            });
+        } catch (RejectedExecutionException ignored) { driveSyncInFlight.remove(link); }
     }
 
     /** Retry offline shares in the background, even while the user is viewing Drive. */
@@ -566,6 +610,7 @@ public final class ContactManager implements AutoCloseable {
     @Override public synchronized void close() {
         if (closed) return;
         closed = true;
+        downloads.close();
         retries.shutdownNow();
         driveShareRetries.shutdownNow();
         driveShareRetryScheduler.shutdownNow();
