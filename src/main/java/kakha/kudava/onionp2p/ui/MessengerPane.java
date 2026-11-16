@@ -636,11 +636,12 @@ final class MessengerPane extends BorderPane {
         mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
         mainSplit.getDividers().getFirst().positionProperty()
                 .addListener((obs, oldPosition, newPosition) -> clampContactColumn(mainSplit, leftColumns));
-        StackPane workspace = new StackPane(mainSplit, downloadsLauncher, downloadsPane);
-        StackPane.setAlignment(downloadsLauncher, Pos.BOTTOM_RIGHT);
-        StackPane.setMargin(downloadsLauncher, new Insets(16));
-        StackPane.setAlignment(downloadsPane, Pos.BOTTOM_RIGHT);
-        StackPane.setMargin(downloadsPane, new Insets(12));
+        mainSection.getChildren().addAll(downloadsLauncher, downloadsPane);
+        StackPane workspace = new StackPane(mainSplit);
+        StackPane.setAlignment(downloadsLauncher, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(downloadsLauncher, new Insets(16, 16, 16, 32));
+        StackPane.setAlignment(downloadsPane, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(downloadsPane, new Insets(12, 12, 12, 32));
         setCenter(workspace);
         getStyleClass().add("messenger-pane");
         contactList.getStyleClass().add("contact-list");

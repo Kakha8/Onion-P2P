@@ -13,6 +13,57 @@ import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FolderSharingTest {
+    @Test @Timeout(30)
+    void resumesAuthenticatedChunksOnANewConnectionAndChecksRevocation() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("owner-chunks"));
+        byte[] original = new byte[700000]; new Random(43).nextBytes(original);
+        Path source = Files.write(temp.resolve("large.bin"), original);
+        String id = UUID.randomUUID().toString();
+        owner.publish(id, "recipient", "large.bin", source, original.length, System.currentTimeMillis());
+        var download = new kakha.kudava.onionp2p.drive.ResumableFile();
+        Path saved = temp.resolve("saved");
+        var offsets = new ArrayList<Long>();
+        var progress = new kakha.kudava.onionp2p.drive.DownloadQueue.Progress() {
+            public void update(long received, long total) {} public void stage(String detail) {}
+        };
+        try (var session = new Session(owner, "recipient", true)) {
+            assertThrows(SocketException.class, () -> download.download(saved, (offset, version) -> {
+                offsets.add(offset);
+                if (offset > 0) throw new SocketException("Owner went offline");
+                return ContactMessaging.downloadChunk(session.client, material(false), id, "", offset, version, true);
+            }, progress));
+        }
+        assertEquals(List.of(0L, 262144L), offsets);
+        try (var session = new Session(owner, "recipient", true)) {
+            var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+            Path result = download.download(saved, (offset, version) -> {
+                assertTrue(offset >= 262144);
+                return ContactMessaging.downloadChunk(session.client, material(false), id, "", offset, version, first.getAndSet(false));
+            }, progress);
+            assertArrayEquals(original, Files.readAllBytes(result));
+            owner.unpublish(id);
+            assertThrows(IOException.class, () -> ContactMessaging.downloadChunk(session.client, material(false), id, "", 0, "", false));
+        }
+    }
+
+    @Test @Timeout(30)
+    void changedSourceIsNeverAppendedToAPartialDownload() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("owner-changed"));
+        Path source = Files.write(temp.resolve("change.bin"), new byte[300000]);
+        String id = UUID.randomUUID().toString();
+        owner.publish(id, "recipient", "change.bin", source, 300000, System.currentTimeMillis());
+        var download = new kakha.kudava.onionp2p.drive.ResumableFile();
+        try (var session = new Session(owner, "recipient", true)) {
+            var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+            assertThrows(IOException.class, () -> download.download(temp.resolve("changed-output"), (offset, version) -> {
+                if (offset > 0) Files.write(source, new byte[100]);
+                return ContactMessaging.downloadChunk(session.client, material(false), id, "", offset, version, first.getAndSet(false));
+            }, new kakha.kudava.onionp2p.drive.DownloadQueue.Progress() {
+                public void update(long received, long total) {} public void stage(String detail) {}
+            }));
+        }
+        try (var files = Files.list(temp.resolve("changed-output"))) { assertEquals(0, files.count()); }
+    }
     @TempDir Path temp;
     private ContactRendezvous.Material material(boolean owner) {
         byte[] a = new byte[32], b = new byte[32], secret = new byte[32];

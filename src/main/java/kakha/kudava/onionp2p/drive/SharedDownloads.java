@@ -20,12 +20,17 @@ public final class SharedDownloads implements AutoCloseable {
     public DownloadQueue queue() { return queue; }
 
     public void file(SharedDriveStore.SharedFile share, String sender) {
-        queue.add(share.contactLink() + ":" + share.id(), share.contactLink(), sender, share.name(), share.size(), progress -> {
+        var transfer = new ResumableFile();
+        queue.add(share.contactLink() + ":" + share.id(), share.contactLink(), sender, share.name(), share.size(), new DownloadQueue.Work() {
+            public Path run(DownloadQueue.Progress progress) throws Exception {
             var saved = manager.sharedDriveFiles().stream().filter(file -> file.id().equals(share.id()) && file.contactLink().equals(share.contactLink()) && file.downloaded()).findFirst();
             if (saved.isPresent()) return Path.of(saved.get().path());
-            manager.downloadSharedFile(share.contactLink(), share.id(), progress::stage, scaled(progress, 0, share.size(), share.size()));
-            return Path.of(manager.sharedDriveFiles().stream().filter(file -> file.id().equals(share.id()) && file.contactLink().equals(share.contactLink())).findFirst()
-                    .orElseThrow(() -> new IOException("This file is no longer shared.")).path());
+            Path path = transfer.download(kakha.kudava.onionp2p.account.AppData.directory().resolve("drive/shared"),
+                    (offset, version) -> manager.downloadChunk(share.contactLink(), share.id(), "", offset, version), progress);
+            manager.markSharedDownload(share.id(), path);
+            return path;
+            }
+            public void discard() { transfer.discard(); }
         });
     }
 
@@ -46,6 +51,7 @@ public final class SharedDownloads implements AutoCloseable {
         List<Member> plan;
         Path destination;
         final Set<String> completed = new HashSet<>();
+        final Map<String, ResumableFile> transfers = new HashMap<>();
         long completeBytes;
         FolderWork(SharedDriveStore.SharedFile share, String relative, String name, boolean folder, long size, Path saveIn) {
             this.share = share; this.relative = relative; this.name = name; this.folder = folder; this.size = size; this.saveIn = saveIn;
@@ -53,8 +59,7 @@ public final class SharedDownloads implements AutoCloseable {
         public Path run(DownloadQueue.Progress progress) throws Exception {
             if (!folder) {
                 Files.createDirectories(saveIn);
-                manager.downloadSharedFolderFile(share.contactLink(), share.id(), relative, saveIn, progress::stage, scaled(progress, 0, size, size));
-                return saveIn;
+                return downloadMember(relative, saveIn, progress);
             }
             if (plan == null) {
                 progress.stage("Reading folder contents…");
@@ -78,13 +83,17 @@ public final class SharedDownloads implements AutoCloseable {
                 Path parent = destination.resolve(member.local()).getParent(); Files.createDirectories(parent);
                 progress.stage("Downloading " + member.local() + "…");
                 long offset = completeBytes;
-                manager.downloadSharedFolderFile(share.contactLink(), share.id(), member.relative(), parent, progress::stage,
-                        scaled(progress, offset, member.size(), total));
+                downloadMember(member.relative(), parent, scaled(progress, offset, member.size(), total));
                 completed.add(member.relative()); completeBytes += member.size();
                 progress.update(completeBytes, total);
             }
             return destination;
         }
+        private Path downloadMember(String relative, Path directory, DownloadQueue.Progress progress) throws Exception {
+            return transfers.computeIfAbsent(relative, ignored -> new ResumableFile()).download(directory,
+                    (offset, version) -> manager.downloadChunk(share.contactLink(), share.id(), relative, offset, version), progress);
+        }
+        public void discard() { transfers.values().forEach(ResumableFile::discard); }
         private void readPlan(String remote, String local, List<Member> members, int depth, DownloadQueue.Progress progress) throws Exception {
             if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");
@@ -100,6 +109,7 @@ public final class SharedDownloads implements AutoCloseable {
     }
     private static DownloadQueue.Progress scaled(DownloadQueue.Progress target, long offset, long size, long total) {
         return new DownloadQueue.Progress() {
+            public void checkpoint() { target.checkpoint(); }
             public void update(long received, long wireTotal) {
                 target.update(offset + (wireTotal <= 0 ? 0 : received * size / wireTotal), total);
             }

@@ -10,6 +10,42 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class DownloadQueueTest {
+    @Test void pausingDuringTransferKeepsProgressAndCanResume() throws Exception {
+        var reached = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var pausedWorker = new CountDownLatch(1); var done = new CountDownLatch(1);
+        var offset = new AtomicInteger();
+        try (var queue = new DownloadQueue(owner -> true, 20)) {
+            queue.setListener(items -> { if (!items.isEmpty() && items.getFirst().state() == DownloadQueue.State.COMPLETE) done.countDown(); });
+            String id = queue.add("mid-file", "alice", "Alice", "file", 100, progress -> {
+                if (offset.compareAndSet(0, 40)) {
+                    progress.update(40, 100); reached.countDown(); release.await(3, TimeUnit.SECONDS);
+                    try { progress.checkpoint(); } finally { pausedWorker.countDown(); }
+                }
+                progress.checkpoint(); offset.set(100); progress.update(100, 100); return Path.of("saved");
+            });
+            try {
+                assertTrue(reached.await(3, TimeUnit.SECONDS)); queue.pause(id); release.countDown();
+                assertTrue(pausedWorker.await(3, TimeUnit.SECONDS));
+                assertEquals(DownloadQueue.State.PAUSED, queue.items().getFirst().state());
+                assertEquals(40, queue.items().getFirst().received());
+                queue.resume(id); assertTrue(done.await(3, TimeUnit.SECONDS));
+                assertEquals(100, offset.get());
+            } finally { release.countDown(); }
+        }
+    }
+    @Test void manualPauseSurvivesOwnerComingOnlineUntilResume() throws Exception {
+        var online = new AtomicBoolean(); var work = new AtomicInteger(); var done = new CountDownLatch(1);
+        try (var queue = new DownloadQueue(owner -> online.get(), 20)) {
+            queue.setListener(items -> { if (!items.isEmpty() && items.getFirst().state() == DownloadQueue.State.COMPLETE) done.countDown(); });
+            String id = queue.add("paused", "alice", "Alice", "file", 100, progress -> {
+                work.incrementAndGet(); progress.update(100, 100); return Path.of("saved");
+            });
+            queue.pause(id); online.set(true); queue.wake("alice");
+            assertEquals(DownloadQueue.State.PAUSED, queue.items().getFirst().state()); assertEquals(0, work.get());
+            assertEquals(id, queue.add("paused", "alice", "Alice", "file", 100, progress -> Path.of("duplicate")));
+            queue.resume(id); assertTrue(done.await(5, TimeUnit.SECONDS)); assertEquals(1, work.get());
+        }
+    }
     @Test void waitsForTorThenTriesTransferWithoutContactProbe() throws Exception {
         var torReady = new AtomicBoolean(); var checks = new AtomicInteger(); var transfers = new AtomicInteger();
         var waitingForTor = new CountDownLatch(1); var complete = new CountDownLatch(1);

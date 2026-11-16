@@ -57,6 +57,14 @@ class DownloadsPaneTest {
                     catch (java.io.IOException error) { throw new RuntimeException(error); }
                 }
             });
+            String moving = queue.items().stream().filter(item -> item.owner().equals("online")).findFirst().orElseThrow().id();
+            queue.pause(moving);
+            fx(() -> {
+                assertTrue(pane[0].lookupAll(".button").stream()
+                        .anyMatch(node -> "Resume download".equals(node.getAccessibleText())));
+                assertTrue(pane[0].lookupAll(".label").stream()
+                        .anyMatch(node -> "Paused".equals(((Label) node).getText())));
+            });
             release.countDown();
         } finally { release.countDown(); }
     }

@@ -43,9 +43,10 @@ final class DownloadsPane extends VBox {
     void reveal() { setVisible(true); setManaged(true); toFront(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<DownloadQueue.Item> items) {
-        int active = 0, done = 0, waiting = 0;
+        int active = 0, done = 0, waiting = 0, paused = 0;
         for (var item : items) {
-            if (item.active()) active++;
+            if (item.active() && item.state() != DownloadQueue.State.PAUSED) active++;
+            if (item.state() == DownloadQueue.State.PAUSED) paused++;
             if (item.state() == DownloadQueue.State.WAITING) waiting++;
             if (item.state() == DownloadQueue.State.COMPLETE) {
                 done++; if (completed.add(item.id())) onCompleted.run();
@@ -54,13 +55,13 @@ final class DownloadsPane extends VBox {
             row.update(item);
         }
         title.setText(active > 0 ? "Downloads · " + active + " active" : "Downloads");
-        summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : ""));
+        summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : ""));
         scroll.setPrefHeight(Math.min(280, Math.max(55, items.size() * 106)));
     }
     private final class Row extends VBox {
         final Label name = new Label(), detail = new Label(), bytes = new Label();
         final ProgressBar progress = new ProgressBar(0);
-        final Button action;
+        final Button action, pause;
         DownloadQueue.Item current;
         Row(String id) {
             getStyleClass().add("download-row");
@@ -73,7 +74,11 @@ final class DownloadsPane extends VBox {
                     catch (Exception error) { detail.setText("Could not open download: " + error.getMessage()); }
                 } else queue.cancel(id);
             });
-            HBox line = new HBox(8, name, action); line.setAlignment(Pos.CENTER_LEFT);
+            pause = icon("M8 5v14 M16 5v14", "Pause download");
+            pause.setOnAction(event -> {
+                if (current.state() == DownloadQueue.State.PAUSED) queue.resume(id); else queue.pause(id);
+            });
+            HBox line = new HBox(8, name, pause, action); line.setAlignment(Pos.CENTER_LEFT);
             detail.getStyleClass().add("download-detail"); detail.setWrapText(true); detail.setMaxWidth(Double.MAX_VALUE);
             bytes.getStyleClass().add("downloads-summary");
             progress.setMaxWidth(Double.MAX_VALUE); progress.getStyleClass().add("download-progress");
@@ -83,8 +88,13 @@ final class DownloadsPane extends VBox {
             current = item; name.setText(item.name()); name.setTooltip(new Tooltip(item.name()));
             detail.setText(item.detail()); detail.setTooltip(new Tooltip("Shared by " + item.ownerName()));
             boolean complete = item.state() == DownloadQueue.State.COMPLETE;
+            boolean paused = item.state() == DownloadQueue.State.PAUSED;
+            pause.setVisible(item.active()); pause.setManaged(item.active());
+            pause.setGraphic(glyph(paused ? "M8 5l11 7-11 7z" : "M8 5v14 M16 5v14"));
+            String pauseLabel = paused ? "Resume download" : "Pause download";
+            pause.setAccessibleText(pauseLabel); pause.setTooltip(new Tooltip(pauseLabel));
             double fraction = item.total() > 0 ? Math.min(.99, (double) item.received() / item.total()) : 0;
-            progress.setProgress(complete ? 1 : item.total() < 0 && item.state() != DownloadQueue.State.WAITING ? -1 : fraction);
+            progress.setProgress(complete ? 1 : item.total() < 0 && item.state() != DownloadQueue.State.WAITING && !paused ? -1 : fraction);
             bytes.setText(item.total() < 0 ? "Folder size will appear when connected" : size(item.received()) + " / " + size(item.total())
                     + " · " + (complete ? 100 : (int) (fraction * 100)) + "%");
             String path = complete ? "M12 3v12 M7 10l5 5 5-5 M4 19h16" : item.state() == DownloadQueue.State.FAILED ? "M4 11a8 8 0 1 1 2 6 M4 5v6h6" : "M6 6l12 12 M18 6L6 18";

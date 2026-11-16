@@ -41,6 +41,25 @@ public final class ContactMessaging {
     public static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     private static final int CHUNK_BYTES = 64 * 1024;
     private static final int MAX_SHARE_INVENTORY = 100000;
+
+    static kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(Socket socket, ContactRendezvous.Material material,
+            String shareId, String relative, long offset, String version, boolean first) throws Exception {
+        socket.setSoTimeout(15000);
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var out = new DataOutputStream(bytes)) {
+            out.writeUTF(shareId); out.writeUTF(relative); out.writeLong(offset); out.writeUTF(version);
+        }
+        sendControl(socket, material, (byte) 12, bytes.toByteArray(), first);
+        var response = readDriveResponse(socket, material);
+        if (response.type() != 13) throw new IOException("The peer does not support resumable downloads. Update both apps.");
+        byte[] payload = readDriveControl(response, material, 256 * 1024 + 2048);
+        try (var in = new DataInputStream(new java.io.ByteArrayInputStream(payload))) {
+            String token = in.readUTF(), name = in.readUTF();
+            long total = in.readLong(), position = in.readLong();
+            byte[] data = in.readAllBytes();
+            return new kakha.kudava.onionp2p.drive.ResumableFile.Chunk(token, name, total, position, data);
+        } finally { Arrays.fill(payload, (byte) 0); }
+    }
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private ContactMessaging() {}
@@ -362,10 +381,61 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type < 0 || type > 11 || type == 9) throw new IOException("Unsupported message type.");
+        if (type < 0 || type > 12 || type == 9) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
+        if (type == 12) {
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] requestKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] payload;
+            try { payload = crypt(Cipher.DECRYPT_MODE, requestKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(requestKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            String shareId, relative, version; long offset;
+            try (var request = new DataInputStream(new java.io.ByteArrayInputStream(payload))) {
+                shareId = request.readUTF(); relative = request.readUTF(); offset = request.readLong(); version = request.readUTF();
+                UUID.fromString(shareId);
+                if (request.read() != -1 || offset < 0 || version.length() > 512) throw new IOException("Invalid chunk request.");
+            } finally { Arrays.fill(payload, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad);
+            byte[] reply;
+            try {
+                var grant = sharedStore.findPublished(shareId, link);
+                if (grant == null) throw new IOException("Access removed.");
+                Path target;
+                if (grant.folder()) target = FolderAccess.resolve(sharedStore, shareId, link, relative);
+                else {
+                    if (!relative.isEmpty()) throw new IOException("Invalid file path.");
+                    target = Path.of(grant.path());
+                    if (Files.isSymbolicLink(target)) throw new IOException("Links cannot be shared.");
+                }
+                var attrs = Files.readAttributes(target, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if (!attrs.isRegularFile() || attrs.size() > MAX_FILE_BYTES) throw new IOException("Unavailable file.");
+                String token = attrs.size() + ":" + attrs.lastModifiedTime() + ":" + attrs.fileKey();
+                // Bind every chunk to the same source version. A changed source is never appended.
+                long position = !version.isEmpty() && !version.equals(token) ? 0 : offset;
+                if (position > attrs.size()) throw new IOException("Invalid offset.");
+                var bytes = new java.io.ByteArrayOutputStream();
+                try (var out = new DataOutputStream(bytes); var source = Files.newInputStream(target)) {
+                    out.writeUTF(token); out.writeUTF(safeFileName(target.getFileName().toString()));
+                    out.writeLong(attrs.size()); out.writeLong(position);
+                    source.skipNBytes(position);
+                    byte[] data = source.readNBytes((int) Math.min(256 * 1024, attrs.size() - position));
+                    if (data.length != Math.min(256 * 1024, attrs.size() - position)) throw new IOException("File changed.");
+                    out.write(data); Arrays.fill(data, (byte) 0);
+                }
+                var after = Files.readAttributes(target, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if (after.size() != attrs.size() || !after.lastModifiedTime().equals(attrs.lastModifiedTime())
+                        || !java.util.Objects.equals(after.fileKey(), attrs.fileKey())) throw new IOException("File changed.");
+                reply = bytes.toByteArray();
+            } catch (Exception unavailable) {
+                sendControl(output, input, material, (byte) 7, "The file changed or is no longer shared.".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            try { sendControl(output, input, material, (byte) 13, reply); }
+            finally { Arrays.fill(reply, (byte) 0); }
+            return;
+        }
         if (type == 11) {
             byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
             byte[] messageKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");

@@ -80,6 +80,16 @@ public final class ContactManager implements AutoCloseable {
     }
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
     public SharedDownloads downloads() { return downloads; }
+    public kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(String link, String id, String relative,
+            long offset, String version) throws Exception {
+        var result = new java.util.concurrent.atomic.AtomicReference<kakha.kudava.onionp2p.drive.ResumableFile.Chunk>();
+        withSession(transferSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+            result.set(ContactMessaging.downloadChunk(session.socket, entry.material, id, relative, offset, version, session.firstMessage));
+            return null;
+        });
+        return result.get();
+    }
+    public void markSharedDownload(String id, Path path) throws Exception { sharedDriveStore.markDownloaded(id, path); }
     public boolean isTorReady() { return tor.socksReady().isDone() && !tor.socksReady().isCompletedExceptionally(); }
 
     public int stopSharingDriveFile(Path file) throws Exception {
