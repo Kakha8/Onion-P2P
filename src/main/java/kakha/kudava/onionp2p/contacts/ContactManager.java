@@ -34,6 +34,8 @@ public final class ContactManager implements AutoCloseable {
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> shareSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> shareDeliveryErrors = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Long> shareRetryStarted = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Long> shareRetryLast = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
     private final Set<String> driveShareChecks = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
@@ -60,7 +62,7 @@ public final class ContactManager implements AutoCloseable {
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
         downloads = new SharedDownloads(this);
-        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 1, 2, TimeUnit.SECONDS);
+        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 1, 1, TimeUnit.SECONDS);
     }
 
     public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
@@ -134,6 +136,7 @@ public final class ContactManager implements AutoCloseable {
             else toQueue.add(normalized);
         }
         sharedDriveStore.queueShares(canonical, toQueue);
+        shareRetryStarted.put(canonical, System.currentTimeMillis());
         int sent = deliverPendingDriveShares(canonical);
         int queued = sharedDriveStore.pendingShares(canonical).size();
         return new DriveShareResult(sent, queued, alreadyShared, queued == 0 ? null : shareDeliveryErrors.get(canonical));
@@ -163,6 +166,8 @@ public final class ContactManager implements AutoCloseable {
                         sharedDriveStore.completePendingShare(contactLink, file);
                         delivered++;
                         shareDeliveryErrors.remove(contactLink);
+                        shareRetryStarted.remove(contactLink);
+                        shareRetryLast.remove(contactLink);
                         signalDriveShare(contactLink);
                     } catch (Exception transportFailure) {
                         shareDeliveryErrors.put(contactLink, safeMessage(transportFailure));
@@ -187,7 +192,7 @@ public final class ContactManager implements AutoCloseable {
             for (int attempt = 0; ; attempt++) {
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 45000);
+                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 5000);
                 session.firstMessage = true;
                 connections.add(session.socket);
             }
@@ -323,6 +328,10 @@ public final class ContactManager implements AutoCloseable {
         try {
             for (String link : sharedDriveStore.pendingShareContacts()) {
                 if (closed) return;
+                long now = System.currentTimeMillis();
+                long started = shareRetryStarted.computeIfAbsent(link, ignored -> now);
+                long delay = now - started < TimeUnit.MINUTES.toMillis(2) ? 1000 : 15000;
+                if (now - shareRetryLast.getOrDefault(link, 0L) < delay) continue;
                 if (!driveShareChecks.add(link)) continue;
                 try {
                     driveShareRetries.execute(() -> {
@@ -332,7 +341,10 @@ public final class ContactManager implements AutoCloseable {
                             deliverPendingDriveShares(link);
                         } catch (Exception ignored) {
                             // Offline contacts are expected; keep their queue for the next sweep.
-                        } finally { driveShareChecks.remove(link); }
+                        } finally {
+                            shareRetryLast.put(link, System.currentTimeMillis());
+                            driveShareChecks.remove(link);
+                        }
                     });
                 } catch (RejectedExecutionException ignored) { driveShareChecks.remove(link); return; }
             }
@@ -465,7 +477,7 @@ public final class ContactManager implements AutoCloseable {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
             try {
-                Socket socket = TorControl.connect(socksPort, onion, 45000);
+                Socket socket = TorControl.connect(socksPort, onion, 5000);
                 if (cancelled.getAsBoolean()) { socket.close(); checkCancelled(cancelled); }
                 return socket;
             }
@@ -473,7 +485,7 @@ public final class ContactManager implements AutoCloseable {
                 last = e;
                 if (attempt == attempts) break;
                 status.accept("Tor is still locating the contact service; retry " + (attempt + 1) + " of " + attempts + "…");
-                try { Thread.sleep(2000); }
+                try { Thread.sleep(1000); }
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw interrupted; }
             }
         }

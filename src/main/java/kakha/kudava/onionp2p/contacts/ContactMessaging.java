@@ -79,7 +79,7 @@ public final class ContactMessaging {
     }
 
     static void ping(Socket socket, ContactRendezvous.Material material, boolean newConnection) throws Exception {
-        socket.setSoTimeout(12000);
+        socket.setSoTimeout(5000);
         String id = UUID.randomUUID().toString();
         long timestamp = System.currentTimeMillis();
         byte[] idBytes = uuidBytes(id);
@@ -149,12 +149,12 @@ public final class ContactMessaging {
                 .put(uuidBytes(shareId)).putShort((short) nameBytes.length).put(nameBytes).putLong(size).array();
         sharedStore.publish(shareId, link, name, file, size, timestamp);
         try {
-            socket.setSoTimeout(30000);
+            socket.setSoTimeout(5000);
             sendControl(socket, material, (byte) 4, offer, newConnection);
         }
         catch (java.net.SocketTimeoutException error) {
             sharedStore.unpublish(shareId);
-            throw new java.net.SocketTimeoutException("The contact circuit connected, but the other app did not acknowledge the share within 30 seconds.");
+            throw new java.net.SocketTimeoutException("The contact circuit connected, but the other app did not acknowledge the share within 5 seconds.");
         }
         catch (Exception error) { sharedStore.unpublish(shareId); throw error; }
         finally { Arrays.fill(nameBytes, (byte) 0); Arrays.fill(offer, (byte) 0); }
