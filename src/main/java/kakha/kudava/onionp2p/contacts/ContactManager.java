@@ -187,35 +187,11 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private void sendDriveShareOnce(Pending entry, String canonical, String shareId, Path file) throws Exception {
-        MessageSession session = shareSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
-        synchronized (session) {
-            if (closed) throw new IllegalStateException("Contact service is stopped.");
-            boolean reused = session.socket != null && !session.socket.isClosed();
-            for (int attempt = 0; ; attempt++) {
-            if (session.socket == null || session.socket.isClosed()) {
-                int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = openSession(session, socksPort, entry.material.addresses().remote());
-                session.firstMessage = true;
-                connections.add(session.socket);
-            }
-            try {
-                ContactMessaging.sendDriveShare(session.socket, entry.material, sharedDriveStore, canonical, shareId, file,
-                        session.firstMessage, ignored -> {}, () -> false);
-                session.firstMessage = false;
-                session.lastUsed = System.nanoTime();
-                return;
-            } catch (Exception error) {
-                connections.remove(session.socket);
-                try { session.socket.close(); } catch (Exception ignored) {}
-                session.socket = null;
-                session.firstMessage = true;
-                // A successful presence check can be followed by a closed idle stream.
-                // Retry the same durable share ID immediately on a fresh connection.
-                if (reused && attempt == 0 && error instanceof IOException) continue;
-                throw error;
-            }
-            }
-        }
+        withSession(shareSessions, canonical, ignored -> {}, () -> false, 1, (contact, session, link) -> {
+            ContactMessaging.sendDriveShare(session.socket, contact.material, sharedDriveStore, link, shareId, file,
+                    session.firstMessage, ignored -> {}, () -> false);
+            return null;
+        });
     }
 
     public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status) throws Exception {
