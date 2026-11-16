@@ -187,7 +187,7 @@ public final class ContactManager implements AutoCloseable {
             for (int attempt = 0; ; attempt++) {
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000);
+                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 45000);
                 session.firstMessage = true;
                 connections.add(session.socket);
             }
@@ -465,7 +465,7 @@ public final class ContactManager implements AutoCloseable {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
             try {
-                Socket socket = TorControl.connect(socksPort, onion, 12000);
+                Socket socket = TorControl.connect(socksPort, onion, 45000);
                 if (cancelled.getAsBoolean()) { socket.close(); checkCancelled(cancelled); }
                 return socket;
             }
@@ -538,9 +538,9 @@ public final class ContactManager implements AutoCloseable {
             event(entry.link, "Contact did not respond. Import the link again to retry.");
             remove(entry); return;
         }
-        if (!tor.socksReady().isDone()) return;
+        if (!tor.controlReady().isDone()) return;
         try {
-            int socksPort = tor.socksReady().get();
+            int socksPort = tor.controlReady().get();
             synchronized (entry) {
                 if (closed || entry.stopped) return;
                 if (entry.listener == null) {
@@ -553,7 +553,8 @@ public final class ContactManager implements AutoCloseable {
                     event(entry.link, "Waiting for contact—both users must import each other's links.");
                 }
             }
-            // A previously acknowledged contact only needs its onion listener restored.
+            if (!isTorReady()) return;
+            // Announce restored contacts once bootstrap completes.
             if (entry.saved) {
                 if (!entry.announcedOnline) {
                     entry.announcedOnline = true;

@@ -22,10 +22,12 @@ public final class OnionServer implements AutoCloseable {
     private boolean closed;
     private final Path data;
     private final CompletableFuture<Integer> socksReady = new CompletableFuture<>();
+    private final CompletableFuture<Integer> controlReady = new CompletableFuture<>();
 
     public OnionServer() { this(AppData.directory()); }
     public OnionServer(Path data) { this.data = data.toAbsolutePath(); }
     public CompletableFuture<Integer> socksReady() { return socksReady; }
+    public CompletableFuture<Integer> controlReady() { return controlReady; }
 
     public void start() throws Exception {
         if (!System.getProperty("os.name").startsWith("Windows")
@@ -79,6 +81,14 @@ public final class OnionServer implements AutoCloseable {
             });
         }
         System.out.println("Connecting to Tor; initial startup may take a few minutes...");
+        // Prepare contact services while Tor bootstraps, rather than waiting for
+        // bootstrap to finish before creating their introduction circuits.
+        long controlDeadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (!controlReady.isDone() && System.nanoTime() < controlDeadline) {
+            synchronized (this) { if (closed) return; }
+            try (var control = new TorControl(data)) { controlReady.complete(control.socksPort()); }
+            catch (IOException starting) { Thread.sleep(100); }
+        }
         try {
             bootstrapped.get(Duration.ofMinutes(3).toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -92,7 +102,9 @@ public final class OnionServer implements AutoCloseable {
         }
         String address = Files.readString(hostname, UTF_8).trim();
         if (!address.matches("[a-z2-7]{56}\\.onion")) throw new IOException("Invalid onion hostname.");
-        try (var control = new TorControl(data)) { socksReady.complete(control.socksPort()); }
+        try (var control = new TorControl(data)) {
+            int port = control.socksPort(); controlReady.complete(port); socksReady.complete(port);
+        }
         synchronized (this) {
             if (!closed) System.out.println("\nOnion address: http://" + address + "/\n"
                     + "Open in Tor Browser. Publication may take a little longer.\n");
@@ -142,6 +154,7 @@ public final class OnionServer implements AutoCloseable {
         if (closed) return;
         closed = true;
         socksReady.completeExceptionally(new IOException("Tor is stopped."));
+        controlReady.completeExceptionally(new IOException("Tor is stopped."));
         if (tor != null) {
             tor.destroy();
             try {

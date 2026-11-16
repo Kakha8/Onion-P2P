@@ -86,6 +86,9 @@ public final class TorControl implements AutoCloseable {
             };
             in.readNBytes(length + 2);
             return socket;
+        } catch (SocketTimeoutException e) {
+            socket.close();
+            throw new SocketTimeoutException("Tor did not establish the contact circuit within " + timeoutMillis / 1000 + " seconds.");
         } catch (IOException e) { socket.close(); throw e; }
     }
 

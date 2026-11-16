@@ -44,6 +44,22 @@ class FolderSharingTest {
     }
 
     @Test @Timeout(30)
+    void sharesAfterPresenceAndReconciliationOnTheSameConnection() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("owner"));
+        var recipient = new SharedDriveStore(temp.resolve("recipient"));
+        Path file = Files.writeString(temp.resolve("test.txt"), "shared after online");
+        try (var session = new Session(recipient, "owner", false)) {
+            ContactMessaging.ping(session.client, material(true), true);
+            ContactMessaging.syncDriveShares(session.client, material(true), owner, "recipient", false);
+            for (int i = 0; i < 3; i++) {
+                String id = UUID.randomUUID().toString();
+                ContactMessaging.sendDriveShare(session.client, material(true), owner, "recipient", id, file, false, ignored -> {}, () -> false);
+                assertEquals(i + 1, recipient.all().size());
+            }
+        }
+    }
+
+    @Test @Timeout(30)
     void encryptedOffersLiveBrowsingDownloadsRenameAndRevocation() throws Exception {
         var owner = new SharedDriveStore(temp.resolve("owner-db"));
         var recipient = new SharedDriveStore(temp.resolve("recipient-db"));

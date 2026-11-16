@@ -148,7 +148,14 @@ public final class ContactMessaging {
         byte[] offer = ByteBuffer.allocate(16 + 2 + nameBytes.length + 8)
                 .put(uuidBytes(shareId)).putShort((short) nameBytes.length).put(nameBytes).putLong(size).array();
         sharedStore.publish(shareId, link, name, file, size, timestamp);
-        try { sendControl(socket, material, (byte) 4, offer, newConnection); }
+        try {
+            socket.setSoTimeout(30000);
+            sendControl(socket, material, (byte) 4, offer, newConnection);
+        }
+        catch (java.net.SocketTimeoutException error) {
+            sharedStore.unpublish(shareId);
+            throw new java.net.SocketTimeoutException("The contact circuit connected, but the other app did not acknowledge the share within 30 seconds.");
+        }
         catch (Exception error) { sharedStore.unpublish(shareId); throw error; }
         finally { Arrays.fill(nameBytes, (byte) 0); Arrays.fill(offer, (byte) 0); }
     }
