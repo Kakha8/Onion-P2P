@@ -32,7 +32,9 @@ public final class ContactManager implements AutoCloseable {
     private volatile Consumer<String> driveShareListener = ignored -> {};
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, MessageSession> shareSessions = new ConcurrentHashMap<>();
+    // Presence, text and share metadata reuse the same authenticated stream.
+    private final ConcurrentMap<String, MessageSession> shareSessions = messageSessions;
+    private final ConcurrentMap<String, MessageSession> transferSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> shareDeliveryErrors = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> shareRetryStarted = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> shareRetryLast = new ConcurrentHashMap<>();
@@ -192,7 +194,7 @@ public final class ContactManager implements AutoCloseable {
             for (int attempt = 0; ; attempt++) {
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 5000);
+                session.socket = openSession(session, socksPort, entry.material.addresses().remote());
                 session.firstMessage = true;
                 connections.add(session.socket);
             }
@@ -200,6 +202,7 @@ public final class ContactManager implements AutoCloseable {
                 ContactMessaging.sendDriveShare(session.socket, entry.material, sharedDriveStore, canonical, shareId, file,
                         session.firstMessage, ignored -> {}, () -> false);
                 session.firstMessage = false;
+                session.lastUsed = System.nanoTime();
                 return;
             } catch (Exception error) {
                 connections.remove(session.socket);
@@ -220,7 +223,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status, DownloadQueue.Progress progress) throws Exception {
-        withMessageSession(link, status, () -> false, 1, (entry, session, canonical) -> {
+        withSession(transferSessions, link, status, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.downloadDriveShare(session.socket, entry.material, sharedDriveStore, shareId, canonical,
                     session.firstMessage, () -> signalDriveShare(canonical), progress);
             return null;
@@ -242,7 +245,7 @@ public final class ContactManager implements AutoCloseable {
     private List<FolderAccess.Entry> browseSharedFolder(String link, String id, String relative,
                                                         java.util.function.Consumer<String> status, int connectAttempts) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<List<FolderAccess.Entry>>();
-        withMessageSession(link, status, () -> false, connectAttempts, (entry, session, canonical) -> {
+        withSession(transferSessions, link, status, () -> false, connectAttempts, (entry, session, canonical) -> {
             result.set(ContactMessaging.browseFolder(session.socket, entry.material, id, relative, session.firstMessage, sharedDriveStore, canonical));
             return null;
         });
@@ -257,7 +260,7 @@ public final class ContactManager implements AutoCloseable {
 
     public void downloadSharedFolderFile(String link, String id, String relative, Path directory,
                                          java.util.function.Consumer<String> status, DownloadQueue.Progress progress) throws Exception {
-        withMessageSession(link, status, () -> false, 1, (entry, session, canonical) -> {
+        withSession(transferSessions, link, status, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.downloadFolderFile(session.socket, entry.material, id, relative, directory, canonical, session.firstMessage, progress);
             return null;
         });
@@ -373,7 +376,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     public void sendReadReceipt(String link, String messageId) throws Exception {
-        withMessageSession(link, ignored -> {}, () -> false, (entry, session, canonical) -> {
+        withMessageSession(link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.sendReadReceipt(session.socket, entry.material, messageId, session.firstMessage);
             return null;
         });
@@ -410,7 +413,7 @@ public final class ContactManager implements AutoCloseable {
                                   java.util.function.Consumer<String> status) throws Exception {
         if (java.nio.file.Files.size(file) > ContactMessaging.MAX_FILE_BYTES)
             throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
-        return withMessageSession(link, status, cancelled::get, (entry, session, canonical) ->
+        return withSession(transferSessions, link, status, cancelled::get, 1, (entry, session, canonical) ->
                 ContactMessaging.sendFile(session.socket, entry.material, messageStore, canonical, file, caption,
                         session.firstMessage, progress, cancelled::get));
     }
@@ -438,7 +441,8 @@ public final class ContactManager implements AutoCloseable {
         synchronized (session) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
-            if (session.socket != null && !session.socket.isClosed() && !session.firstMessage) {
+            if (session.socket != null && !session.socket.isClosed() && !session.firstMessage
+                    && System.nanoTime() - session.lastUsed > TimeUnit.SECONDS.toNanos(20)) {
                 try { ContactMessaging.ping(session.socket, entry.material); }
                 catch (Exception stale) {
                     connections.remove(session.socket);
@@ -451,7 +455,7 @@ public final class ContactManager implements AutoCloseable {
             checkCancelled(cancelled);
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = connectWithRetry(socksPort, entry.material.addresses().remote(), status, cancelled, connectAttempts);
+                session.socket = connectWithRetry(session, socksPort, entry.material.addresses().remote(), status, cancelled, connectAttempts);
                 session.firstMessage = true;
                 connections.add(session.socket);
             }
@@ -459,6 +463,7 @@ public final class ContactManager implements AutoCloseable {
                 checkCancelled(cancelled);
                 var message = action.send(entry, session, canonical);
                 session.firstMessage = false;
+                session.lastUsed = System.nanoTime();
                 return message;
             } catch (Exception e) {
                 connections.remove(session.socket);
@@ -470,14 +475,14 @@ public final class ContactManager implements AutoCloseable {
         }
     }
 
-    private Socket connectWithRetry(int socksPort, String onion, java.util.function.Consumer<String> status,
+    private Socket connectWithRetry(MessageSession session, int socksPort, String onion, java.util.function.Consumer<String> status,
                                    java.util.function.BooleanSupplier cancelled, int attempts) throws Exception {
         IOException last = null;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
             try {
-                Socket socket = TorControl.connect(socksPort, onion, 5000);
+                Socket socket = openSession(session, socksPort, onion);
                 if (cancelled.getAsBoolean()) { socket.close(); checkCancelled(cancelled); }
                 return socket;
             }
@@ -498,7 +503,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     public void cancelTransfer(String link) {
-        MessageSession session = messageSessions.get(canonicalLink(link));
+        MessageSession session = transferSessions.get(canonicalLink(link));
         if (session != null) {
             Socket socket = session.socket;
             if (socket != null) try { socket.close(); } catch (Exception ignored) {}
@@ -671,6 +676,7 @@ public final class ContactManager implements AutoCloseable {
         driveShareRetryScheduler.shutdownNow();
         for (var socket : connections) try { socket.close(); } catch (Exception ignored) {}
         messageSessions.clear();
+        transferSessions.clear();
         for (var entry : pending.values()) remove(entry);
     }
 
@@ -687,5 +693,16 @@ public final class ContactManager implements AutoCloseable {
     private static final class MessageSession {
         volatile Socket socket;
         boolean firstMessage = true;
+        long lastUsed;
+        final PendingConnection connecting = new PendingConnection();
+    }
+
+    private Socket openSession(MessageSession session, int socksPort, String onion) throws Exception {
+        return session.connecting.await(() -> {
+            Socket socket = TorControl.connect(socksPort, onion, 60000);
+            connections.add(socket);
+            if (closed) { connections.remove(socket); socket.close(); throw new IOException("Contact service is stopped."); }
+            return socket;
+        }, 5, TimeUnit.SECONDS);
     }
 }
