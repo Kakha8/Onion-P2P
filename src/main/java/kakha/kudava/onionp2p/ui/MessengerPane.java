@@ -3042,7 +3042,7 @@ final class MessengerPane extends BorderPane {
     private static String shareAccessLabel(SharedDriveStore.ShareCount count, int totalFiles) {
         if (count.queued() == 0) return count.delivered() == totalFiles
                 ? "Full access" : count.delivered() + " of " + totalFiles + " shared";
-        if (count.delivered() == 0 && count.queued() == totalFiles) return "Waiting for contact";
+        if (count.delivered() == 0 && count.queued() == totalFiles) return "Delivery pending";
         if (count.delivered() == 0) return count.queued() + " waiting";
         return count.delivered() + " shared · " + count.queued() + " waiting";
     }
@@ -3077,12 +3077,13 @@ final class MessengerPane extends BorderPane {
                 if ((result.sharedNow() > 0 || result.queued() > 0) && refreshSharedDrive != null) refreshSharedDrive.run();
                 if (result.queued() > 0) {
                     status.setText(result.queued() + (result.queued() == 1 ? " share is" : " shares are")
-                            + " waiting for " + contact.username() + " to come online.");
+                            + " awaiting delivery to " + contact.username() + ". Retrying automatically.");
                     String delivered = result.sharedNow() == 0 ? "" : result.sharedNow() + " shared now. ";
                     showDriveAlert(Alert.AlertType.INFORMATION, "Share queued",
                             delivered + result.queued() + (result.queued() == 1 ? " file is" : " files are")
-                                    + " saved and will be shared automatically when " + contact.username()
-                                    + " comes online. The files stay on your device until they choose to download them.");
+                                    + " saved, but delivery to " + contact.username()
+                                    + " has not been confirmed. Retrying automatically."
+                                    + (result.deliveryError() == null ? "" : "\n\nLast delivery error: " + result.deliveryError()));
                 } else {
                     status.setText(result.alreadyShared() == files.size()
                             ? "These files are already shared with " + contact.username() + "."

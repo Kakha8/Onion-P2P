@@ -19,7 +19,7 @@ import java.util.function.Consumer;
 /** Pending imports remain in memory; only cryptographically acknowledged contacts enter SQLite. */
 public final class ContactManager implements AutoCloseable {
     public record Event(String link, String message) {}
-    public record DriveShareResult(int sharedNow, int queued, int alreadyShared) {}
+    public record DriveShareResult(int sharedNow, int queued, int alreadyShared, String deliveryError) {}
     private final Path directory;
     private final OnionServer tor;
     private final ContactStore store;
@@ -33,6 +33,7 @@ public final class ContactManager implements AutoCloseable {
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> shareSessions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> shareDeliveryErrors = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
     private final Set<String> driveShareChecks = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
@@ -135,7 +136,7 @@ public final class ContactManager implements AutoCloseable {
         sharedDriveStore.queueShares(canonical, toQueue);
         int sent = deliverPendingDriveShares(canonical);
         int queued = sharedDriveStore.pendingShares(canonical).size();
-        return new DriveShareResult(sent, queued, alreadyShared);
+        return new DriveShareResult(sent, queued, alreadyShared, queued == 0 ? null : shareDeliveryErrors.get(canonical));
     }
 
     private int deliverPendingDriveShares(String contactLink) {
@@ -161,8 +162,10 @@ public final class ContactManager implements AutoCloseable {
                         sendDriveShareOnce(entry, contactLink, queued.id(), file);
                         sharedDriveStore.completePendingShare(contactLink, file);
                         delivered++;
+                        shareDeliveryErrors.remove(contactLink);
                         signalDriveShare(contactLink);
                     } catch (Exception transportFailure) {
+                        shareDeliveryErrors.put(contactLink, safeMessage(transportFailure));
                         // Keep this and all later selections queued; the next authenticated
                         // online signal will retry them.
                         System.err.println("Drive share remains queued for " + contactLink + ": " + safeMessage(transportFailure));
@@ -180,6 +183,8 @@ public final class ContactManager implements AutoCloseable {
         MessageSession session = shareSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
         synchronized (session) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
+            boolean reused = session.socket != null && !session.socket.isClosed();
+            for (int attempt = 0; ; attempt++) {
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
                 session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000);
@@ -190,12 +195,17 @@ public final class ContactManager implements AutoCloseable {
                 ContactMessaging.sendDriveShare(session.socket, entry.material, sharedDriveStore, canonical, shareId, file,
                         session.firstMessage, ignored -> {}, () -> false);
                 session.firstMessage = false;
+                return;
             } catch (Exception error) {
                 connections.remove(session.socket);
                 try { session.socket.close(); } catch (Exception ignored) {}
                 session.socket = null;
                 session.firstMessage = true;
+                // A successful presence check can be followed by a closed idle stream.
+                // Retry the same durable share ID immediately on a fresh connection.
+                if (reused && attempt == 0 && error instanceof IOException) continue;
                 throw error;
+            }
             }
         }
     }
