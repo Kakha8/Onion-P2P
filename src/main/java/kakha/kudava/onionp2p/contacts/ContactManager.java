@@ -40,7 +40,7 @@ public final class ContactManager implements AutoCloseable {
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
         Thread thread = new Thread(r, "contact-retry"); thread.setDaemon(true); return thread;
     });
-    private final ExecutorService driveShareRetries = Executors.newFixedThreadPool(2, r -> {
+    private final ExecutorService driveShareRetries = Executors.newFixedThreadPool(4, r -> {
         Thread thread = new Thread(r, "drive-share-retry"); thread.setDaemon(true); return thread;
     });
     private final ScheduledExecutorService driveShareRetryScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -58,7 +58,7 @@ public final class ContactManager implements AutoCloseable {
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
         downloads = new SharedDownloads(this);
-        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 15, 15, TimeUnit.SECONDS);
+        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 5, 5, TimeUnit.SECONDS);
     }
 
     public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
@@ -294,7 +294,7 @@ public final class ContactManager implements AutoCloseable {
                 try {
                     deliverPendingDriveShares(link);
                     driveSyncDirty.remove(link);
-                    withMessageSession(link, ignored -> {}, () -> false, (entry, session, canonical) -> {
+                    withMessageSession(link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
                         ContactMessaging.syncDriveShares(session.socket, entry.material, sharedDriveStore, canonical, session.firstMessage);
                         return null;
                     });
@@ -322,7 +322,9 @@ public final class ContactManager implements AutoCloseable {
                 try {
                     driveShareRetries.execute(() -> {
                         try {
-                            if (isOnline(link)) deliverPendingDriveShares(link);
+                            // Delivery itself establishes an authenticated connection. A separate
+                            // presence ping doubles the Tor setup delay for queued shares.
+                            deliverPendingDriveShares(link);
                         } catch (Exception ignored) {
                             // Offline contacts are expected; keep their queue for the next sweep.
                         } finally { driveShareChecks.remove(link); }

@@ -612,6 +612,13 @@
 .drive-share-dialog .drive-share-remove .drive-menu-glyph { -fx-stroke: #9ba8b8; }
 .drive-share-dialog .drive-share-remove:hover .drive-menu-glyph { -fx-stroke: #f08a8a; }
 .drive-share-dialog .button { -fx-min-height: 34; -fx-pref-height: 34; -fx-padding: 0 15; -fx-background-radius: 6; -fx-border-radius: 6; }
+.drive-share-dialog .button.drive-dialog-close, .drive-rename-dialog .button.drive-dialog-close, .drive-notice-dialog .button.drive-dialog-close {
+    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28;
+    -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
+    -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent;
+}
+.drive-share-dialog .drive-dialog-close .drive-menu-glyph, .drive-rename-dialog .drive-dialog-close .drive-menu-glyph,
+.drive-notice-dialog .drive-dialog-close .drive-menu-glyph { -fx-stroke: #9aa7b8; -fx-scale-x: 0.85; -fx-scale-y: 0.85; }
 .drive-share-dialog .drive-dialog-primary { -fx-background-color: #3b82f6; -fx-border-color: transparent; -fx-text-fill: white; }
 .drive-share-dialog .drive-dialog-primary:hover { -fx-background-color: #4b91ff; }
 .drive-share-dialog .drive-dialog-danger { -fx-background-color: #382329; -fx-border-color: #63343d; -fx-text-fill: #f08a8a; }

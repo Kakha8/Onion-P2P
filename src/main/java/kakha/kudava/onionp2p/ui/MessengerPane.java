@@ -2674,12 +2674,12 @@ final class MessengerPane extends BorderPane {
         });
     }
 
-    private HBox driveDialogTitleBar(Dialog<?> dialog, String text, String iconPath, boolean danger) {
+    static HBox driveDialogTitleBar(Dialog<?> dialog, String text, String iconPath, boolean danger) {
         SVGPath icon = driveMenuGlyph(iconPath);
         if (danger) icon.getStyleClass().add("drive-delete-glyph");
         Label title = new Label(text);
         title.getStyleClass().add("drive-rename-title");
-        Button close = new Button("×");
+        Button close = new Button(null, driveMenuGlyph("M6 6l12 12 M18 6L6 18"));
         close.getStyleClass().add("drive-dialog-close");
         close.setAccessibleText("Close");
         close.setOnAction(event -> dialog.close());
@@ -2874,7 +2874,7 @@ final class MessengerPane extends BorderPane {
             return;
         }
         Map<String, SharedDriveStore.ShareCount> shareCounts;
-        try { shareCounts = manager.driveShareCounts(files); }
+        try { shareCounts = new HashMap<>(manager.driveShareCounts(files)); }
         catch (Exception error) {
             showDriveAlert(Alert.AlertType.ERROR, "Could not load sharing access", error.getMessage());
             return;
@@ -2905,14 +2905,15 @@ final class MessengerPane extends BorderPane {
                 contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() > 0);
         FilteredList<ContactStore.Contact> availableContacts = new FilteredList<>(FXCollections.observableArrayList(allContacts),
                 contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() < files.size());
-        search.textProperty().addListener((observable, before, after) -> {
-            String query = after == null ? "" : after.strip().toLowerCase(Locale.ROOT);
+        Runnable filterContacts = () -> {
+            String query = search.getText() == null ? "" : search.getText().strip().toLowerCase(Locale.ROOT);
             java.util.function.Predicate<ContactStore.Contact> matches = contact -> query.isEmpty()
                     || contact.username().toLowerCase(Locale.ROOT).contains(query)
                     || contact.onion().toLowerCase(Locale.ROOT).contains(query);
             sharedContacts.setPredicate(contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() > 0 && matches.test(contact));
             availableContacts.setPredicate(contact -> shareCounts.getOrDefault(contact.link(), new SharedDriveStore.ShareCount(0, 0)).total() < files.size() && matches.test(contact));
-        });
+        };
+        search.textProperty().addListener((observable, before, after) -> filterContacts.run());
 
         Label sharedHeading = new Label("Shared with");
         sharedHeading.getStyleClass().add("drive-share-section-title");
@@ -3005,11 +3006,33 @@ final class MessengerPane extends BorderPane {
         pane.setPrefWidth(460);
         dialog.setResultConverter(button -> button == shareType
                 ? new ShareSelection(contactChoices.getSelectionModel().getSelectedItem(), false) : null);
+        AtomicBoolean refreshingShares = new AtomicBoolean();
+        Timeline shareRefresh = new Timeline(new KeyFrame(Duration.seconds(2), event -> {
+            if (!refreshingShares.compareAndSet(false, true)) return;
+            presenceWorkers.execute(() -> {
+                Map<String, SharedDriveStore.ShareCount> latest;
+                try { latest = manager.driveShareCounts(files); }
+                catch (Exception ignored) { refreshingShares.set(false); return; }
+                Platform.runLater(() -> {
+                    refreshingShares.set(false);
+                    if (!dialog.isShowing()) return;
+                    shareCounts.clear(); shareCounts.putAll(latest);
+                    filterContacts.run();
+                    sharedList.refresh(); contactChoices.refresh();
+                    ContactStore.Contact chosen = contactChoices.getSelectionModel().getSelectedItem();
+                    shareButton.setDisable(chosen == null || shareCounts.getOrDefault(chosen.link(),
+                            new SharedDriveStore.ShareCount(0, 0)).total() == files.size());
+                });
+            });
+        }));
+        shareRefresh.setCycleCount(Timeline.INDEFINITE);
         dialog.setOnShown(event -> {
             pane.getScene().setFill(javafx.scene.paint.Color.TRANSPARENT);
             if (contactChoices.getSelectionModel().getSelectedItem() == null) contactChoices.getSelectionModel().selectFirst();
             search.requestFocus();
+            shareRefresh.play();
         });
+        dialog.setOnHidden(event -> shareRefresh.stop());
         dialog.showAndWait().ifPresent(result -> {
             if (result.remove()) stopSharingDriveAccess(result.contact(), files);
             else shareDriveFileAccess(result.contact(), files);
