@@ -31,7 +31,7 @@ final class DownloadsPane extends VBox {
             minimize.setGraphic(glyph(minimized ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"));
         });
         Button close = icon("M6 6l12 12 M18 6L6 18", "Hide downloads — downloads continue");
-        close.setOnAction(event -> { setVisible(false); setManaged(false); });
+        close.setOnAction(event -> hide());
         HBox header = new HBox(6, labels, minimize, close); header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("downloads-header");
         scroll.setFitToWidth(true); scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
@@ -41,6 +41,7 @@ final class DownloadsPane extends VBox {
         queue.setListener(items -> Platform.runLater(() -> update(items)));
     }
     void reveal() { setVisible(true); setManaged(true); toFront(); }
+    void hide() { setVisible(false); setManaged(false); }
     private void update(List<DownloadQueue.Item> items) {
         int active = 0, done = 0, waiting = 0;
         for (var item : items) {

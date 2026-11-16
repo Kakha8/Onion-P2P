@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 
 /** Session download queue. Only authenticated reachability starts a transfer. */
 public final class DownloadQueue implements AutoCloseable {
+    public static final class TorNotReadyException extends Exception {}
     public enum State { WAITING, CONNECTING, DOWNLOADING, COMPLETE, FAILED, CANCELLED }
     public record Item(String id, String key, String owner, String ownerName, String name,
                        State state, String detail, long received, long total, Path destination) {
@@ -32,7 +33,7 @@ public final class DownloadQueue implements AutoCloseable {
     private volatile Consumer<List<Item>> listener = ignored -> {};
     private volatile boolean closed;
 
-    public DownloadQueue(OnlineCheck online) { this(online, 5000); }
+    public DownloadQueue(OnlineCheck online) { this(online, 2500); }
     public DownloadQueue(OnlineCheck online, long retryMillis) {
         this.online = online;
         executor = Executors.newScheduledThreadPool(2, r -> Thread.ofPlatform().daemon().name("drive-download").unstarted(r));
@@ -72,6 +73,7 @@ public final class DownloadQueue implements AutoCloseable {
             if (job.cancelled.get() || closed || job.item.state() != State.WAITING) return;
             boolean reachable;
             try { reachable = online.check(job.item.owner()); }
+            catch (TorNotReadyException starting) { waitingForTor(job); return; }
             catch (Exception offline) { reachable = false; }
             if (job.cancelled.get() || closed) return;
             if (!reachable) { waiting(job); return; }
@@ -98,10 +100,14 @@ public final class DownloadQueue implements AutoCloseable {
         } finally { job.running.set(false); }
     }
     private void waiting(Job job) { change(job, State.WAITING, "Waiting for " + job.item.ownerName() + " to come online · retrying automatically", job.item.received(), job.item.total(), null); }
+    private void waitingForTor(Job job) { change(job, State.WAITING, "Waiting for Tor to connect · retrying automatically", job.item.received(), job.item.total(), null); }
     private static boolean networkFailure(Throwable error) {
         for (Throwable cause = error; cause != null; cause = cause.getCause())
             if (cause instanceof SocketException || cause instanceof SocketTimeoutException || cause instanceof EOFException) return true;
-        return error instanceof java.io.IOException && error.getMessage() != null && error.getMessage().startsWith("Tor could not reach");
+        return error instanceof java.io.IOException && error.getMessage() != null
+                && (error.getMessage().startsWith("Tor could not reach")
+                    || error.getMessage().equals("Contact is not reachable yet.")
+                    || error.getMessage().equals("SOCKS negotiation failed."));
     }
     private void change(Job job, State state, String detail, long received, long total, Path destination) {
         synchronized (job) {

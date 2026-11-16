@@ -74,6 +74,7 @@ public final class ContactManager implements AutoCloseable {
     }
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
     public SharedDownloads downloads() { return downloads; }
+    public boolean isTorReady() { return tor.socksReady().isDone() && !tor.socksReady().isCompletedExceptionally(); }
 
     public int stopSharingDriveFile(Path file) throws Exception {
         int removed = sharedDriveStore.unpublishForPath(file);
@@ -212,7 +213,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     public void downloadSharedFile(String link, String shareId, java.util.function.Consumer<String> status, DownloadQueue.Progress progress) throws Exception {
-        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+        withMessageSession(link, status, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.downloadDriveShare(session.socket, entry.material, sharedDriveStore, shareId, canonical,
                     session.firstMessage, () -> signalDriveShare(canonical), progress);
             return null;
@@ -223,8 +224,18 @@ public final class ContactManager implements AutoCloseable {
 
     public List<FolderAccess.Entry> browseSharedFolder(String link, String id, String relative,
                                                      java.util.function.Consumer<String> status) throws Exception {
+        return browseSharedFolder(link, id, relative, status, 5);
+    }
+
+    public List<FolderAccess.Entry> browseSharedFolderForDownload(String link, String id, String relative,
+                                                                  java.util.function.Consumer<String> status) throws Exception {
+        return browseSharedFolder(link, id, relative, status, 1);
+    }
+
+    private List<FolderAccess.Entry> browseSharedFolder(String link, String id, String relative,
+                                                        java.util.function.Consumer<String> status, int connectAttempts) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<List<FolderAccess.Entry>>();
-        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+        withMessageSession(link, status, () -> false, connectAttempts, (entry, session, canonical) -> {
             result.set(ContactMessaging.browseFolder(session.socket, entry.material, id, relative, session.firstMessage, sharedDriveStore, canonical));
             return null;
         });
@@ -239,7 +250,7 @@ public final class ContactManager implements AutoCloseable {
 
     public void downloadSharedFolderFile(String link, String id, String relative, Path directory,
                                          java.util.function.Consumer<String> status, DownloadQueue.Progress progress) throws Exception {
-        withMessageSession(link, status, () -> false, (entry, session, canonical) -> {
+        withMessageSession(link, status, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.downloadFolderFile(session.socket, entry.material, id, relative, directory, canonical, session.firstMessage, progress);
             return null;
         });
@@ -386,6 +397,12 @@ public final class ContactManager implements AutoCloseable {
     private MessageStore.Message withMessageSession(String link, java.util.function.Consumer<String> status,
                                                     java.util.function.BooleanSupplier cancelled,
                                                     SessionSend action) throws Exception {
+        return withMessageSession(link, status, cancelled, 5, action);
+    }
+
+    private MessageStore.Message withMessageSession(String link, java.util.function.Consumer<String> status,
+                                                    java.util.function.BooleanSupplier cancelled, int connectAttempts,
+                                                    SessionSend action) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
         if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
@@ -406,7 +423,7 @@ public final class ContactManager implements AutoCloseable {
             checkCancelled(cancelled);
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-                session.socket = connectWithRetry(socksPort, entry.material.addresses().remote(), status, cancelled);
+                session.socket = connectWithRetry(socksPort, entry.material.addresses().remote(), status, cancelled, connectAttempts);
                 session.firstMessage = true;
                 connections.add(session.socket);
             }
@@ -426,9 +443,9 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private Socket connectWithRetry(int socksPort, String onion, java.util.function.Consumer<String> status,
-                                   java.util.function.BooleanSupplier cancelled) throws Exception {
+                                   java.util.function.BooleanSupplier cancelled, int attempts) throws Exception {
         IOException last = null;
-        for (int attempt = 1; attempt <= 5; attempt++) {
+        for (int attempt = 1; attempt <= attempts; attempt++) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
             try {
@@ -438,13 +455,13 @@ public final class ContactManager implements AutoCloseable {
             }
             catch (IOException e) {
                 last = e;
-                if (attempt == 5) break;
-                status.accept("Tor is still locating the contact service; retry " + (attempt + 1) + " of 5…");
+                if (attempt == attempts) break;
+                status.accept("Tor is still locating the contact service; retry " + (attempt + 1) + " of " + attempts + "…");
                 try { Thread.sleep(2000); }
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw interrupted; }
             }
         }
-        throw new IOException("Tor could not reach the contact after five attempts: "
+        throw new IOException("Tor could not reach the contact after " + attempts + " attempt" + (attempts == 1 ? "" : "s") + ": "
                 + (last == null ? "connection unavailable" : safeMessage(last)), last);
     }
 

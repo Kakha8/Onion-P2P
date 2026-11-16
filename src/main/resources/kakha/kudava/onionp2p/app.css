@@ -22,6 +22,15 @@
 }
 .button.download-icon-button:hover { -fx-background-color: #303c4b; }
 .download-glyph { -fx-fill: transparent; -fx-stroke: #aebdce; -fx-stroke-width: 1.7; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.7; -fx-scale-y: 0.7; }
+.button.drive-download-launcher {
+    -fx-min-width: 42; -fx-pref-width: 42; -fx-max-width: 42;
+    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42;
+    -fx-padding: 0; -fx-background-color: #252e39; -fx-background-radius: 21;
+    -fx-border-color: #405066; -fx-border-radius: 21; -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0.12, 0, 2);
+}
+.button.drive-download-launcher:hover { -fx-background-color: #303c4b; -fx-border-color: #699ce4; }
+.drive-download-launcher .drive-menu-glyph { -fx-stroke: #9dc5ff; -fx-scale-x: 0.85; -fx-scale-y: 0.85; }
 
 .root, .app-root {
     -fx-background-color: #141920;

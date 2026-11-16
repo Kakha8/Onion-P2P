@@ -10,6 +10,29 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class DownloadQueueTest {
+    @Test void waitsForTorThenTriesTransferWithoutContactProbe() throws Exception {
+        var torReady = new AtomicBoolean(); var checks = new AtomicInteger(); var transfers = new AtomicInteger();
+        var waitingForTor = new CountDownLatch(1); var complete = new CountDownLatch(1);
+        try (var queue = new DownloadQueue(owner -> {
+            checks.incrementAndGet();
+            if (!torReady.get()) throw new DownloadQueue.TorNotReadyException();
+            return true;
+        }, 20)) {
+            queue.setListener(items -> items.forEach(item -> {
+                if (item.detail().contains("Waiting for Tor")) waitingForTor.countDown();
+                if (item.state() == DownloadQueue.State.COMPLETE) complete.countDown();
+            }));
+            queue.add("request", "alice", "Alice", "test.zip", 10, progress -> {
+                transfers.incrementAndGet(); return Path.of("saved.zip");
+            });
+            assertTrue(waitingForTor.await(5, TimeUnit.SECONDS));
+            assertEquals(0, transfers.get());
+            torReady.set(true); queue.wake("alice");
+            assertTrue(complete.await(5, TimeUnit.SECONDS));
+            assertEquals(1, transfers.get());
+            assertTrue(checks.get() >= 2);
+        }
+    }
     @Test void waitsOfflineThenAutomaticallyDownloadsOnReconnect() throws Exception {
         AtomicBoolean online = new AtomicBoolean(); AtomicInteger work = new AtomicInteger();
         var done = new CountDownLatch(1); var progressSeen = new AtomicBoolean();

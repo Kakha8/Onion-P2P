@@ -559,6 +559,14 @@ final class MessengerPane extends BorderPane {
         mainSection.getStyleClass().add("main-section-switcher");
         drivePage.setVisible(false);
         drivePage.setManaged(false);
+        Button downloadsLauncher = new Button();
+        downloadsLauncher.setGraphic(driveMenuGlyph("M12 3v12 M7 10l5 5 5-5 M4 19h16"));
+        downloadsLauncher.getStyleClass().add("drive-download-launcher");
+        downloadsLauncher.setAccessibleText("Downloads");
+        downloadsLauncher.setTooltip(new Tooltip("Downloads"));
+        downloadsLauncher.setOnAction(event -> downloadsPane.reveal());
+        downloadsLauncher.visibleProperty().bind(drivePage.visibleProperty().and(downloadsPane.visibleProperty().not()));
+        downloadsLauncher.managedProperty().bind(downloadsLauncher.visibleProperty());
 
         Runnable showChats = () -> {
             chatsNavigation.getStyleClass().add("rail-button-selected");
@@ -567,6 +575,7 @@ final class MessengerPane extends BorderPane {
             driveNavigationPane.setVisible(false); driveNavigationPane.setManaged(false);
             conversation.setVisible(true); conversation.setManaged(true);
             drivePage.setVisible(false); drivePage.setManaged(false);
+            downloadsPane.hide();
         };
         showChatsAction = showChats;
         Runnable showDrive = () -> {
@@ -627,7 +636,9 @@ final class MessengerPane extends BorderPane {
         mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
         mainSplit.getDividers().getFirst().positionProperty()
                 .addListener((obs, oldPosition, newPosition) -> clampContactColumn(mainSplit, leftColumns));
-        StackPane workspace = new StackPane(mainSplit, downloadsPane);
+        StackPane workspace = new StackPane(mainSplit, downloadsLauncher, downloadsPane);
+        StackPane.setAlignment(downloadsLauncher, Pos.BOTTOM_RIGHT);
+        StackPane.setMargin(downloadsLauncher, new Insets(16));
         StackPane.setAlignment(downloadsPane, Pos.BOTTOM_RIGHT);
         StackPane.setMargin(downloadsPane, new Insets(12));
         setCenter(workspace);
@@ -638,7 +649,7 @@ final class MessengerPane extends BorderPane {
 
         poll = new Timeline(new KeyFrame(Duration.seconds(2), e -> refreshMessages()));
         poll.setCycleCount(Timeline.INDEFINITE);
-        presencePoll = new Timeline(new KeyFrame(Duration.seconds(5), e -> checkContactsPresence()));
+        presencePoll = new Timeline(new KeyFrame(Duration.seconds(3), e -> checkContactsPresence()));
         presencePoll.setCycleCount(Timeline.INDEFINITE);
         seenPoll = new Timeline(new KeyFrame(Duration.millis(500), e -> markVisibleIncomingMessagesSeen()));
         seenPoll.setCycleCount(Timeline.INDEFINITE);
@@ -725,7 +736,7 @@ final class MessengerPane extends BorderPane {
         for (ContactStore.Contact contact : contacts) {
             Presence previous = presence.get(contact.link());
             // Retry unreachable contacts promptly; online contacts keep the quieter cadence.
-            long retrySeconds = previous != null && previous.online() ? 15 : 5;
+            long retrySeconds = previous != null && previous.online() ? 15 : 3;
             if (previous != null && now - previous.checkedAt() < TimeUnit.SECONDS.toMillis(retrySeconds)) continue;
             if (!checkingPresence.add(contact.link())) continue;
             long requestStartedAt = System.currentTimeMillis();
@@ -2049,12 +2060,7 @@ final class MessengerPane extends BorderPane {
             addMenu.show(addButton, Side.BOTTOM, 0, 2);
         });
         shareFiles.setOnAction(event -> shareSelectedDriveEntries());
-        Button downloadsButton = new Button();
-        downloadsButton.setGraphic(driveMenuGlyph("M12 3v12 M7 10l5 5 5-5 M4 19h16"));
-        downloadsButton.getStyleClass().addAll("drive-icon-action-button", "drive-add-folder-button");
-        downloadsButton.setAccessibleText("Downloads"); downloadsButton.setTooltip(new Tooltip("Downloads"));
-        downloadsButton.setOnAction(event -> downloadsPane.reveal());
-        HBox actionGroup = new HBox(8, importing, downloadsButton, shareFiles, addFiles, addFolder);
+        HBox actionGroup = new HBox(8, importing, shareFiles, addFiles, addFolder);
         actionGroup.setAlignment(Pos.CENTER_RIGHT);
         actionGroup.getStyleClass().add("drive-header-actions");
         HBox header = new HBox(16, heading, spacer, actionGroup);

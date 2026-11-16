@@ -9,7 +9,14 @@ import java.util.*;
 public final class SharedDownloads implements AutoCloseable {
     private final ContactManager manager;
     private final DownloadQueue queue;
-    public SharedDownloads(ContactManager manager) { this.manager = manager; queue = new DownloadQueue(manager::isOnline); }
+    public SharedDownloads(ContactManager manager) {
+        this.manager = manager;
+        queue = new DownloadQueue(owner -> {
+            if (!manager.isTorReady()) throw new DownloadQueue.TorNotReadyException();
+            // The download itself proves reachability. Avoid an extra Tor connection and ping.
+            return true;
+        });
+    }
     public DownloadQueue queue() { return queue; }
 
     public void file(SharedDriveStore.SharedFile share, String sender) {
@@ -81,7 +88,7 @@ public final class SharedDownloads implements AutoCloseable {
         private void readPlan(String remote, String local, List<Member> members, int depth, DownloadQueue.Progress progress) throws Exception {
             if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");
-            for (var child : manager.browseSharedFolder(share.contactLink(), share.id(), remote, progress::stage)) {
+            for (var child : manager.browseSharedFolderForDownload(share.contactLink(), share.id(), remote, progress::stage)) {
                 if (members.size() >= 100000) throw new IOException("Folder download exceeds 100,000 entries.");
                 if (!child.folder() && child.size() > 1024L * 1024 * 1024) throw new IOException(child.name() + " exceeds the 1 GiB file limit.");
                 String childRemote = remote.isEmpty() ? child.name() : remote + "/" + child.name();
