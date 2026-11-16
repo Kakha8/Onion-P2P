@@ -32,6 +32,7 @@ public final class ContactManager implements AutoCloseable {
     private volatile Consumer<String> driveShareListener = ignored -> {};
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, MessageSession> shareSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
     private final Set<String> driveShareChecks = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
@@ -58,7 +59,7 @@ public final class ContactManager implements AutoCloseable {
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
         downloads = new SharedDownloads(this);
-        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 5, 5, TimeUnit.SECONDS);
+        driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 1, 2, TimeUnit.SECONDS);
     }
 
     public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
@@ -176,18 +177,9 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private void sendDriveShareOnce(Pending entry, String canonical, String shareId, Path file) throws Exception {
-        MessageSession session = messageSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
+        MessageSession session = shareSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
         synchronized (session) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
-            if (session.socket != null && !session.socket.isClosed() && !session.firstMessage) {
-                try { ContactMessaging.ping(session.socket, entry.material); }
-                catch (Exception stale) {
-                    connections.remove(session.socket);
-                    try { session.socket.close(); } catch (Exception ignored) {}
-                    session.socket = null;
-                    session.firstMessage = true;
-                }
-            }
             if (session.socket == null || session.socket.isClosed()) {
                 int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
                 session.socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000);
@@ -286,7 +278,10 @@ public final class ContactManager implements AutoCloseable {
     private void requestDriveSync(String link, boolean changed) {
         if (closed) return;
         if (changed) driveSyncDirty.add(link);
-        if (!driveSyncDirty.contains(link) && System.currentTimeMillis() - lastDriveSync.getOrDefault(link, 0L) < 30000) return;
+        boolean queued;
+        try { queued = !sharedDriveStore.pendingShares(link).isEmpty(); }
+        catch (Exception error) { queued = false; }
+        if (!queued && !driveSyncDirty.contains(link) && System.currentTimeMillis() - lastDriveSync.getOrDefault(link, 0L) < 30000) return;
         if (!driveSyncInFlight.add(link)) return;
         try {
             driveShareRetries.execute(() -> {
@@ -294,7 +289,7 @@ public final class ContactManager implements AutoCloseable {
                 try {
                     deliverPendingDriveShares(link);
                     driveSyncDirty.remove(link);
-                    withMessageSession(link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+                    withSession(shareSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
                         ContactMessaging.syncDriveShares(session.socket, entry.material, sharedDriveStore, canonical, session.firstMessage);
                         return null;
                     });
@@ -342,12 +337,14 @@ public final class ContactManager implements AutoCloseable {
         // The local listener is only needed to receive connections. An outgoing presence
         // probe can be sent as soon as Tor is ready, even while that listener is publishing.
         if (entry == null || !entry.saved || entry.stopped) return false;
-        int socksPort = tor.socksReady().get(30, TimeUnit.SECONDS);
-        try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 12000)) {
-            ContactMessaging.ping(socket, entry.material, true);
-            signalContactOnline(canonical);
-            return true;
-        }
+        if (!isTorReady()) return false;
+        withSession(shareSessions, canonical, ignored -> {}, () -> false, 1, (contact, session, ignored) -> {
+            ContactMessaging.ping(session.socket, contact.material, session.firstMessage);
+            return null;
+        });
+        // Retain the authenticated socket: queued offers can use it immediately.
+        signalContactOnline(canonical);
+        return true;
     }
     public List<MessageStore.Message> messages(String link) throws Exception {
         return messageStore.all(canonicalLink(link));
@@ -405,10 +402,17 @@ public final class ContactManager implements AutoCloseable {
     private MessageStore.Message withMessageSession(String link, java.util.function.Consumer<String> status,
                                                     java.util.function.BooleanSupplier cancelled, int connectAttempts,
                                                     SessionSend action) throws Exception {
+        return withSession(messageSessions, link, status, cancelled, connectAttempts, action);
+    }
+
+    private MessageStore.Message withSession(ConcurrentMap<String, MessageSession> sessions, String link,
+                                            java.util.function.Consumer<String> status,
+                                            java.util.function.BooleanSupplier cancelled, int connectAttempts,
+                                            SessionSend action) throws Exception {
         String canonical = canonicalLink(link);
         Pending entry = pending.get(canonical);
         if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
-        MessageSession session = messageSessions.computeIfAbsent(canonical, ignored -> new MessageSession());
+        MessageSession session = sessions.computeIfAbsent(canonical, ignored -> new MessageSession());
         synchronized (session) {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
@@ -502,7 +506,7 @@ public final class ContactManager implements AutoCloseable {
         entry.saved = previouslyAcknowledged;
         pending.put(link, entry);
         event(link, "Waiting for Tor, then for your contact to import your link…");
-        entry.task = retries.scheduleWithFixedDelay(() -> attempt(entry), 0, 10, TimeUnit.SECONDS);
+        entry.task = retries.scheduleWithFixedDelay(() -> attempt(entry), 0, 3, TimeUnit.SECONDS);
         return material.addresses();
     }
 
@@ -540,7 +544,16 @@ public final class ContactManager implements AutoCloseable {
                 }
             }
             // A previously acknowledged contact only needs its onion listener restored.
-            if (entry.saved) return;
+            if (entry.saved) {
+                if (!entry.announcedOnline) {
+                    entry.announcedOnline = true;
+                    driveShareRetries.execute(() -> {
+                        try { isOnline(entry.link); }
+                        catch (Exception ignored) { entry.announcedOnline = false; }
+                    });
+                }
+                return;
+            }
             try (Socket socket = TorControl.connect(socksPort, entry.material.addresses().remote(), 20000)) {
                 connections.add(socket);
                 try { ContactHandshake.client(socket, entry.material, () -> save(entry)); }
@@ -642,7 +655,7 @@ public final class ContactManager implements AutoCloseable {
         final String link;
         final ContactRendezvous.Material material;
         final long created = System.nanoTime();
-        volatile boolean saved, stopped;
+        volatile boolean saved, stopped, announcedOnline;
         volatile ServerSocket listener;
         ScheduledFuture<?> task;
         Pending(String link, ContactRendezvous.Material material) { this.link = link; this.material = material; }
