@@ -2,6 +2,10 @@ package kakha.kudava.onionp2p.ui;
 
 import kakha.kudava.onionp2p.drive.DownloadQueue;
 import javafx.application.Platform;
+import javafx.beans.property.ReadOnlyIntegerProperty;
+import javafx.beans.property.ReadOnlyIntegerWrapper;
+import javafx.animation.*;
+import javafx.util.Duration;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
@@ -10,6 +14,7 @@ import java.util.*;
 
 /** Floating transfer panel, matching File-Drive's compact transfer list. */
 final class DownloadsPane extends VBox {
+    private final ReadOnlyIntegerWrapper activeCount = new ReadOnlyIntegerWrapper();
     private final DownloadQueue queue;
     private final Label title = new Label("Downloads"), summary = new Label("No downloads yet");
     private final VBox rows = new VBox();
@@ -39,8 +44,12 @@ final class DownloadsPane extends VBox {
         rows.getStyleClass().add("downloads-rows");
         getChildren().addAll(header, scroll); setVisible(false); setManaged(false);
         queue.setListener(items -> Platform.runLater(() -> update(items)));
+        var clock = new Timeline(new KeyFrame(Duration.seconds(1), event -> views.values().forEach(Row::updateMetrics)));
+        clock.setCycleCount(Timeline.INDEFINITE);
+        sceneProperty().addListener((obs, before, scene) -> { if (scene == null) clock.stop(); else clock.play(); });
     }
     void reveal() { setVisible(true); setManaged(true); toFront(); }
+    ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<DownloadQueue.Item> items) {
         int active = 0, done = 0, waiting = 0, paused = 0;
@@ -54,12 +63,15 @@ final class DownloadsPane extends VBox {
             Row row = views.computeIfAbsent(item.id(), id -> { Row created = new Row(id); rows.getChildren().add(created); return created; });
             row.update(item);
         }
+        activeCount.set(active);
         title.setText(active > 0 ? "Downloads · " + active + " active" : "Downloads");
         summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : ""));
-        scroll.setPrefHeight(Math.min(280, Math.max(55, items.size() * 106)));
+        scroll.setPrefHeight(Math.min(300, Math.max(55, items.size() * 128)));
     }
     private final class Row extends VBox {
-        final Label name = new Label(), detail = new Label(), bytes = new Label();
+        final Label name = new Label(), detail = new Label(), bytes = new Label(), metrics = new Label();
+        final kakha.kudava.onionp2p.drive.TransferRate rate = new kakha.kudava.onionp2p.drive.TransferRate();
+        boolean measuring;
         final ProgressBar progress = new ProgressBar(0);
         final Button action, pause;
         DownloadQueue.Item current;
@@ -81,20 +93,22 @@ final class DownloadsPane extends VBox {
             HBox line = new HBox(8, name, pause, action); line.setAlignment(Pos.CENTER_LEFT);
             detail.getStyleClass().add("download-detail"); detail.setWrapText(true); detail.setMaxWidth(Double.MAX_VALUE);
             bytes.getStyleClass().add("downloads-summary");
+            metrics.getStyleClass().add("downloads-summary");
             progress.setMaxWidth(Double.MAX_VALUE); progress.getStyleClass().add("download-progress");
-            getChildren().addAll(line, detail, progress, bytes);
+            getChildren().addAll(line, detail, progress, bytes, metrics);
         }
         void update(DownloadQueue.Item item) {
             current = item; name.setText(item.name()); name.setTooltip(new Tooltip(item.name()));
             detail.setText(item.detail()); detail.setTooltip(new Tooltip("Shared by " + item.ownerName()));
             boolean complete = item.state() == DownloadQueue.State.COMPLETE;
             boolean paused = item.state() == DownloadQueue.State.PAUSED;
+            TransferPresentation.cancelled(this, detail, item.state() == DownloadQueue.State.CANCELLED);
             pause.setVisible(item.active()); pause.setManaged(item.active());
             pause.setGraphic(glyph(paused ? "M8 5l11 7-11 7z" : "M8 5v14 M16 5v14"));
             String pauseLabel = paused ? "Resume download" : "Pause download";
             pause.setAccessibleText(pauseLabel); pause.setTooltip(new Tooltip(pauseLabel));
             double fraction = item.total() > 0 ? Math.min(.99, (double) item.received() / item.total()) : 0;
-            progress.setProgress(complete ? 1 : item.total() < 0 && item.state() != DownloadQueue.State.WAITING && !paused ? -1 : fraction);
+            progress.setProgress(complete ? 1 : item.total() < 0 && (item.state() == DownloadQueue.State.CONNECTING || item.state() == DownloadQueue.State.DOWNLOADING) ? -1 : fraction);
             bytes.setText(item.total() < 0 ? "Folder size will appear when connected" : size(item.received()) + " / " + size(item.total())
                     + " · " + (complete ? 100 : (int) (fraction * 100)) + "%");
             String path = complete ? "M12 3v12 M7 10l5 5 5-5 M4 19h16" : item.state() == DownloadQueue.State.FAILED ? "M4 11a8 8 0 1 1 2 6 M4 5v6h6" : "M6 6l12 12 M18 6L6 18";
@@ -102,6 +116,14 @@ final class DownloadsPane extends VBox {
             action.setDisable(item.state() == DownloadQueue.State.CANCELLED);
             String label = complete ? "Open download" : item.state() == DownloadQueue.State.FAILED ? "Retry download" : "Cancel download";
             action.setAccessibleText(label); action.setTooltip(new Tooltip(label));
+            updateMetrics();
+        }
+        void updateMetrics() {
+            if (current == null) return;
+            boolean active = current.state() == DownloadQueue.State.DOWNLOADING || current.state() == DownloadQueue.State.CONNECTING;
+            if (active && !measuring) rate.reset(current.received());
+            measuring = active;
+            metrics.setText(active ? TransferPresentation.speedAndEta(current.received(), current.total(), rate.update(current.received())) : "0 B/s · —");
         }
     }
     private static Button icon(String path, String label) {

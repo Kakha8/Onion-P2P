@@ -46,6 +46,7 @@ class DownloadsPaneTest {
                 var labels = pane[0].lookupAll(".label").stream().map(node -> ((Label) node).getText()).toList();
                 assertTrue(labels.stream().anyMatch(text -> text.contains("Waiting for Alice")));
                 assertTrue(labels.stream().anyMatch(text -> text.contains("42%")));
+                assertTrue(labels.stream().anyMatch(text -> text.contains("/s") && (text.contains("left") || text.contains("Estimating"))));
                 assertTrue(pane[0].getLayoutX() + pane[0].getWidth() <= 460);
                 assertTrue(pane[0].getLayoutY() + pane[0].getHeight() <= 390);
                 String snapshot = System.getProperty("onion.downloadSnapshot");
@@ -65,6 +66,9 @@ class DownloadsPaneTest {
                 assertTrue(pane[0].lookupAll(".label").stream()
                         .anyMatch(node -> "Paused".equals(((Label) node).getText())));
             });
+            queue.cancel(moving);
+            fx(() -> assertTrue(pane[0].lookupAll(".label").stream().map(node -> (Label) node)
+                    .anyMatch(label -> "Cancelled".equals(label.getText()) && label.getGraphic() != null)));
             release.countDown();
         } finally { release.countDown(); }
     }

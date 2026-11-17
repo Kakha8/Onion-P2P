@@ -52,20 +52,21 @@ final class UploadsPane extends VBox {
         for (var item : items) {
             keys.add(item.key());
             VBox row = views.computeIfAbsent(item.key(), ignored -> {
-                Label name = new Label(), recipient = new Label(), detail = new Label(), bytes = new Label();
+                Label name = new Label(), recipient = new Label(), detail = new Label(), bytes = new Label(), metrics = new Label();
                 name.getStyleClass().add("download-name"); recipient.getStyleClass().add("download-detail");
                 detail.getStyleClass().add("download-detail"); bytes.getStyleClass().add("downloads-summary");
+                metrics.getStyleClass().add("downloads-summary");
                 name.setMinWidth(0); name.setMaxWidth(Double.MAX_VALUE);
                 recipient.setMaxWidth(Double.MAX_VALUE); detail.setWrapText(true);
                 ProgressBar progress = new ProgressBar(); progress.setMaxWidth(Double.MAX_VALUE);
                 progress.getStyleClass().add("download-progress");
-                VBox created = new VBox(5, name, recipient, detail, progress, bytes);
+                VBox created = new VBox(5, name, recipient, detail, progress, bytes, metrics);
                 created.getStyleClass().add("download-row"); rows.getChildren().add(0, created); return created;
             });
             ((Label) row.getChildren().get(0)).setText(item.name());
             ((Label) row.getChildren().get(1)).setText("To " + contactName.apply(item.contact()));
             String status = switch (item.state()) {
-                case UPLOADING -> "Uploading · " + size((long) item.speed()) + "/s";
+                case UPLOADING -> "Uploading";
                 case WAITING -> "Waiting for recipient";
                 case PAUSED -> "Paused by recipient";
                 case DISCONNECTED -> "Recipient disconnected · progress retained";
@@ -74,12 +75,15 @@ final class UploadsPane extends VBox {
                 case CANCELLED -> "Cancelled by recipient";
             };
             ((Label) row.getChildren().get(2)).setText(status);
+            TransferPresentation.cancelled(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.CANCELLED);
             ((ProgressBar) row.getChildren().get(3)).setProgress(item.state() == UploadTracker.State.COMPLETE ? 1
                     : item.total() == 0 ? 0 : Math.min(.99, (double) item.sent() / item.total()));
             ((Label) row.getChildren().get(4)).setText(size(item.sent()) + " / " + size(item.total()));
+            ((Label) row.getChildren().get(5)).setText(item.state() == UploadTracker.State.UPLOADING
+                    ? TransferPresentation.speedAndEta(item.sent(), item.total(), item.speed()) : "0 B/s · —");
         }
         views.entrySet().removeIf(entry -> { if (keys.contains(entry.getKey())) return false; rows.getChildren().remove(entry.getValue()); return true; });
-        scroll.setPrefHeight(Math.min(300, Math.max(55, items.size() * 122)));
+        scroll.setPrefHeight(Math.min(300, Math.max(55, items.size() * 144)));
     }
     private static Button icon(String path, String label) {
         Button button = new Button(null, glyph(path)); button.getStyleClass().add("download-icon-button");

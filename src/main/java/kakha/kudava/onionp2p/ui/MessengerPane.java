@@ -565,7 +565,12 @@ final class MessengerPane extends BorderPane {
         drivePage.setVisible(false);
         drivePage.setManaged(false);
         Button downloadsLauncher = new Button();
-        downloadsLauncher.setGraphic(driveMenuGlyph("M12 3v12 M7 10l5 5 5-5 M4 19h16"));
+        Label downloadCount = new Label(); downloadCount.getStyleClass().add("upload-count-badge");
+        downloadCount.textProperty().bind(downloadsPane.activeCountProperty().asString());
+        downloadCount.visibleProperty().bind(downloadsPane.activeCountProperty().greaterThan(0));
+        StackPane downloadIcon = new StackPane(driveMenuGlyph("M12 3v12 M7 10l5 5 5-5 M4 19h16"), downloadCount);
+        StackPane.setAlignment(downloadCount, Pos.TOP_RIGHT);
+        downloadsLauncher.setGraphic(downloadIcon);
         downloadsLauncher.getStyleClass().add("drive-download-launcher");
         downloadsLauncher.setAccessibleText("Downloads");
         downloadsLauncher.setTooltip(new Tooltip("Downloads"));

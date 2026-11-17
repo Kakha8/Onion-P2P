@@ -10,6 +10,7 @@ public final class UploadTracker implements AutoCloseable {
     public record Item(String key, String contact, String name, long sent, long total, double speed, State state) {}
     private static final class Transfer {
         Item item; Object connection; long updated;
+        TransferRate rate;
         Transfer(Item item, Object connection, long now) { this.item = item; this.connection = connection; updated = now; }
     }
     private final Map<String, Transfer> transfers = new LinkedHashMap<>();
@@ -29,6 +30,8 @@ public final class UploadTracker implements AutoCloseable {
         var item = new Item(key, contact, name, offset, total,
                 previous != null && previous.item.state() == State.UPLOADING ? previous.item.speed() : 0, State.UPLOADING);
         var transfer = new Transfer(item, connection, previous == null || previous.item.state() != State.UPLOADING ? now : previous.updated);
+        transfer.rate = previous != null && previous.item.state() == State.UPLOADING && offset >= previous.item.sent() ? previous.rate : new TransferRate(clock);
+        if (transfer.rate != (previous == null ? null : previous.rate)) transfer.rate.reset(offset);
         transfers.put(key, transfer);
         if (transfers.size() > 200) {
             var it = transfers.entrySet().iterator();
@@ -40,8 +43,7 @@ public final class UploadTracker implements AutoCloseable {
         Transfer transfer = transfers.get(key); if (transfer == null) return;
         if (transfer.item.state() == State.CANCELLED) return;
         Item item = transfer.item; long now = clock.getAsLong();
-        double seconds = Math.max(.001, (now - transfer.updated) / 1_000_000_000.0);
-        double speed = Math.max(0, sent - item.sent()) / seconds;
+        double speed = transfer.rate.update(sent);
         transfer.item = new Item(key, item.contact(), item.name(), sent, item.total(), speed,
                 sent == item.total() ? State.COMPLETE : State.UPLOADING);
         transfer.updated = now; publish();
@@ -72,6 +74,10 @@ public final class UploadTracker implements AutoCloseable {
         long now = clock.getAsLong();
         for (var transfer : transfers.values()) if (transfer.item.state() == State.UPLOADING
                 && now - transfer.updated > TimeUnit.SECONDS.toNanos(20)) state(transfer, State.WAITING);
+        for (var transfer : transfers.values()) if (transfer.item.state() == State.UPLOADING) {
+            Item item = transfer.item;
+            transfer.item = new Item(item.key(), item.contact(), item.name(), item.sent(), item.total(), transfer.rate.update(item.sent()), item.state());
+        }
         publish();
     }
     private void state(Transfer transfer, State state) {

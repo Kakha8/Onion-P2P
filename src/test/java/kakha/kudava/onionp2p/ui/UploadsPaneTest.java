@@ -37,6 +37,7 @@ class UploadsPaneTest {
                 var labels = pane[0].lookupAll(".label").stream().map(node -> ((Label) node).getText()).toList();
                 assertTrue(labels.contains("To Alice")); assertTrue(labels.contains("Documents.zip"));
                 assertTrue(labels.stream().anyMatch(text -> text.contains("400 B / 1.0 KB")));
+                assertTrue(labels.stream().anyMatch(text -> text.contains("/s") && (text.contains("left") || text.contains("Estimating"))));
             });
             tracker.paused("alice", "share", "file");
             fx(() -> {
@@ -47,6 +48,8 @@ class UploadsPaneTest {
             fx(() -> {
                 assertEquals(0, pane[0].activeCountProperty().get());
                 assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Cancelled by recipient".equals(((Label) node).getText())));
+                assertTrue(pane[0].lookupAll(".label").stream()
+                        .map(node -> (Label) node).anyMatch(label -> "Cancelled by recipient".equals(label.getText()) && label.getGraphic() != null));
             });
         }
     }
