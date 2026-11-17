@@ -1,0 +1,48 @@
+package kakha.kudava.onionp2p.ui;
+
+import kakha.kudava.onionp2p.drive.UploadTracker;
+import javafx.application.Platform;
+import javafx.scene.Scene;
+import javafx.scene.control.Label;
+import javafx.scene.layout.StackPane;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import java.util.concurrent.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+class UploadsPaneTest {
+    private static void fx(Runnable work) throws Exception {
+        var result = new CompletableFuture<Void>();
+        Platform.runLater(() -> { try { work.run(); result.complete(null); } catch (Throwable error) { result.completeExceptionally(error); } });
+        result.get(5, TimeUnit.SECONDS);
+    }
+    @Test @Timeout(15)
+    void showsRecipientProgressAndPausedStatusWithoutOpeningAutomatically() throws Exception {
+        var toolkit = new CompletableFuture<Void>();
+        try { Platform.startup(() -> toolkit.complete(null)); }
+        catch (IllegalStateException running) { toolkit.complete(null); }
+        toolkit.get(5, TimeUnit.SECONDS);
+        try (var tracker = new UploadTracker()) {
+            UploadsPane[] pane = new UploadsPane[1];
+            fx(() -> {
+                pane[0] = new UploadsPane(tracker, contact -> "Alice");
+                var scene = new Scene(new StackPane(pane[0]), 440, 360);
+                scene.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
+            });
+            String key = tracker.begin("alice", "share", "file", "Documents.zip", 1000, 0, new Object());
+            tracker.acknowledged(key, 400);
+            fx(() -> {
+                assertFalse(pane[0].isVisible()); assertEquals(1, pane[0].activeCountProperty().get());
+                pane[0].reveal(); pane[0].applyCss(); pane[0].layout();
+                var labels = pane[0].lookupAll(".label").stream().map(node -> ((Label) node).getText()).toList();
+                assertTrue(labels.contains("To Alice")); assertTrue(labels.contains("Documents.zip"));
+                assertTrue(labels.stream().anyMatch(text -> text.contains("400 B / 1.0 KB")));
+            });
+            tracker.paused("alice", "share", "file");
+            fx(() -> {
+                assertEquals(0, pane[0].activeCountProperty().get());
+                assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Paused by recipient".equals(((Label) node).getText())));
+            });
+        }
+    }
+}

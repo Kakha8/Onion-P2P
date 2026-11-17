@@ -31,6 +31,7 @@ public final class SharedDownloads implements AutoCloseable {
             return path;
             }
             public void discard() { transfer.discard(); }
+            public void paused() throws Exception { manager.notifyDownloadPaused(share.contactLink(), share.id(), ""); }
         });
     }
 
@@ -53,6 +54,7 @@ public final class SharedDownloads implements AutoCloseable {
         final Set<String> completed = new HashSet<>();
         final Map<String, ResumableFile> transfers = new HashMap<>();
         long completeBytes;
+        volatile String currentMember;
         FolderWork(SharedDriveStore.SharedFile share, String relative, String name, boolean folder, long size, Path saveIn) {
             this.share = share; this.relative = relative; this.name = name; this.folder = folder; this.size = size; this.saveIn = saveIn;
         }
@@ -90,10 +92,15 @@ public final class SharedDownloads implements AutoCloseable {
             return destination;
         }
         private Path downloadMember(String relative, Path directory, DownloadQueue.Progress progress) throws Exception {
+            currentMember = relative;
             return transfers.computeIfAbsent(relative, ignored -> new ResumableFile()).download(directory,
                     (offset, version) -> manager.downloadChunk(share.contactLink(), share.id(), relative, offset, version), progress);
         }
         public void discard() { transfers.values().forEach(ResumableFile::discard); }
+        public void paused() throws Exception {
+            String member = currentMember;
+            if (member != null) manager.notifyDownloadPaused(share.contactLink(), share.id(), member);
+        }
         private void readPlan(String remote, String local, List<Member> members, int depth, DownloadQueue.Progress progress) throws Exception {
             if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");

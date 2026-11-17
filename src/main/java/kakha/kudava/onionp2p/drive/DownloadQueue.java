@@ -18,12 +18,12 @@ public final class DownloadQueue implements AutoCloseable {
         public boolean active() { return state == State.WAITING || state == State.CONNECTING || state == State.DOWNLOADING || state == State.PAUSED; }
     }
     public interface Progress { void update(long received, long total); void stage(String detail); default void checkpoint() {} }
-    @FunctionalInterface public interface Work { Path run(Progress progress) throws Exception; default void discard() {} }
+    @FunctionalInterface public interface Work { Path run(Progress progress) throws Exception; default void discard() {} default void paused() throws Exception {} }
     @FunctionalInterface public interface OnlineCheck { boolean check(String owner) throws Exception; }
     private static final class Job {
         volatile Item item;
         final Work work;
-        final AtomicBoolean running = new AtomicBoolean(), cancelled = new AtomicBoolean(), paused = new AtomicBoolean();
+        final AtomicBoolean running = new AtomicBoolean(), cancelled = new AtomicBoolean(), paused = new AtomicBoolean(), resuming = new AtomicBoolean();
         long lastProgress;
         Job(Item item, Work work) { this.item = item; this.work = work; }
     }
@@ -63,10 +63,14 @@ public final class DownloadQueue implements AutoCloseable {
         var job = jobs.get(id); if (job == null || !job.item.active()) return;
         job.paused.set(true);
         change(job, State.PAUSED, "Paused", job.item.received(), job.item.total(), null);
+        Thread.ofPlatform().daemon().name("download-pause-notice").start(() -> {
+            try { job.work.paused(); } catch (Exception ignored) { /* Pausing locally does not require a reachable owner. */ }
+        });
     }
     public synchronized void resume(String id) {
         var job = jobs.get(id); if (job == null || job.item.state() != State.PAUSED) return;
         job.paused.set(false);
+        job.resuming.set(true);
         change(job, State.WAITING, "Resuming…", job.item.received(), job.item.total(), null);
         submit(job);
     }
@@ -96,6 +100,7 @@ public final class DownloadQueue implements AutoCloseable {
                 public void stage(String detail) { check(); change(job, State.CONNECTING, detail, job.item.received(), job.item.total(), null); }
                 public void update(long received, long total) {
                     check(); long now = System.nanoTime();
+                    job.resuming.set(false);
                     if (received != total && now - job.lastProgress < TimeUnit.MILLISECONDS.toNanos(100)) return;
                     job.lastProgress = now;
                     change(job, State.DOWNLOADING, "Downloading", received, total, null);
@@ -116,7 +121,12 @@ public final class DownloadQueue implements AutoCloseable {
             if (job.cancelled.get() || closed) job.work.discard();
         }
     }
-    private void waiting(Job job) { change(job, State.WAITING, "Waiting for " + job.item.ownerName() + " to come online · retrying automatically", job.item.received(), job.item.total(), null); }
+    private void waiting(Job job) {
+        String detail = job.resuming.get()
+                ? job.item.ownerName() + " is offline or unreachable. Try again later. Retrying automatically."
+                : "Waiting for " + job.item.ownerName() + " to come online · retrying automatically";
+        change(job, State.WAITING, detail, job.item.received(), job.item.total(), null);
+    }
     private void waitingForTor(Job job) { change(job, State.WAITING, "Waiting for Tor to connect · retrying automatically", job.item.received(), job.item.total(), null); }
     private static boolean networkFailure(Throwable error) {
         for (Throwable cause = error; cause != null; cause = cause.getCause())

@@ -26,6 +26,7 @@ public final class ContactManager implements AutoCloseable {
     private final MessageStore messageStore;
     private final SharedDriveStore sharedDriveStore;
     private final SharedDownloads downloads;
+    private final kakha.kudava.onionp2p.drive.UploadTracker uploads = new kakha.kudava.onionp2p.drive.UploadTracker();
     private final String localUsername;
     private final Consumer<Event> events;
     private volatile Consumer<String> presenceListener = ignored -> {};
@@ -80,6 +81,12 @@ public final class ContactManager implements AutoCloseable {
     }
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
     public SharedDownloads downloads() { return downloads; }
+    public kakha.kudava.onionp2p.drive.UploadTracker uploads() { return uploads; }
+    public void notifyDownloadPaused(String link, String id, String relative) throws Exception {
+        withSession(transferSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+            ContactMessaging.notifyDownloadPaused(session.socket, entry.material, id, relative, session.firstMessage); return null;
+        });
+    }
     public kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(String link, String id, String relative,
             long offset, String version) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<kakha.kudava.onionp2p.drive.ResumableFile.Chunk>();
@@ -599,7 +606,7 @@ public final class ContactManager implements AutoCloseable {
                         else if (protocol == ContactMessaging.MAGIC || protocol == ContactMessaging.PREVIOUS_MAGIC
                                 || protocol == ContactMessaging.LEGACY_MAGIC)
                             ContactMessaging.receive(socket, entry.material, messageStore, sharedDriveStore, entry.link,
-                                    protocol != ContactMessaging.LEGACY_MAGIC, () -> signalContactOnline(entry.link), () -> signalDriveShare(entry.link));
+                                    protocol != ContactMessaging.LEGACY_MAGIC, () -> signalContactOnline(entry.link), () -> signalDriveShare(entry.link), uploads);
                         else throw new java.io.IOException("Unsupported contact protocol.");
                     }
                     catch (Exception e) {
@@ -657,6 +664,7 @@ public final class ContactManager implements AutoCloseable {
         if (closed) return;
         closed = true;
         downloads.close();
+        uploads.close();
         retries.shutdownNow();
         driveShareRetries.shutdownNow();
         driveShareRetryScheduler.shutdownNow();

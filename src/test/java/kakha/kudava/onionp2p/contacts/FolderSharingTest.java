@@ -14,6 +14,33 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FolderSharingTest {
     @Test @Timeout(30)
+    void senderSeesAuthenticatedDownloadsPauseDisconnectAndCompletion() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("upload-db"));
+        Path file = Files.write(temp.resolve("upload.bin"), new byte[700000]);
+        String id = UUID.randomUUID().toString();
+        owner.publish(id, "recipient", "upload.bin", file, 700000, System.currentTimeMillis());
+        try (var uploads = new kakha.kudava.onionp2p.drive.UploadTracker()) {
+            String version;
+            try (var session = new Session(owner, "recipient", true, uploads)) {
+                var chunk = ContactMessaging.downloadChunk(session.client, material(false), id, "", 0, "", true);
+                version = chunk.version();
+                ContactMessaging.notifyDownloadPaused(session.client, material(false), id, "", false);
+                assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.PAUSED, uploads.items().getFirst().state());
+                assertEquals("recipient", uploads.items().getFirst().contact());
+                assertEquals(262144, uploads.items().getFirst().sent());
+                ContactMessaging.downloadChunk(session.client, material(false), id, "", 262144, version, false);
+            }
+            assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.DISCONNECTED, uploads.items().getFirst().state());
+            assertEquals(524288, uploads.items().getFirst().sent());
+            try (var session = new Session(owner, "recipient", true, uploads)) {
+                ContactMessaging.downloadChunk(session.client, material(false), id, "", 524288, version, true);
+                ContactMessaging.ping(session.client, material(false), false);
+                assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.COMPLETE, uploads.items().getFirst().state());
+                assertEquals(700000, uploads.items().getFirst().sent());
+            }
+        }
+    }
+    @Test @Timeout(30)
     void resumesAuthenticatedChunksOnANewConnectionAndChecksRevocation() throws Exception {
         var owner = new SharedDriveStore(temp.resolve("owner-chunks"));
         byte[] original = new byte[700000]; new Random(43).nextBytes(original);
@@ -77,13 +104,17 @@ class FolderSharingTest {
         final Socket client, server;
         final CompletableFuture<Void> receiving;
         Session(SharedDriveStore receiver, String contact, boolean receiverIsOwner) throws Exception {
+            this(receiver, contact, receiverIsOwner, null);
+        }
+        Session(SharedDriveStore receiver, String contact, boolean receiverIsOwner,
+                kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
             listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
             client = new Socket(InetAddress.getLoopbackAddress(), listener.getLocalPort()); client.setSoTimeout(5000);
             server = listener.accept();
             receiving = CompletableFuture.runAsync(() -> {
                 try {
                     assertEquals(ContactMessaging.MAGIC, new DataInputStream(server.getInputStream()).readInt());
-                    ContactMessaging.receive(server, material(receiverIsOwner), null, receiver, contact, true, null, null);
+                    ContactMessaging.receive(server, material(receiverIsOwner), null, receiver, contact, true, null, null, uploads);
                 } catch (Exception error) {
                     if (!server.isClosed()) throw new CompletionException(error);
                 }

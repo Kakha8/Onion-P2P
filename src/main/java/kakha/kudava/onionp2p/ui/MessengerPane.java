@@ -214,6 +214,7 @@ final class MessengerPane extends BorderPane {
     private boolean sending;
     private Runnable refreshSharedDrive;
     private final DownloadsPane downloadsPane;
+    private final UploadsPane uploadsPane;
 
     private boolean loaded;
 
@@ -222,6 +223,10 @@ final class MessengerPane extends BorderPane {
         downloadsPane = new DownloadsPane(manager.downloads().queue(), () -> {
             if (refreshSharedDrive != null) refreshSharedDrive.run();
         });
+        uploadsPane = new UploadsPane(manager.uploads(), link -> allContacts.stream().filter(contact -> contact.link().equals(link))
+                .map(ContactStore.Contact::username).findFirst().orElse("Contact"));
+        downloadsPane.visibleProperty().addListener((obs, before, visible) -> { if (visible) uploadsPane.hide(); });
+        uploadsPane.visibleProperty().addListener((obs, before, visible) -> { if (visible) downloadsPane.hide(); });
         localUsername = username;
         this.onAddContact = onAddContact;
         activePane = this;
@@ -567,6 +572,18 @@ final class MessengerPane extends BorderPane {
         downloadsLauncher.setOnAction(event -> downloadsPane.reveal());
         downloadsLauncher.visibleProperty().bind(drivePage.visibleProperty().and(downloadsPane.visibleProperty().not()));
         downloadsLauncher.managedProperty().bind(downloadsLauncher.visibleProperty());
+        Button uploadsLauncher = new Button();
+        uploadsLauncher.getStyleClass().add("drive-download-launcher");
+        Label uploadCount = new Label(); uploadCount.getStyleClass().add("upload-count-badge");
+        uploadCount.textProperty().bind(uploadsPane.activeCountProperty().asString());
+        uploadCount.visibleProperty().bind(uploadsPane.activeCountProperty().greaterThan(0));
+        StackPane uploadIcon = new StackPane(driveMenuGlyph("M12 17V5 M7 10l5-5 5 5 M4 21h16"), uploadCount);
+        StackPane.setAlignment(uploadCount, Pos.TOP_RIGHT);
+        uploadsLauncher.setGraphic(uploadIcon);
+        uploadsLauncher.setAccessibleText("Uploads"); uploadsLauncher.setTooltip(new Tooltip("Uploads"));
+        uploadsLauncher.setOnAction(event -> uploadsPane.reveal());
+        uploadsLauncher.visibleProperty().bind(drivePage.visibleProperty().and(uploadsPane.visibleProperty().not()));
+        uploadsLauncher.managedProperty().bind(uploadsLauncher.visibleProperty());
 
         Runnable showChats = () -> {
             chatsNavigation.getStyleClass().add("rail-button-selected");
@@ -576,6 +593,7 @@ final class MessengerPane extends BorderPane {
             conversation.setVisible(true); conversation.setManaged(true);
             drivePage.setVisible(false); drivePage.setManaged(false);
             downloadsPane.hide();
+            uploadsPane.hide();
         };
         showChatsAction = showChats;
         Runnable showDrive = () -> {
@@ -636,12 +654,16 @@ final class MessengerPane extends BorderPane {
         mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
         mainSplit.getDividers().getFirst().positionProperty()
                 .addListener((obs, oldPosition, newPosition) -> clampContactColumn(mainSplit, leftColumns));
-        mainSection.getChildren().addAll(downloadsLauncher, downloadsPane);
+        mainSection.getChildren().addAll(downloadsLauncher, uploadsLauncher, downloadsPane, uploadsPane);
         StackPane workspace = new StackPane(mainSplit);
         StackPane.setAlignment(downloadsLauncher, Pos.BOTTOM_LEFT);
         StackPane.setMargin(downloadsLauncher, new Insets(16, 16, 16, 32));
         StackPane.setAlignment(downloadsPane, Pos.BOTTOM_LEFT);
         StackPane.setMargin(downloadsPane, new Insets(12, 12, 12, 32));
+        StackPane.setAlignment(uploadsLauncher, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(uploadsLauncher, new Insets(16, 16, 16, 84));
+        StackPane.setAlignment(uploadsPane, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(uploadsPane, new Insets(12, 12, 12, 32));
         setCenter(workspace);
         getStyleClass().add("messenger-pane");
         contactList.getStyleClass().add("contact-list");

@@ -10,6 +10,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class DownloadQueueTest {
+    @Test void resumingWhileOwnerIsOfflineExplainsWhyAndKeepsTheDownload() throws Exception {
+        var offlineMessage = new CountDownLatch(1);
+        try (var queue = new DownloadQueue(owner -> false, 20)) {
+            queue.setListener(items -> {
+                if (!items.isEmpty() && items.getFirst().detail().contains("Alice is offline or unreachable. Try again later."))
+                    offlineMessage.countDown();
+            });
+            String id = queue.add("resume-offline", "alice", "Alice", "file", 100, progress -> Path.of("unused"));
+            queue.pause(id); queue.resume(id);
+            assertTrue(offlineMessage.await(3, TimeUnit.SECONDS));
+            assertEquals(DownloadQueue.State.WAITING, queue.items().getFirst().state());
+            assertEquals(id, queue.items().getFirst().id());
+        }
+    }
     @Test void pausingDuringTransferKeepsProgressAndCanResume() throws Exception {
         var reached = new CountDownLatch(1); var release = new CountDownLatch(1);
         var pausedWorker = new CountDownLatch(1); var done = new CountDownLatch(1);

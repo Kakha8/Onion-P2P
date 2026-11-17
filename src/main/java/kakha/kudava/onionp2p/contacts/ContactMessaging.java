@@ -254,6 +254,13 @@ public final class ContactMessaging {
                 response.nonce(), response.aad(), response.length(), true, true, null, null, directory, progress);
     }
 
+    static void notifyDownloadPaused(Socket socket, ContactRendezvous.Material material, String share, String relative, boolean first) throws Exception {
+        socket.setSoTimeout(5000);
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var out = new DataOutputStream(bytes)) { out.writeUTF(share); out.writeUTF(relative); }
+        sendControl(socket, material, (byte) 14, bytes.toByteArray(), first);
+    }
+
     private static void sendFolderRequest(Socket socket, ContactRendezvous.Material material, byte type,
                                           String shareId, String relative, boolean first) throws Exception {
         var bytes = new java.io.ByteArrayOutputStream();
@@ -363,15 +370,24 @@ public final class ContactMessaging {
 
     static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
                         boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal) throws Exception {
+        receive(socket, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal, null);
+    }
+
+    static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
+                        boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal,
+                        kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
         socket.setSoTimeout(0);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
-        while (true) receiveOne(input, output, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal);
+        try {
+            while (true) receiveOne(input, output, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal, uploads);
+        } finally { if (uploads != null) uploads.disconnected(input); }
     }
 
     private static void receiveOne(DataInputStream input, DataOutputStream output,
                                    ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
-                                   boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal) throws Exception {
+                                   boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal,
+                                   kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
         byte[] idBytes = new byte[16]; input.readFully(idBytes);
         String id = uuidString(idBytes);
         long timestamp = input.readLong();
@@ -381,10 +397,23 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type < 0 || type > 12 || type == 9) throw new IOException("Unsupported message type.");
+        if (type < 0 || type > 14 || type == 9 || type == 13) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
+        if (type == 14) {
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] requestKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] payload;
+            try { payload = crypt(Cipher.DECRYPT_MODE, requestKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(requestKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            try (var request = new DataInputStream(new java.io.ByteArrayInputStream(payload))) {
+                String share = request.readUTF(), relative = request.readUTF(); UUID.fromString(share);
+                if (request.read() != -1) throw new IOException("Invalid pause notification.");
+                if (uploads != null) uploads.paused(link, share, relative);
+            } finally { Arrays.fill(payload, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad); return;
+        }
         if (type == 12) {
             byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
             byte[] requestKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
@@ -398,7 +427,7 @@ public final class ContactMessaging {
                 if (request.read() != -1 || offset < 0 || version.length() > 512) throw new IOException("Invalid chunk request.");
             } finally { Arrays.fill(payload, (byte) 0); }
             awaitReceiptSend(output, material, nonce, aad);
-            byte[] reply;
+            byte[] reply; String activity = null; long end;
             try {
                 var grant = sharedStore.findPublished(shareId, link);
                 if (grant == null) throw new IOException("Access removed.");
@@ -415,6 +444,8 @@ public final class ContactMessaging {
                 // Bind every chunk to the same source version. A changed source is never appended.
                 long position = !version.isEmpty() && !version.equals(token) ? 0 : offset;
                 if (position > attrs.size()) throw new IOException("Invalid offset.");
+                end = Math.min(attrs.size(), position + 256 * 1024);
+                if (uploads != null) activity = uploads.begin(link, shareId, relative, target.getFileName().toString(), attrs.size(), position, input);
                 var bytes = new java.io.ByteArrayOutputStream();
                 try (var out = new DataOutputStream(bytes); var source = Files.newInputStream(target)) {
                     out.writeUTF(token); out.writeUTF(safeFileName(target.getFileName().toString()));
@@ -429,10 +460,14 @@ public final class ContactMessaging {
                         || !java.util.Objects.equals(after.fileKey(), attrs.fileKey())) throw new IOException("File changed.");
                 reply = bytes.toByteArray();
             } catch (Exception unavailable) {
+                if (uploads != null && activity != null) uploads.failed(activity);
                 sendControl(output, input, material, (byte) 7, "The file changed or is no longer shared.".getBytes(StandardCharsets.UTF_8));
                 return;
             }
-            try { sendControl(output, input, material, (byte) 13, reply); }
+            try {
+                sendControl(output, input, material, (byte) 13, reply);
+                if (uploads != null) uploads.acknowledged(activity, end);
+            }
             finally { Arrays.fill(reply, (byte) 0); }
             return;
         }
