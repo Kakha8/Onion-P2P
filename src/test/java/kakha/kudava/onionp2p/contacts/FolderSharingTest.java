@@ -14,6 +14,57 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FolderSharingTest {
     @Test @Timeout(30)
+    void senderCancellationBlocksOnlyTheCurrentRequestAndRevocationHasADistinctReason() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("sender-stop"));
+        Path file = Files.write(temp.resolve("sender-stop.bin"), new byte[700000]);
+        String share = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+        owner.publish(share, "recipient", "sender-stop.bin", file, 700000, System.currentTimeMillis());
+        try (var uploads = new kakha.kudava.onionp2p.drive.UploadTracker(); var session = new Session(owner, "recipient", true, uploads)) {
+            var first = ContactMessaging.downloadChunk(session.client, material(false), share, "", 0, "", true, task);
+            ContactMessaging.ping(session.client, material(false), false);
+            assertNotNull(uploads.cancelBySender(uploads.items().getFirst().key()));
+            var cancelled = assertThrows(kakha.kudava.onionp2p.drive.DownloadQueue.OwnerStoppedException.class,
+                    () -> ContactMessaging.downloadChunk(session.client, material(false), share, "", 262144, first.version(), false, task));
+            assertEquals("Download cancelled by sender.", cancelled.getMessage());
+            assertNotNull(owner.findPublished(share, "recipient"));
+            // Starting a separate download is allowed because sharing was not revoked.
+            var fresh = ContactMessaging.downloadChunk(session.client, material(false), share, "", 0, "", false, UUID.randomUUID().toString());
+            assertEquals(262144, fresh.bytes().length);
+            owner.unpublish(share);
+            var revoked = assertThrows(kakha.kudava.onionp2p.drive.DownloadQueue.OwnerStoppedException.class,
+                    () -> ContactMessaging.downloadChunk(session.client, material(false), share, "", 262144, fresh.version(), false, task));
+            assertEquals("Sharing access removed by sender.", revoked.getMessage());
+        }
+    }
+
+    @Test @Timeout(30)
+    void senderNoticeAndRevocationInventoryStopPausedRecipientJobs() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("notice-owner"));
+        var recipient = new SharedDriveStore(temp.resolve("notice-recipient"));
+        String share = UUID.randomUUID().toString(), task = UUID.randomUUID().toString();
+        try (var queue = new kakha.kudava.onionp2p.drive.DownloadQueue(link -> false, 10000)) {
+            var request = new Properties(); request.setProperty("request.share", share); request.setProperty("request.task", task);
+            request.setProperty("request.relative", ""); request.setProperty("request.folder", "false");
+            var work = new kakha.kudava.onionp2p.drive.DownloadQueue.Work() {
+                public Path run(kakha.kudava.onionp2p.drive.DownloadQueue.Progress progress) { fail("Stopped transfer must not run"); return null; }
+                public Properties descriptor() { var copy = new Properties(); copy.putAll(request); return copy; }
+            };
+            String id = queue.add("stop-1", "owner", "Owner", "file.bin", 100, work); queue.pause(id);
+            try (var session = new Session(recipient, "owner", false, null,
+                    stop -> queue.stoppedByOwner("owner", stop.share(), stop.relative(), stop.reason(), stop.request()))) {
+                ContactMessaging.sendDownloadStop(session.client, material(true),
+                        new ContactMessaging.DownloadStop(share, "", "Download cancelled by sender.", task), true);
+                assertEquals(kakha.kudava.onionp2p.drive.DownloadQueue.State.CANCELLED, queue.items().getFirst().state());
+                assertEquals("Download cancelled by sender.", queue.items().getFirst().detail());
+                String second = queue.add("stop-2", "owner", "Owner", "file.bin", 100, work); queue.pause(second);
+                recipient.recordOffer(share, "owner", "file.bin", 100, System.currentTimeMillis());
+                ContactMessaging.syncDriveShares(session.client, material(true), owner, "recipient", false);
+                assertEquals(kakha.kudava.onionp2p.drive.DownloadQueue.State.CANCELLED, queue.items().get(1).state());
+                assertEquals("Sharing access removed by sender.", queue.items().get(1).detail());
+            }
+        }
+    }
+    @Test @Timeout(30)
     void senderSeesAuthenticatedDownloadsPauseDisconnectAndCompletion() throws Exception {
         var owner = new SharedDriveStore(temp.resolve("upload-db"));
         Path file = Files.write(temp.resolve("upload.bin"), new byte[700000]);
@@ -110,13 +161,17 @@ class FolderSharingTest {
         }
         Session(SharedDriveStore receiver, String contact, boolean receiverIsOwner,
                 kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
+            this(receiver, contact, receiverIsOwner, uploads, ignored -> {});
+        }
+        Session(SharedDriveStore receiver, String contact, boolean receiverIsOwner,
+                kakha.kudava.onionp2p.drive.UploadTracker uploads, java.util.function.Consumer<ContactMessaging.DownloadStop> stopped) throws Exception {
             listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
             client = new Socket(InetAddress.getLoopbackAddress(), listener.getLocalPort()); client.setSoTimeout(5000);
             server = listener.accept();
             receiving = CompletableFuture.runAsync(() -> {
                 try {
                     assertEquals(ContactMessaging.MAGIC, new DataInputStream(server.getInputStream()).readInt());
-                    ContactMessaging.receive(server, material(receiverIsOwner), null, receiver, contact, true, null, null, uploads);
+                    ContactMessaging.receive(server, material(receiverIsOwner), null, receiver, contact, true, null, null, uploads, stopped);
                 } catch (Exception error) {
                     if (!server.isClosed()) throw new CompletionException(error);
                 }

@@ -82,6 +82,18 @@ public final class ContactManager implements AutoCloseable {
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
     public SharedDownloads downloads() { return downloads; }
     public kakha.kudava.onionp2p.drive.UploadTracker uploads() { return uploads; }
+    public void cancelUpload(String key) {
+        var cancellation = uploads.cancelBySender(key); if (cancellation == null) return;
+        driveShareRetries.execute(() -> {
+            try {
+                withMessageSession(cancellation.contact(), ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+                    ContactMessaging.sendDownloadStop(session.socket, entry.material,
+                            new ContactMessaging.DownloadStop(cancellation.share(), cancellation.relative(), "Download cancelled by sender.", cancellation.request()), session.firstMessage);
+                    return null;
+                });
+            } catch (Exception ignored) { /* The next chunk request also returns the cancellation. */ }
+        });
+    }
     public void notifyDownloadPaused(String link, String id, String relative) throws Exception {
         withSession(downloadRequestSessions(link), link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.notifyDownloadPaused(session.socket, entry.material, id, relative, session.firstMessage); return null;
@@ -94,9 +106,13 @@ public final class ContactManager implements AutoCloseable {
     }
     public kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(String link, String id, String relative,
             long offset, String version) throws Exception {
+        return downloadChunk(link, id, relative, offset, version, "");
+    }
+    public kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(String link, String id, String relative,
+            long offset, String version, String requestId) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<kakha.kudava.onionp2p.drive.ResumableFile.Chunk>();
         withSession(downloadRequestSessions(link), link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
-            result.set(ContactMessaging.downloadChunk(session.socket, entry.material, id, relative, offset, version, session.firstMessage));
+            result.set(ContactMessaging.downloadChunk(session.socket, entry.material, id, relative, offset, version, session.firstMessage, requestId));
             return null;
         });
         return result.get();
@@ -622,7 +638,8 @@ public final class ContactManager implements AutoCloseable {
                         else if (protocol == ContactMessaging.MAGIC || protocol == ContactMessaging.PREVIOUS_MAGIC
                                 || protocol == ContactMessaging.LEGACY_MAGIC)
                             ContactMessaging.receive(socket, entry.material, messageStore, sharedDriveStore, entry.link,
-                                    protocol != ContactMessaging.LEGACY_MAGIC, () -> signalContactOnline(entry.link), () -> signalDriveShare(entry.link), uploads);
+                                    protocol != ContactMessaging.LEGACY_MAGIC, () -> signalContactOnline(entry.link), () -> signalDriveShare(entry.link), uploads,
+                                    stop -> downloads.queue().stoppedByOwner(entry.link, stop.share(), stop.relative(), stop.reason(), stop.request()));
                         else throw new java.io.IOException("Unsupported contact protocol.");
                     }
                     catch (Exception e) {

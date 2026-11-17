@@ -224,7 +224,7 @@ final class MessengerPane extends BorderPane {
             if (refreshSharedDrive != null) refreshSharedDrive.run();
         });
         uploadsPane = new UploadsPane(manager.uploads(), link -> allContacts.stream().filter(contact -> contact.link().equals(link))
-                .map(ContactStore.Contact::username).findFirst().orElse("Contact"));
+                .map(ContactStore.Contact::username).findFirst().orElse("Contact"), manager::cancelUpload);
         downloadsPane.visibleProperty().addListener((obs, before, visible) -> { if (visible) uploadsPane.hide(); });
         uploadsPane.visibleProperty().addListener((obs, before, visible) -> { if (visible) downloadsPane.hide(); });
         localUsername = username;

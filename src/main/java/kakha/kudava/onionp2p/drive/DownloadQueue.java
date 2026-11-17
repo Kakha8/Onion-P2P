@@ -12,6 +12,9 @@ import java.util.function.Consumer;
 /** Download queue with optional durable requests and explicit resume after restart. */
 public final class DownloadQueue implements AutoCloseable {
     public static final class TorNotReadyException extends Exception {}
+    public static final class OwnerStoppedException extends java.io.IOException {
+        public OwnerStoppedException(String message) { super(message); }
+    }
     public enum State { WAITING, CONNECTING, DOWNLOADING, PAUSED, COMPLETE, FAILED, CANCELLED }
     public record Item(String id, String key, String owner, String ownerName, String name,
                        State state, String detail, long received, long total, Path destination) {
@@ -106,6 +109,23 @@ public final class DownloadQueue implements AutoCloseable {
             try { job.work.paused(); } catch (Exception ignored) { /* Pausing locally does not require a reachable owner. */ }
         });
     }
+    public synchronized void stoppedByOwner(String owner, String share, String relative, String message, String requestId) {
+        for (var job : jobs.values()) {
+            if (!job.item.active() || !job.item.owner().equals(owner)) continue;
+            Properties request = job.work.descriptor();
+            if (request == null || !share.equals(request.getProperty("request.share"))) continue;
+            if (!requestId.isEmpty() && !requestId.equals(request.getProperty("request.task"))) continue;
+            String requested = request.getProperty("request.relative", "");
+            boolean folder = Boolean.parseBoolean(request.getProperty("request.folder"));
+            if (!relative.isEmpty() && !relative.equals(requested) && !(folder && (requested.isEmpty() || relative.startsWith(requested + "/")))) continue;
+            stopByOwner(job, message);
+        }
+    }
+    private void stopByOwner(Job job, String message) {
+        job.cancelled.set(true);
+        change(job, State.CANCELLED, message, job.item.received(), job.item.total(), null);
+        if (!job.started.get()) job.work.discard();
+    }
     public synchronized void resume(String id) {
         var job = jobs.get(id); if (job == null || job.item.state() != State.PAUSED) return;
         job.paused.set(false);
@@ -151,10 +171,11 @@ public final class DownloadQueue implements AutoCloseable {
         } catch (CancellationException ignored) {
             if (closed) return;
             if (job.paused.get()) change(job, State.PAUSED, "Paused", job.item.received(), job.item.total(), null);
-            else if (job.cancelled.get() || closed) change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
+            else if ((job.cancelled.get() || closed) && job.item.state() != State.CANCELLED) change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
         } catch (Exception error) {
             if (!job.cancelled.get() && !closed) {
-                if (networkFailure(error)) waiting(job);
+                if (error instanceof OwnerStoppedException) stopByOwner(job, error.getMessage());
+                else if (networkFailure(error)) waiting(job);
                 else change(job, State.FAILED, error.getMessage() == null ? "Download failed" : error.getMessage(), job.item.received(), job.item.total(), null);
             }
         } finally {

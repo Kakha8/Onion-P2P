@@ -44,10 +44,14 @@ public final class ContactMessaging {
 
     static kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(Socket socket, ContactRendezvous.Material material,
             String shareId, String relative, long offset, String version, boolean first) throws Exception {
+        return downloadChunk(socket, material, shareId, relative, offset, version, first, "");
+    }
+    static kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(Socket socket, ContactRendezvous.Material material,
+            String shareId, String relative, long offset, String version, boolean first, String requestId) throws Exception {
         socket.setSoTimeout(15000);
         var bytes = new java.io.ByteArrayOutputStream();
         try (var out = new DataOutputStream(bytes)) {
-            out.writeUTF(shareId); out.writeUTF(relative); out.writeLong(offset); out.writeUTF(version);
+            out.writeUTF(shareId); out.writeUTF(relative); out.writeLong(offset); out.writeUTF(version); out.writeUTF(requestId);
         }
         sendControl(socket, material, (byte) 12, bytes.toByteArray(), first);
         var response = readDriveResponse(socket, material);
@@ -274,6 +278,13 @@ public final class ContactMessaging {
         try (var out = new DataOutputStream(bytes)) { out.writeUTF(shareId); out.writeUTF(relative); }
         sendControl(socket, material, type, bytes.toByteArray(), first);
     }
+    record DownloadStop(String share, String relative, String reason, String request) {}
+    static void sendDownloadStop(Socket socket, ContactRendezvous.Material material, DownloadStop stop, boolean first) throws Exception {
+        socket.setSoTimeout(5000);
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var out = new DataOutputStream(bytes)) { out.writeUTF(stop.share()); out.writeUTF(stop.relative()); out.writeUTF(stop.reason()); out.writeUTF(stop.request()); }
+        sendControl(socket, material, (byte) 16, bytes.toByteArray(), first);
+    }
 
     private record DriveResponse(DataInputStream input, DataOutputStream output, String id, long timestamp,
                                  byte[] nonce, byte[] aad, byte type, int length) {}
@@ -285,7 +296,12 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; in.readFully(nonce); byte type = in.readByte(); int length = in.readInt();
         var result = new DriveResponse(in, out, uuidString(id), timestamp, nonce,
                 aad(id, timestamp, type, material.remotePublic(), material.localPublic()), type, length);
-        if (type == 7) throw new IOException(new String(readDriveControl(result, material, 1024), StandardCharsets.UTF_8));
+        if (type == 7) {
+            String reason = new String(readDriveControl(result, material, 1024), StandardCharsets.UTF_8);
+            if (reason.equals("Download cancelled by sender.") || reason.equals("Sharing access removed by sender."))
+                throw new DownloadQueue.OwnerStoppedException(reason);
+            throw new IOException(reason);
+        }
         return result;
     }
 
@@ -383,18 +399,23 @@ public final class ContactMessaging {
     static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
                         boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal,
                         kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
+        receive(socket, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal, uploads, ignored -> {});
+    }
+    static void receive(Socket socket, ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
+                        boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal,
+                        kakha.kudava.onionp2p.drive.UploadTracker uploads, java.util.function.Consumer<DownloadStop> stopped) throws Exception {
         socket.setSoTimeout(0);
         var input = new DataInputStream(socket.getInputStream());
         var output = new DataOutputStream(socket.getOutputStream());
         try {
-            while (true) receiveOne(input, output, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal, uploads);
+            while (true) receiveOne(input, output, material, store, sharedStore, link, captionFrames, onlineSignal, driveShareSignal, uploads, stopped);
         } finally { if (uploads != null) uploads.disconnected(input); }
     }
 
     private static void receiveOne(DataInputStream input, DataOutputStream output,
                                    ContactRendezvous.Material material, MessageStore store, SharedDriveStore sharedStore, String link,
                                    boolean captionFrames, Runnable onlineSignal, Runnable driveShareSignal,
-                                   kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
+                                   kakha.kudava.onionp2p.drive.UploadTracker uploads, java.util.function.Consumer<DownloadStop> stopped) throws Exception {
         byte[] idBytes = new byte[16]; input.readFully(idBytes);
         String id = uuidString(idBytes);
         long timestamp = input.readLong();
@@ -404,10 +425,24 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 || type == 15 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 || type == 15 || type == 16 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type < 0 || type > 15 || type == 9 || type == 13) throw new IOException("Unsupported message type.");
+        if (type < 0 || type > 16 || type == 9 || type == 13) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
+        if (type == 16) {
+            byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
+            byte[] requestKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
+            byte[] payload;
+            try { payload = crypt(Cipher.DECRYPT_MODE, requestKey, nonce, aad, ciphertext); }
+            finally { Arrays.fill(requestKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
+            try (var request = new DataInputStream(new java.io.ByteArrayInputStream(payload))) {
+                String share = request.readUTF(), relative = request.readUTF(), reason = request.readUTF(); UUID.fromString(share);
+                String task = request.readUTF(); if (!task.isEmpty()) UUID.fromString(task);
+                if (request.read() != -1 || !reason.equals("Download cancelled by sender.")) throw new IOException("Invalid sender cancellation.");
+                stopped.accept(new DownloadStop(share, relative, reason, task));
+            } finally { Arrays.fill(payload, (byte) 0); }
+            awaitReceiptSend(output, material, nonce, aad); return;
+        }
         if (type == 14 || type == 15) {
             byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
             byte[] requestKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
@@ -431,9 +466,11 @@ public final class ContactMessaging {
             byte[] payload;
             try { payload = crypt(Cipher.DECRYPT_MODE, requestKey, nonce, aad, ciphertext); }
             finally { Arrays.fill(requestKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
-            String shareId, relative, version; long offset;
+            String shareId, relative, version, requestId; long offset;
             try (var request = new DataInputStream(new java.io.ByteArrayInputStream(payload))) {
                 shareId = request.readUTF(); relative = request.readUTF(); offset = request.readLong(); version = request.readUTF();
+                requestId = request.available() > 0 ? request.readUTF() : "";
+                if (!requestId.isEmpty()) UUID.fromString(requestId);
                 UUID.fromString(shareId);
                 if (request.read() != -1 || offset < 0 || version.length() > 512) throw new IOException("Invalid chunk request.");
             } finally { Arrays.fill(payload, (byte) 0); }
@@ -441,7 +478,12 @@ public final class ContactMessaging {
             byte[] reply; String activity = null; long end;
             try {
                 var grant = sharedStore.findPublished(shareId, link);
-                if (grant == null) throw new IOException("Access removed.");
+                if (grant == null) {
+                    if (uploads != null) uploads.unavailable(link, shareId);
+                    throw new DownloadQueue.OwnerStoppedException("Sharing access removed by sender.");
+                }
+                if (uploads != null && uploads.stoppedBySender(link, shareId, relative, requestId))
+                    throw new DownloadQueue.OwnerStoppedException("Download cancelled by sender.");
                 Path target;
                 if (grant.folder()) target = FolderAccess.resolve(sharedStore, shareId, link, relative);
                 else {
@@ -456,7 +498,7 @@ public final class ContactMessaging {
                 long position = !version.isEmpty() && !version.equals(token) ? 0 : offset;
                 if (position > attrs.size()) throw new IOException("Invalid offset.");
                 end = Math.min(attrs.size(), position + 256 * 1024);
-                if (uploads != null) activity = uploads.begin(link, shareId, relative, target.getFileName().toString(), attrs.size(), position, input);
+                if (uploads != null) activity = uploads.begin(link, shareId, relative, target.getFileName().toString(), attrs.size(), position, input, requestId);
                 var bytes = new java.io.ByteArrayOutputStream();
                 try (var out = new DataOutputStream(bytes); var source = Files.newInputStream(target)) {
                     out.writeUTF(token); out.writeUTF(safeFileName(target.getFileName().toString()));
@@ -472,10 +514,18 @@ public final class ContactMessaging {
                 reply = bytes.toByteArray();
             } catch (Exception unavailable) {
                 if (uploads != null && activity != null) uploads.failed(activity);
-                sendControl(output, input, material, (byte) 7, "The file changed or is no longer shared.".getBytes(StandardCharsets.UTF_8));
+                String reason = unavailable instanceof DownloadQueue.OwnerStoppedException ? unavailable.getMessage() : "The file changed or is no longer shared.";
+                sendControl(output, input, material, (byte) 7, reason.getBytes(StandardCharsets.UTF_8));
                 return;
             }
             try {
+                if (sharedStore.findPublished(shareId, link) == null) {
+                    if (uploads != null) uploads.unavailable(link, shareId);
+                    sendControl(output, input, material, (byte) 7, "Sharing access removed by sender.".getBytes(StandardCharsets.UTF_8)); return;
+                }
+                if (uploads != null && uploads.stoppedBySender(link, shareId, relative, requestId)) {
+                    sendControl(output, input, material, (byte) 7, "Download cancelled by sender.".getBytes(StandardCharsets.UTF_8)); return;
+                }
                 sendControl(output, input, material, (byte) 13, reply);
                 if (uploads != null) uploads.acknowledged(activity, end);
             }
@@ -497,7 +547,10 @@ public final class ContactMessaging {
                     throw new IOException("Invalid share inventory.");
                 var active = new java.util.ArrayList<String>(count);
                 for (int i = 0; i < count; i++) { byte[] bytes = new byte[16]; inventory.get(bytes); active.add(uuidString(bytes)); }
+                var activeSet = new java.util.HashSet<>(active);
+                var revoked = sharedStore.all().stream().filter(file -> file.contactLink().equals(link) && !activeSet.contains(file.id())).map(SharedDriveStore.SharedFile::id).distinct().toList();
                 removed = sharedStore.reconcileReceived(link, active);
+                for (String share : revoked) stopped.accept(new DownloadStop(share, "", "Sharing access removed by sender.", ""));
             } finally { Arrays.fill(payload, (byte) 0); }
             awaitReceiptSend(output, material, nonce, aad);
             if (removed > 0 && driveShareSignal != null) driveShareSignal.run();

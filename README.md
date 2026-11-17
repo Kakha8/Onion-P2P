@@ -22,6 +22,8 @@ Drive downloads open a floating **Downloads** panel with live progress and statu
 
 The **Uploads** icon beside Downloads shows an active transfer count when contacts download your shared files. Open its panel to see the recipient, file, acknowledged progress, and transfer speed. It updates without refreshing and never opens automatically. Recipient pause notices show **Paused by recipient**; a closed connection shows **Recipient disconnected**. If requests stop without a pause notice or detected disconnect, the panel shows **Waiting for recipient** after 20 seconds. Resuming a download updates the same entry. This activity history lasts for the current app session. Both apps need the updated build to report pauses.
 
+The sender can cancel an individual transfer from the Uploads panel. The recipient's Downloads panel shows **Download cancelled by sender** and discards unfinished partial data; the share remains available for a separate new download. Removing sharing access instead stops affected downloads with **Sharing access removed by sender**, including paused requests when the recipient receives the share update. Every chunk checks access again. A chunk already sent may finish, and completed files cannot be taken back. Update both apps for sender cancellation notices.
+
 Run `./mvnw.cmd javafx:run` (or run `HelloApplication` in your IDE). The window starts a local HTTP server and Tor in the background. Watch the console for:
 
 ```text

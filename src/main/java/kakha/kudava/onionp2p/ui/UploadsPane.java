@@ -18,10 +18,15 @@ final class UploadsPane extends VBox {
     private final ScrollPane scroll = new ScrollPane(rows);
     private final Map<String, VBox> views = new LinkedHashMap<>();
     private final Function<String, String> contactName;
+    private final java.util.function.Consumer<String> cancelUpload;
     private boolean minimized;
 
     UploadsPane(UploadTracker tracker, Function<String, String> contactName) {
+        this(tracker, contactName, ignored -> {});
+    }
+    UploadsPane(UploadTracker tracker, Function<String, String> contactName, java.util.function.Consumer<String> cancelUpload) {
         this.contactName = contactName;
+        this.cancelUpload = cancelUpload;
         getStyleClass().add("downloads-panel");
         setMinWidth(0); setMinHeight(0); setPrefWidth(390); setMaxWidth(390); setMaxHeight(USE_PREF_SIZE);
         title.getStyleClass().add("downloads-title"); summary.getStyleClass().add("downloads-summary");
@@ -57,13 +62,21 @@ final class UploadsPane extends VBox {
                 detail.getStyleClass().add("download-detail"); bytes.getStyleClass().add("downloads-summary");
                 metrics.getStyleClass().add("downloads-summary");
                 name.setMinWidth(0); name.setMaxWidth(Double.MAX_VALUE);
+                HBox.setHgrow(name, Priority.ALWAYS);
+                Button cancel = icon("M6 6l12 12 M18 6L6 18", "Cancel upload");
+                cancel.setOnAction(event -> cancelUpload.accept(item.key()));
+                HBox heading = new HBox(8, name, cancel); heading.setAlignment(Pos.CENTER_LEFT);
                 recipient.setMaxWidth(Double.MAX_VALUE); detail.setWrapText(true);
                 ProgressBar progress = new ProgressBar(); progress.setMaxWidth(Double.MAX_VALUE);
                 progress.getStyleClass().add("download-progress");
-                VBox created = new VBox(5, name, recipient, detail, progress, bytes, metrics);
+                VBox created = new VBox(5, heading, recipient, detail, progress, bytes, metrics);
                 created.getStyleClass().add("download-row"); rows.getChildren().add(0, created); return created;
             });
-            ((Label) row.getChildren().get(0)).setText(item.name());
+            HBox heading = (HBox) row.getChildren().get(0);
+            ((Label) heading.getChildren().get(0)).setText(item.name());
+            boolean canCancel = item.state() == UploadTracker.State.UPLOADING || item.state() == UploadTracker.State.WAITING
+                    || item.state() == UploadTracker.State.PAUSED || item.state() == UploadTracker.State.DISCONNECTED;
+            heading.getChildren().get(1).setVisible(canCancel); heading.getChildren().get(1).setManaged(canCancel);
             ((Label) row.getChildren().get(1)).setText("To " + contactName.apply(item.contact()));
             String status = switch (item.state()) {
                 case UPLOADING -> "Uploading";
@@ -73,9 +86,10 @@ final class UploadsPane extends VBox {
                 case COMPLETE -> "Uploaded";
                 case FAILED -> "Transfer stopped · file unavailable";
                 case CANCELLED -> "Cancelled by recipient";
+                case CANCELLED_BY_SENDER -> "Cancelled by you";
             };
             ((Label) row.getChildren().get(2)).setText(status);
-            TransferPresentation.cancelled(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.CANCELLED);
+            TransferPresentation.cancelled(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.CANCELLED || item.state() == UploadTracker.State.CANCELLED_BY_SENDER);
             ((ProgressBar) row.getChildren().get(3)).setProgress(item.state() == UploadTracker.State.COMPLETE ? 1
                     : item.total() == 0 ? 0 : Math.min(.99, (double) item.sent() / item.total()));
             ((Label) row.getChildren().get(4)).setText(size(item.sent()) + " / " + size(item.total()));

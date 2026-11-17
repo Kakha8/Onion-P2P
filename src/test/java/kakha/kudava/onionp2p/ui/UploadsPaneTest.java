@@ -25,7 +25,7 @@ class UploadsPaneTest {
         try (var tracker = new UploadTracker()) {
             UploadsPane[] pane = new UploadsPane[1];
             fx(() -> {
-                pane[0] = new UploadsPane(tracker, contact -> "Alice");
+                pane[0] = new UploadsPane(tracker, contact -> "Alice", tracker::cancelBySender);
                 var scene = new Scene(new StackPane(pane[0]), 440, 360);
                 scene.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
             });
@@ -44,6 +44,12 @@ class UploadsPaneTest {
                 assertEquals(0, pane[0].activeCountProperty().get());
                 assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Paused by recipient".equals(((Label) node).getText())));
             });
+            fx(() -> {
+                var button = pane[0].lookupAll(".button").stream().filter(node -> "Cancel upload".equals(node.getAccessibleText())).findFirst().orElseThrow();
+                ((javafx.scene.control.Button) button).fire();
+            });
+            fx(() -> assertTrue(pane[0].lookupAll(".label").stream()
+                    .anyMatch(node -> "Cancelled by you".equals(((Label) node).getText()))));
             tracker.cancelled("alice", "share", "file", false);
             fx(() -> {
                 assertEquals(0, pane[0].activeCountProperty().get());

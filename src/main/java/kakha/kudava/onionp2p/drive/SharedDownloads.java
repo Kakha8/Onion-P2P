@@ -153,7 +153,7 @@ public final class SharedDownloads implements AutoCloseable {
         private Path downloadMember(String relative, Path directory, DownloadQueue.Progress progress) throws Exception {
             currentMember = relative;
             return transfer(relative, directory).download(directory,
-                    (offset, version) -> manager.downloadChunk(owner, shareId, relative, offset, version), progress);
+                    (offset, version) -> manager.downloadChunk(owner, shareId, relative, offset, version, request.getProperty("request.task")), progress);
         }
         public void discard() {
             transfers.values().forEach(ResumableFile::discard);
