@@ -261,6 +261,13 @@ public final class ContactMessaging {
         sendControl(socket, material, (byte) 14, bytes.toByteArray(), first);
     }
 
+    static void notifyDownloadCancelled(Socket socket, ContactRendezvous.Material material, String share, String relative, boolean folder, boolean first) throws Exception {
+        socket.setSoTimeout(5000);
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var out = new DataOutputStream(bytes)) { out.writeUTF(share); out.writeUTF(relative); out.writeBoolean(folder); }
+        sendControl(socket, material, (byte) 15, bytes.toByteArray(), first);
+    }
+
     private static void sendFolderRequest(Socket socket, ContactRendezvous.Material material, byte type,
                                           String shareId, String relative, boolean first) throws Exception {
         var bytes = new java.io.ByteArrayOutputStream();
@@ -397,11 +404,11 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 || type == 15 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
-        if (type < 0 || type > 14 || type == 9 || type == 13) throw new IOException("Unsupported message type.");
+        if (type < 0 || type > 15 || type == 9 || type == 13) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
-        if (type == 14) {
+        if (type == 14 || type == 15) {
             byte[] ciphertext = new byte[length]; input.readFully(ciphertext);
             byte[] requestKey = key(material.sharedSecret(), nonce, material.remotePublic(), material.localPublic(), "message");
             byte[] payload;
@@ -409,8 +416,12 @@ public final class ContactMessaging {
             finally { Arrays.fill(requestKey, (byte) 0); Arrays.fill(ciphertext, (byte) 0); }
             try (var request = new DataInputStream(new java.io.ByteArrayInputStream(payload))) {
                 String share = request.readUTF(), relative = request.readUTF(); UUID.fromString(share);
-                if (request.read() != -1) throw new IOException("Invalid pause notification.");
-                if (uploads != null) uploads.paused(link, share, relative);
+                boolean folder = type == 15 && request.readBoolean();
+                if (request.read() != -1) throw new IOException("Invalid download status notification.");
+                if (uploads != null) {
+                    if (type == 15) uploads.cancelled(link, share, relative, folder);
+                    else uploads.paused(link, share, relative);
+                }
             } finally { Arrays.fill(payload, (byte) 0); }
             awaitReceiptSend(output, material, nonce, aad); return;
         }

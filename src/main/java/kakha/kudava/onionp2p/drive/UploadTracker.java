@@ -6,7 +6,7 @@ import java.util.function.*;
 
 /** Sender-side activity; progress advances only after an authenticated receipt. */
 public final class UploadTracker implements AutoCloseable {
-    public enum State { UPLOADING, WAITING, PAUSED, DISCONNECTED, COMPLETE, FAILED }
+    public enum State { UPLOADING, WAITING, PAUSED, DISCONNECTED, COMPLETE, FAILED, CANCELLED }
     public record Item(String key, String contact, String name, long sent, long total, double speed, State state) {}
     private static final class Transfer {
         Item item; Object connection; long updated;
@@ -38,6 +38,7 @@ public final class UploadTracker implements AutoCloseable {
     }
     public synchronized void acknowledged(String key, long sent) {
         Transfer transfer = transfers.get(key); if (transfer == null) return;
+        if (transfer.item.state() == State.CANCELLED) return;
         Item item = transfer.item; long now = clock.getAsLong();
         double seconds = Math.max(.001, (now - transfer.updated) / 1_000_000_000.0);
         double speed = Math.max(0, sent - item.sent()) / seconds;
@@ -47,7 +48,16 @@ public final class UploadTracker implements AutoCloseable {
     }
     public synchronized void paused(String contact, String share, String relative) {
         Transfer transfer = transfers.get(key(contact, share, relative));
-        if (transfer != null && transfer.item.state() != State.COMPLETE) { state(transfer, State.PAUSED); publish(); }
+        if (transfer != null && transfer.item.state() != State.COMPLETE && transfer.item.state() != State.CANCELLED) { state(transfer, State.PAUSED); publish(); }
+    }
+    public synchronized void cancelled(String contact, String share, String relative, boolean folder) {
+        String prefix = key(contact, share, relative);
+        for (var entry : transfers.entrySet()) {
+            boolean matches = entry.getKey().equals(prefix)
+                    || folder && entry.getKey().startsWith(prefix + (relative.isEmpty() ? "" : "/"));
+            if (matches && (!folder || entry.getValue().item.state() != State.COMPLETE)) state(entry.getValue(), State.CANCELLED);
+        }
+        publish();
     }
     public synchronized void disconnected(Object connection) {
         for (var transfer : transfers.values()) if (transfer.connection == connection

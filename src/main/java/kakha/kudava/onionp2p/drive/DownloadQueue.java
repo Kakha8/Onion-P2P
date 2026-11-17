@@ -20,7 +20,7 @@ public final class DownloadQueue implements AutoCloseable {
     public interface Progress { void update(long received, long total); void stage(String detail); default void checkpoint() {} }
     @FunctionalInterface public interface Work {
         Path run(Progress progress) throws Exception;
-        default void discard() {} default void paused() throws Exception {}
+        default void discard() {} default void paused() throws Exception {} default void cancelled() throws Exception {}
         default Properties descriptor() { return null; }
         default long savedReceived() { return -1; } default long savedTotal() { return -1; }
     }
@@ -93,6 +93,9 @@ public final class DownloadQueue implements AutoCloseable {
     public synchronized void cancel(String id) {
         var job = jobs.get(id); if (job == null || !job.item.active()) return;
         job.cancelled.set(true); change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
+        Thread.ofPlatform().daemon().name("download-cancel-notice").start(() -> {
+            try { job.work.cancelled(); } catch (Exception ignored) { /* Local cancellation does not depend on the peer being reachable. */ }
+        });
         if (!job.started.get()) job.work.discard();
     }
     public synchronized void pause(String id) {

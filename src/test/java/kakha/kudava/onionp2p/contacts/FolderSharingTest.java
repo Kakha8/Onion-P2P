@@ -28,6 +28,8 @@ class FolderSharingTest {
                 assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.PAUSED, uploads.items().getFirst().state());
                 assertEquals("recipient", uploads.items().getFirst().contact());
                 assertEquals(262144, uploads.items().getFirst().sent());
+                ContactMessaging.notifyDownloadCancelled(session.client, material(false), id, "", false, false);
+                assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.CANCELLED, uploads.items().getFirst().state());
                 ContactMessaging.downloadChunk(session.client, material(false), id, "", 262144, version, false);
             }
             assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.DISCONNECTED, uploads.items().getFirst().state());

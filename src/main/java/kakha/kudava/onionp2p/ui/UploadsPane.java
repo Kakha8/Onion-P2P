@@ -71,6 +71,7 @@ final class UploadsPane extends VBox {
                 case DISCONNECTED -> "Recipient disconnected · progress retained";
                 case COMPLETE -> "Uploaded";
                 case FAILED -> "Transfer stopped · file unavailable";
+                case CANCELLED -> "Cancelled by recipient";
             };
             ((Label) row.getChildren().get(2)).setText(status);
             ((ProgressBar) row.getChildren().get(3)).setProgress(item.state() == UploadTracker.State.COMPLETE ? 1

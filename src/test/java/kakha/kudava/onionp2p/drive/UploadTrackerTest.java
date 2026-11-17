@@ -6,6 +6,24 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 class UploadTrackerTest {
+    @Test void cancellingAFolderOnlyMarksItsUnfinishedTransfersForThatRecipient() {
+        try (var tracker = new UploadTracker()) {
+            Object connection = new Object();
+            String active = tracker.begin("alice", "share", "Docs/file.bin", "file.bin", 100, 20, connection);
+            String done = tracker.begin("alice", "share", "Docs/done.txt", "done.txt", 10, 0, connection);
+            tracker.acknowledged(done, 10);
+            tracker.begin("bob", "share", "Docs/file.bin", "file.bin", 100, 0, connection);
+            tracker.begin("alice", "share", "Docs-other/file.bin", "file.bin", 100, 0, connection);
+            tracker.cancelled("alice", "share", "Docs", true);
+            tracker.disconnected(new Object()); tracker.paused("alice", "share", "Docs/file.bin");
+            tracker.acknowledged(active, 40);
+            assertEquals(UploadTracker.State.CANCELLED, tracker.items().getFirst().state());
+            assertEquals(20, tracker.items().getFirst().sent());
+            assertEquals(UploadTracker.State.COMPLETE, tracker.items().get(1).state());
+            assertEquals(UploadTracker.State.UPLOADING, tracker.items().get(2).state());
+            assertEquals(UploadTracker.State.UPLOADING, tracker.items().get(3).state());
+        }
+    }
     @Test void tracksProgressSpeedPauseAndReconnectWithoutMixingRecipients() {
         var now = new AtomicLong();
         try (var tracker = new UploadTracker(now::get)) {

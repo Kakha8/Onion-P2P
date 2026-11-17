@@ -10,6 +10,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class DownloadQueueTest {
+    @Test void cancellingAPausedDownloadNotifiesItsOwner() throws Exception {
+        var notice = new CountDownLatch(1);
+        try (var queue = new DownloadQueue(owner -> false, 20)) {
+            String id = queue.add("cancel-notice", "alice", "Alice", "file", 100, new DownloadQueue.Work() {
+                public Path run(DownloadQueue.Progress progress) { fail("Paused offline transfer must not start"); return null; }
+                public void cancelled() { notice.countDown(); }
+            });
+            queue.pause(id); queue.cancel(id);
+            assertTrue(notice.await(3, TimeUnit.SECONDS));
+            assertEquals(DownloadQueue.State.CANCELLED, queue.items().getFirst().state());
+        }
+    }
     @Test void resumingWhileOwnerIsOfflineExplainsWhyAndKeepsTheDownload() throws Exception {
         var offlineMessage = new CountDownLatch(1);
         try (var queue = new DownloadQueue(owner -> false, 20)) {

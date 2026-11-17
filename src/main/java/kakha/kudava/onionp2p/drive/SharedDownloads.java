@@ -164,6 +164,7 @@ public final class SharedDownloads implements AutoCloseable {
             String member = currentMember;
             if (member != null) manager.notifyDownloadPaused(owner, shareId, member);
         }
+        public void cancelled() throws Exception { manager.notifyDownloadCancelled(owner, shareId, relative, folder); }
         private void readPlan(String remote, String local, List<Member> members, int depth, DownloadQueue.Progress progress) throws Exception {
             if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");

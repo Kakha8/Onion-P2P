@@ -43,6 +43,11 @@ class UploadsPaneTest {
                 assertEquals(0, pane[0].activeCountProperty().get());
                 assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Paused by recipient".equals(((Label) node).getText())));
             });
+            tracker.cancelled("alice", "share", "file", false);
+            fx(() -> {
+                assertEquals(0, pane[0].activeCountProperty().get());
+                assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Cancelled by recipient".equals(((Label) node).getText())));
+            });
         }
     }
 }

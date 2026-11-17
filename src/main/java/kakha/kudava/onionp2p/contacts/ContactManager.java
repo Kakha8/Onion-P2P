@@ -87,6 +87,11 @@ public final class ContactManager implements AutoCloseable {
             ContactMessaging.notifyDownloadPaused(session.socket, entry.material, id, relative, session.firstMessage); return null;
         });
     }
+    public void notifyDownloadCancelled(String link, String id, String relative, boolean folder) throws Exception {
+        withSession(transferSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+            ContactMessaging.notifyDownloadCancelled(session.socket, entry.material, id, relative, folder, session.firstMessage); return null;
+        });
+    }
     public kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(String link, String id, String relative,
             long offset, String version) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<kakha.kudava.onionp2p.drive.ResumableFile.Chunk>();
