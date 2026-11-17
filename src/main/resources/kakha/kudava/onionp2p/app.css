@@ -3,12 +3,12 @@
     -fx-border-color: #374351; -fx-border-radius: 12; -fx-border-width: 1;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 18, 0.15, 0, 4);
 }
-.downloads-header { -fx-padding: 12 10 12 16; -fx-border-color: transparent transparent #303a47 transparent; }
+.downloads-header { -fx-padding: 9 10 9 14; -fx-border-color: transparent transparent #303a47 transparent; }
 .downloads-title { -fx-text-fill: #e5edf6; -fx-font-size: 14px; -fx-font-weight: bold; }
 .downloads-summary { -fx-text-fill: #94a3b5; -fx-font-size: 11px; }
 .downloads-list, .downloads-list > .viewport, .downloads-rows { -fx-background-color: transparent; -fx-background-insets: 0; }
 .downloads-list { -fx-padding: 0; -fx-border-width: 0; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; }
-.download-row { -fx-padding: 10 14 12 16; -fx-spacing: 5; -fx-border-color: transparent transparent #303a47 transparent; }
+.download-row { -fx-padding: 8 12 8 14; -fx-spacing: 3; -fx-border-color: transparent transparent #303a47 transparent; }
 .download-name { -fx-text-fill: #e5edf6; -fx-font-size: 12px; }
 .download-detail { -fx-text-fill: #aab8c9; -fx-font-size: 11px; }
 .download-row:cancelled { -fx-background-color: rgba(174, 73, 73, 0.08); }

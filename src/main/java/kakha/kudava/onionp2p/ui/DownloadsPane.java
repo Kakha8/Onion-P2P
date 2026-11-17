@@ -66,7 +66,7 @@ final class DownloadsPane extends VBox {
         activeCount.set(active);
         title.setText(active > 0 ? "Downloads · " + active + " active" : "Downloads");
         summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : ""));
-        scroll.setPrefHeight(Math.min(300, Math.max(55, items.size() * 128)));
+        TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
     }
     private final class Row extends VBox {
         final Label name = new Label(), detail = new Label(), bytes = new Label(), metrics = new Label();

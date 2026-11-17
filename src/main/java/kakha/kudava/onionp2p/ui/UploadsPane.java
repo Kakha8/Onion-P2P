@@ -83,7 +83,7 @@ final class UploadsPane extends VBox {
                     ? TransferPresentation.speedAndEta(item.sent(), item.total(), item.speed()) : "0 B/s · —");
         }
         views.entrySet().removeIf(entry -> { if (keys.contains(entry.getKey())) return false; rows.getChildren().remove(entry.getValue()); return true; });
-        scroll.setPrefHeight(Math.min(300, Math.max(55, items.size() * 144)));
+        TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
     }
     private static Button icon(String path, String label) {
         Button button = new Button(null, glyph(path)); button.getStyleClass().add("download-icon-button");

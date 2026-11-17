@@ -7,6 +7,10 @@ import javafx.scene.shape.SVGPath;
 import java.util.Locale;
 
 final class TransferPresentation {
+    static void fitList(javafx.scene.control.ScrollPane scroll, javafx.scene.layout.VBox rows, double width) {
+        rows.applyCss();
+        scroll.setPrefHeight(Math.min(220, Math.max(48, rows.prefHeight(Math.max(100, width - 20)))));
+    }
     private static final PseudoClass CANCELLED = PseudoClass.getPseudoClass("cancelled");
     static void cancelled(Region row, Label status, boolean cancelled) {
         row.pseudoClassStateChanged(CANCELLED, cancelled);
