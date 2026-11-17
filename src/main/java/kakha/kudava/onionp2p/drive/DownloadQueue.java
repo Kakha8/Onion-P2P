@@ -82,7 +82,7 @@ public final class DownloadQueue implements AutoCloseable {
         for (var job : jobs.values()) if (job.item.key().equals(key) && job.item.active()) return job.item.id();
         String id = UUID.randomUUID().toString();
         var job = new Job(new Item(id, key, owner, ownerName, name, State.WAITING,
-                "Waiting for " + ownerName + " to come online", 0, size, null), work);
+                "Waiting for a connection to " + ownerName, 0, size, null), work);
         jobs.put(id, job); persist(job); publish(); submit(job); return id;
     }
     public void wake(String owner) {
@@ -115,7 +115,7 @@ public final class DownloadQueue implements AutoCloseable {
     }
     public synchronized void retry(String id) {
         var job = jobs.get(id); if (job == null || job.item.state() != State.FAILED || job.running.get()) return;
-        change(job, State.WAITING, "Waiting for " + job.item.ownerName() + " to come online", job.item.received(), job.item.total(), null);
+        change(job, State.WAITING, "Waiting for a connection to " + job.item.ownerName(), job.item.received(), job.item.total(), null);
         submit(job);
     }
     private void submit(Job job) {
@@ -166,7 +166,7 @@ public final class DownloadQueue implements AutoCloseable {
     private void waiting(Job job) {
         String detail = job.resuming.get()
                 ? job.item.ownerName() + " is offline or unreachable. Try again later. Retrying automatically."
-                : "Waiting for " + job.item.ownerName() + " to come online · retrying automatically";
+                : "Waiting for a connection to " + job.item.ownerName() + " · retrying automatically";
         change(job, State.WAITING, detail, job.item.received(), job.item.total(), null);
     }
     private void waitingForTor(Job job) { change(job, State.WAITING, "Waiting for Tor to connect · retrying automatically", job.item.received(), job.item.total(), null); }

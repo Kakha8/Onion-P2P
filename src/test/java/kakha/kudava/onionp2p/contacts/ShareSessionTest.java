@@ -58,6 +58,15 @@ class ShareSessionTest {
                     while (!offers.all().isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
                     assertTrue(offers.all().isEmpty());
                 }
+                // The transfer connection does not exist and Tor is deliberately not
+                // started. A working chat connection must still initiate downloads.
+                String remoteId = java.util.UUID.randomUUID().toString();
+                Path remoteFile = Files.writeString(bob.resolve("remote.txt"), "Download through the working chat connection");
+                offers.publish(remoteId, a, "remote.txt", remoteFile, Files.size(remoteFile), System.currentTimeMillis());
+                var chunk = manager.downloadChunk(b, remoteId, "", 0, "");
+                assertEquals("Download through the working chat connection", new String(chunk.bytes(), java.nio.charset.StandardCharsets.UTF_8));
+                manager.notifyDownloadPaused(b, remoteId, "");
+                manager.notifyDownloadCancelled(b, remoteId, "", false);
                 manager.send(b, "Still working");
                 assertEquals(2, messages.all(a).size());
             } finally { receiver.close(); serving.get(5, TimeUnit.SECONDS); }

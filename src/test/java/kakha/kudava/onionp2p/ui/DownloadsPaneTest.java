@@ -44,7 +44,7 @@ class DownloadsPaneTest {
             fx(() -> {
                 root[0].applyCss(); root[0].layout();
                 var labels = pane[0].lookupAll(".label").stream().map(node -> ((Label) node).getText()).toList();
-                assertTrue(labels.stream().anyMatch(text -> text.contains("Waiting for Alice")));
+                assertTrue(labels.stream().anyMatch(text -> text.contains("connection to Alice")));
                 assertTrue(labels.stream().anyMatch(text -> text.contains("42%")));
                 assertTrue(labels.stream().anyMatch(text -> text.contains("/s") && (text.contains("left") || text.contains("Estimating"))));
                 assertTrue(pane[0].getLayoutX() + pane[0].getWidth() <= 460);

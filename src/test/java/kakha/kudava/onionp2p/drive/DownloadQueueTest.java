@@ -107,7 +107,7 @@ class DownloadQueueTest {
                 work.incrementAndGet(); progress.update(40, 100); progress.update(100, 100); return Path.of("saved.zip");
             });
             assertEquals(DownloadQueue.State.WAITING, queue.items().getFirst().state());
-            assertTrue(queue.items().getFirst().detail().contains("come online")); assertEquals(0, work.get());
+            assertTrue(queue.items().getFirst().detail().contains("connection to Alice")); assertEquals(0, work.get());
             online.set(true); queue.wake("alice");
             assertTrue(done.await(5, TimeUnit.SECONDS)); assertEquals(1, work.get()); assertTrue(progressSeen.get());
             assertEquals(id, queue.items().getFirst().id()); assertEquals(100, queue.items().getFirst().received());

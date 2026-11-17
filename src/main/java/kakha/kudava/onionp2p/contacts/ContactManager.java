@@ -83,23 +83,34 @@ public final class ContactManager implements AutoCloseable {
     public SharedDownloads downloads() { return downloads; }
     public kakha.kudava.onionp2p.drive.UploadTracker uploads() { return uploads; }
     public void notifyDownloadPaused(String link, String id, String relative) throws Exception {
-        withSession(transferSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+        withSession(downloadRequestSessions(link), link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.notifyDownloadPaused(session.socket, entry.material, id, relative, session.firstMessage); return null;
         });
     }
     public void notifyDownloadCancelled(String link, String id, String relative, boolean folder) throws Exception {
-        withSession(transferSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+        withSession(downloadRequestSessions(link), link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
             ContactMessaging.notifyDownloadCancelled(session.socket, entry.material, id, relative, folder, session.firstMessage); return null;
         });
     }
     public kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(String link, String id, String relative,
             long offset, String version) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<kakha.kudava.onionp2p.drive.ResumableFile.Chunk>();
-        withSession(transferSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+        withSession(downloadRequestSessions(link), link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
             result.set(ContactMessaging.downloadChunk(session.socket, entry.material, id, relative, offset, version, session.firstMessage));
             return null;
         });
         return result.get();
+    }
+    /** Bounded chunk exchanges can share an established stream without a second Tor setup. */
+    private ConcurrentMap<String, MessageSession> downloadRequestSessions(String link) {
+        String canonical = canonicalLink(link);
+        MessageSession transfer = transferSessions.get(canonical);
+        if (established(transfer)) return transferSessions;
+        if (established(messageSessions.get(canonical))) return messageSessions;
+        return transferSessions;
+    }
+    private static boolean established(MessageSession session) {
+        return session != null && session.socket != null && !session.socket.isClosed() && !session.firstMessage;
     }
     public void markSharedDownload(String id, Path path) throws Exception { sharedDriveStore.markDownloaded(id, path); }
     public boolean isTorReady() { return tor.socksReady().isDone() && !tor.socksReady().isCompletedExceptionally(); }
@@ -243,7 +254,7 @@ public final class ContactManager implements AutoCloseable {
     private List<FolderAccess.Entry> browseSharedFolder(String link, String id, String relative,
                                                         java.util.function.Consumer<String> status, int connectAttempts) throws Exception {
         var result = new java.util.concurrent.atomic.AtomicReference<List<FolderAccess.Entry>>();
-        withSession(transferSessions, link, status, () -> false, connectAttempts, (entry, session, canonical) -> {
+        withSession(downloadRequestSessions(link), link, status, () -> false, connectAttempts, (entry, session, canonical) -> {
             result.set(ContactMessaging.browseFolder(session.socket, entry.material, id, relative, session.firstMessage, sharedDriveStore, canonical));
             return null;
         });
@@ -691,7 +702,7 @@ public final class ContactManager implements AutoCloseable {
 
     private static final class MessageSession {
         volatile Socket socket;
-        boolean firstMessage = true;
+        volatile boolean firstMessage = true;
         long lastUsed;
         final PendingConnection connecting = new PendingConnection();
     }
