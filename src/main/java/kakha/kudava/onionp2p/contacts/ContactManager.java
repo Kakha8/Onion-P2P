@@ -64,7 +64,7 @@ public final class ContactManager implements AutoCloseable {
         sharedDriveStore = new SharedDriveStore(directory);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
-        downloads = new SharedDownloads(this);
+        downloads = new SharedDownloads(this, directory);
         driveShareRetryScheduler.scheduleWithFixedDelay(this::retryPendingDriveShares, 1, 1, TimeUnit.SECONDS);
     }
 

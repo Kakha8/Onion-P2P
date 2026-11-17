@@ -9,7 +9,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
-/** Session download queue. Only authenticated reachability starts a transfer. */
+/** Download queue with optional durable requests and explicit resume after restart. */
 public final class DownloadQueue implements AutoCloseable {
     public static final class TorNotReadyException extends Exception {}
     public enum State { WAITING, CONNECTING, DOWNLOADING, PAUSED, COMPLETE, FAILED, CANCELLED }
@@ -18,12 +18,17 @@ public final class DownloadQueue implements AutoCloseable {
         public boolean active() { return state == State.WAITING || state == State.CONNECTING || state == State.DOWNLOADING || state == State.PAUSED; }
     }
     public interface Progress { void update(long received, long total); void stage(String detail); default void checkpoint() {} }
-    @FunctionalInterface public interface Work { Path run(Progress progress) throws Exception; default void discard() {} default void paused() throws Exception {} }
+    @FunctionalInterface public interface Work {
+        Path run(Progress progress) throws Exception;
+        default void discard() {} default void paused() throws Exception {}
+        default Properties descriptor() { return null; }
+        default long savedReceived() { return -1; } default long savedTotal() { return -1; }
+    }
     @FunctionalInterface public interface OnlineCheck { boolean check(String owner) throws Exception; }
     private static final class Job {
         volatile Item item;
         final Work work;
-        final AtomicBoolean running = new AtomicBoolean(), cancelled = new AtomicBoolean(), paused = new AtomicBoolean(), resuming = new AtomicBoolean();
+        final AtomicBoolean running = new AtomicBoolean(), started = new AtomicBoolean(), cancelled = new AtomicBoolean(), paused = new AtomicBoolean(), resuming = new AtomicBoolean();
         long lastProgress;
         Job(Item item, Work work) { this.item = item; this.work = work; }
     }
@@ -32,6 +37,37 @@ public final class DownloadQueue implements AutoCloseable {
     private final OnlineCheck online;
     private volatile Consumer<List<Item>> listener = ignored -> {};
     private volatile boolean closed;
+    private java.nio.file.Path journal;
+
+    public DownloadQueue(OnlineCheck online, java.nio.file.Path journal, java.util.function.Function<Properties, Work> restore) throws java.io.IOException {
+        this(online);
+        this.journal = journal;
+        try {
+            java.nio.file.Files.createDirectories(journal);
+            restoreJournal(restore);
+        } catch (java.io.IOException | RuntimeException error) { executor.shutdownNow(); throw error; }
+    }
+    private synchronized void restoreJournal(java.util.function.Function<Properties, Work> restore) throws java.io.IOException {
+        try (var files = java.nio.file.Files.newDirectoryStream(journal, "*.properties")) {
+            for (var file : files) {
+                Properties values = DownloadState.read(file);
+                try {
+                    String id = values.getProperty("id"); UUID.fromString(id);
+                    State state = State.valueOf(values.getProperty("state"));
+                    if (state == State.CANCELLED) { java.nio.file.Files.deleteIfExists(file); continue; }
+                    // Restored unfinished downloads require an explicit Resume after login.
+                    if (state != State.COMPLETE && state != State.FAILED) state = State.PAUSED;
+                    Work work = state == State.COMPLETE ? progress -> java.nio.file.Path.of(values.getProperty("destination")) : restore.apply(values);
+                    String target = values.getProperty("destination");
+                    var item = new Item(id, values.getProperty("key"), values.getProperty("owner"), values.getProperty("ownerName"), values.getProperty("name"),
+                            state, state == State.PAUSED ? "Paused · saved from previous session" : values.getProperty("detail"),
+                            work.savedReceived() >= 0 ? work.savedReceived() : Long.parseLong(values.getProperty("received")),
+                            work.savedTotal() >= 0 ? work.savedTotal() : Long.parseLong(values.getProperty("total")), target == null ? null : java.nio.file.Path.of(target));
+                    var job = new Job(item, work); job.paused.set(state == State.PAUSED); jobs.put(id, job);
+                } catch (RuntimeException error) { throw new java.io.IOException("Could not restore download " + file.getFileName(), error); }
+            }
+        }
+    }
 
     public DownloadQueue(OnlineCheck online) { this(online, 2500); }
     public DownloadQueue(OnlineCheck online, long retryMillis) {
@@ -47,7 +83,7 @@ public final class DownloadQueue implements AutoCloseable {
         String id = UUID.randomUUID().toString();
         var job = new Job(new Item(id, key, owner, ownerName, name, State.WAITING,
                 "Waiting for " + ownerName + " to come online", 0, size, null), work);
-        jobs.put(id, job); publish(); submit(job); return id;
+        jobs.put(id, job); persist(job); publish(); submit(job); return id;
     }
     public void wake(String owner) {
         List<Job> copy;
@@ -57,7 +93,7 @@ public final class DownloadQueue implements AutoCloseable {
     public synchronized void cancel(String id) {
         var job = jobs.get(id); if (job == null || !job.item.active()) return;
         job.cancelled.set(true); change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
-        if (!job.running.get()) job.work.discard();
+        if (!job.started.get()) job.work.discard();
     }
     public synchronized void pause(String id) {
         var job = jobs.get(id); if (job == null || !job.item.active()) return;
@@ -85,6 +121,7 @@ public final class DownloadQueue implements AutoCloseable {
         catch (RejectedExecutionException ignored) { job.running.set(false); }
     }
     private void run(Job job) {
+        job.started.set(true);
         try {
             if (job.cancelled.get() || closed || job.item.state() != State.WAITING) return;
             boolean reachable;
@@ -109,6 +146,7 @@ public final class DownloadQueue implements AutoCloseable {
             if (!job.cancelled.get() && !job.paused.get() && !closed)
                 change(job, State.COMPLETE, "Downloaded", job.item.total() < 0 ? job.item.received() : job.item.total(), job.item.total(), result);
         } catch (CancellationException ignored) {
+            if (closed) return;
             if (job.paused.get()) change(job, State.PAUSED, "Paused", job.item.received(), job.item.total(), null);
             else if (job.cancelled.get() || closed) change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
         } catch (Exception error) {
@@ -118,7 +156,8 @@ public final class DownloadQueue implements AutoCloseable {
             }
         } finally {
             job.running.set(false);
-            if (job.cancelled.get() || closed) job.work.discard();
+            job.started.set(false);
+            if (job.cancelled.get()) job.work.discard();
         }
     }
     private void waiting(Job job) {
@@ -138,16 +177,39 @@ public final class DownloadQueue implements AutoCloseable {
     }
     private void change(Job job, State state, String detail, long received, long total, Path destination) {
         synchronized (job) {
+            if (closed) return;
             if (job.cancelled.get() && state != State.CANCELLED) return;
             if (job.paused.get() && state != State.PAUSED && state != State.CANCELLED) return;
             Item before = job.item;
             job.item = new Item(before.id(), before.key(), before.owner(), before.ownerName(), before.name(), state, detail, received, total, destination);
         }
+        persist(job);
         publish();
+    }
+    private void persist(Job job) {
+        if (journal == null) return;
+        synchronized (job) {
+            try {
+                var file = journal.resolve(job.item.id() + ".properties");
+                if (job.item.state() == State.CANCELLED) { java.nio.file.Files.deleteIfExists(file); return; }
+                Properties values = job.work.descriptor();
+                if (values == null) return;
+                Item item = job.item;
+                values.setProperty("id", item.id()); values.setProperty("key", item.key()); values.setProperty("owner", item.owner());
+                values.setProperty("ownerName", item.ownerName()); values.setProperty("name", item.name());
+                values.setProperty("state", item.state().name()); values.setProperty("detail", item.detail());
+                values.setProperty("received", Long.toString(item.received())); values.setProperty("total", Long.toString(item.total()));
+                if (item.destination() != null) values.setProperty("destination", item.destination().toString());
+                DownloadState.write(file, values);
+            } catch (java.io.IOException error) { throw new java.io.UncheckedIOException("Could not save download progress", error); }
+        }
     }
     private void publish() { try { listener.accept(items()); } catch (RuntimeException ignored) {} }
     @Override public synchronized void close() {
         closed = true; executor.shutdownNow();
-        for (var job : jobs.values()) if (!job.running.get()) job.work.discard();
+        for (var job : jobs.values()) {
+            persist(job);
+            if (job.cancelled.get() && !job.started.get()) job.work.discard();
+        }
     }
 }

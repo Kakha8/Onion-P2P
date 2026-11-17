@@ -1,110 +1,173 @@
 package kakha.kudava.onionp2p.drive;
 
 import kakha.kudava.onionp2p.contacts.ContactManager;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
-/** Connects the queue to Drive and retains completed folder members across retries. */
+/** Durable requests, folder manifests and authenticated chunk checkpoints. */
 public final class SharedDownloads implements AutoCloseable {
     private final ContactManager manager;
     private final DownloadQueue queue;
-    public SharedDownloads(ContactManager manager) {
+    private final Path stateRoot, defaultDestination;
+    public SharedDownloads(ContactManager manager, Path directory) throws IOException {
         this.manager = manager;
+        stateRoot = directory.resolve("download-state");
+        defaultDestination = directory.resolve("drive/shared").toAbsolutePath().normalize();
         queue = new DownloadQueue(owner -> {
             if (!manager.isTorReady()) throw new DownloadQueue.TorNotReadyException();
-            // The download itself proves reachability. Avoid an extra Tor connection and ping.
             return true;
+        }, stateRoot.resolve("queue"), values -> {
+            try { return new FileWork(values); }
+            catch (IOException error) { throw new UncheckedIOException(error); }
         });
     }
     public DownloadQueue queue() { return queue; }
-
     public void file(SharedDriveStore.SharedFile share, String sender) {
-        var transfer = new ResumableFile();
-        queue.add(share.contactLink() + ":" + share.id(), share.contactLink(), sender, share.name(), share.size(), new DownloadQueue.Work() {
-            public Path run(DownloadQueue.Progress progress) throws Exception {
-            var saved = manager.sharedDriveFiles().stream().filter(file -> file.id().equals(share.id()) && file.contactLink().equals(share.contactLink()) && file.downloaded()).findFirst();
-            if (saved.isPresent()) return Path.of(saved.get().path());
-            Path path = transfer.download(kakha.kudava.onionp2p.account.AppData.directory().resolve("drive/shared"),
-                    (offset, version) -> manager.downloadChunk(share.contactLink(), share.id(), "", offset, version), progress);
-            manager.markSharedDownload(share.id(), path);
-            return path;
-            }
-            public void discard() { transfer.discard(); }
-            public void paused() throws Exception { manager.notifyDownloadPaused(share.contactLink(), share.id(), ""); }
-        });
+        add(share, sender, "", share.name(), false, share.size(), defaultDestination, true);
     }
-
     public void folderItem(SharedDriveStore.SharedFile share, String sender, String relative,
                            String name, boolean folder, long size, Path saveIn) {
-        queue.add(share.contactLink() + ":" + share.id() + ":" + relative + ":" + saveIn,
-                share.contactLink(), sender, name, folder ? -1 : size,
-                new FolderWork(share, relative, name, folder, size, saveIn));
+        add(share, sender, relative, name, folder, size, saveIn, false);
     }
-
+    private void add(SharedDriveStore.SharedFile share, String sender, String relative, String name,
+                     boolean folder, long size, Path saveIn, boolean rootFile) {
+        try {
+            var values = new Properties();
+            values.setProperty("request.task", UUID.randomUUID().toString());
+            values.setProperty("request.share", share.id()); values.setProperty("request.owner", share.contactLink());
+            values.setProperty("request.relative", relative); values.setProperty("request.name", name);
+            values.setProperty("request.folder", Boolean.toString(folder)); values.setProperty("request.size", Long.toString(size));
+            values.setProperty("request.saveIn", saveIn.toAbsolutePath().normalize().toString());
+            values.setProperty("request.rootFile", Boolean.toString(rootFile));
+            String key = share.contactLink() + ":" + share.id() + (rootFile ? "" : ":" + relative + ":" + saveIn);
+            queue.add(key, share.contactLink(), sender, name, folder ? -1 : size, new FileWork(values));
+        } catch (IOException error) { throw new UncheckedIOException("Could not save download request", error); }
+    }
     private record Member(String relative, String local, boolean folder, long size) {}
-    private final class FolderWork implements DownloadQueue.Work {
-        final SharedDriveStore.SharedFile share;
-        final String relative, name;
-        final boolean folder;
-        final long size;
-        final Path saveIn;
+    private final class FileWork implements DownloadQueue.Work {
+        final Properties request = new Properties();
+        final String owner, shareId, relative, name;
+        final boolean folder, rootFile;
+        final Path saveIn, state;
         List<Member> plan;
         Path destination;
         final Set<String> completed = new HashSet<>();
         final Map<String, ResumableFile> transfers = new HashMap<>();
         long completeBytes;
         volatile String currentMember;
-        FolderWork(SharedDriveStore.SharedFile share, String relative, String name, boolean folder, long size, Path saveIn) {
-            this.share = share; this.relative = relative; this.name = name; this.folder = folder; this.size = size; this.saveIn = saveIn;
+
+        FileWork(Properties values) throws IOException {
+            for (String key : values.stringPropertyNames()) if (key.startsWith("request.")) request.setProperty(key, values.getProperty(key));
+            String task = request.getProperty("request.task"); UUID.fromString(task);
+            owner = request.getProperty("request.owner"); shareId = request.getProperty("request.share"); UUID.fromString(shareId);
+            relative = request.getProperty("request.relative"); name = request.getProperty("request.name"); FolderAccess.validateName(name);
+            folder = Boolean.parseBoolean(request.getProperty("request.folder")); rootFile = Boolean.parseBoolean(request.getProperty("request.rootFile"));
+            saveIn = Path.of(request.getProperty("request.saveIn")).toAbsolutePath().normalize();
+            state = stateRoot.resolve("work").resolve(task);
+            Properties saved = DownloadState.read(state.resolve("folder.properties"));
+            if (!saved.isEmpty()) {
+                if (saved.containsKey("destination")) {
+                    destination = Path.of(saved.getProperty("destination")).toAbsolutePath().normalize();
+                    if (!saveIn.equals(destination.getParent()) || Files.isSymbolicLink(destination)) throw new IOException("Invalid saved folder destination.");
+                }
+                int count = Integer.parseInt(saved.getProperty("count"));
+                if (count < 0 || count > 100000) throw new IOException("Invalid saved folder manifest.");
+                var members = new ArrayList<Member>();
+                for (int i = 0; i < count; i++) {
+                    String local = saved.getProperty(i + ".local");
+                    Path tail = Path.of(local);
+                    if (tail.isAbsolute()) throw new IOException("Invalid saved folder path.");
+                    for (Path part : tail) FolderAccess.validateName(part.toString());
+                    var member = new Member(saved.getProperty(i + ".remote"), local,
+                            Boolean.parseBoolean(saved.getProperty(i + ".folder")), Long.parseLong(saved.getProperty(i + ".size")));
+                    members.add(member);
+                    if (destination != null && !member.folder()) {
+                        var transfer = transfer(member.relative(), destination.resolve(member.local()).getParent());
+                        if (transfer.completedPath() != null) { completed.add(member.relative()); completeBytes += member.size(); }
+                    }
+                }
+                plan = List.copyOf(members);
+            }
+            if (!folder) transfer(relative, saveIn);
+        }
+        public Properties descriptor() { var copy = new Properties(); copy.putAll(request); return copy; }
+        public long savedReceived() { return transfers.values().stream().mapToLong(ResumableFile::received).sum(); }
+        public long savedTotal() {
+            return folder ? plan == null ? -1 : plan.stream().filter(member -> !member.folder()).mapToLong(Member::size).sum()
+                    : Long.parseLong(request.getProperty("request.size"));
         }
         public Path run(DownloadQueue.Progress progress) throws Exception {
             if (!folder) {
-                Files.createDirectories(saveIn);
-                return downloadMember(relative, saveIn, progress);
+                if (rootFile) {
+                    var saved = manager.sharedDriveFiles().stream().filter(file -> file.id().equals(shareId)
+                            && file.contactLink().equals(owner) && file.downloaded()).findFirst();
+                    if (saved.isPresent()) return Path.of(saved.get().path());
+                }
+                Path path = downloadMember(relative, saveIn, progress);
+                if (rootFile) manager.markSharedDownload(shareId, path);
+                return path;
             }
             if (plan == null) {
-                progress.stage("Reading folder contents…");
-                var members = new ArrayList<Member>();
-                readPlan(relative, "", members, 0, progress);
-                plan = List.copyOf(members);
+                var members = new ArrayList<Member>(); readPlan(relative, "", members, 0, progress);
+                plan = List.copyOf(members); saveFolder();
             }
             long total = plan.stream().filter(member -> !member.folder()).mapToLong(Member::size).sum();
             if (destination == null) {
-                FolderAccess.validateName(name); Files.createDirectories(saveIn);
+                Files.createDirectories(saveIn);
                 for (int i = 0; ; i++) {
                     Path candidate = saveIn.resolve(name + (i == 0 ? "" : " (" + i + ")"));
-                    try { Files.createDirectory(candidate); destination = candidate; break; }
+                    try { Files.createDirectory(candidate); destination = candidate; saveFolder(); break; }
                     catch (FileAlreadyExistsException exists) { if (i > 10000) throw exists; }
                 }
             }
             progress.update(completeBytes, total);
             for (var member : plan) {
+                progress.checkpoint();
                 if (member.folder()) { Files.createDirectories(destination.resolve(member.local())); continue; }
                 if (completed.contains(member.relative())) continue;
                 Path parent = destination.resolve(member.local()).getParent(); Files.createDirectories(parent);
-                progress.stage("Downloading " + member.local() + "…");
-                long offset = completeBytes;
-                downloadMember(member.relative(), parent, scaled(progress, offset, member.size(), total));
-                completed.add(member.relative()); completeBytes += member.size();
-                progress.update(completeBytes, total);
+                downloadMember(member.relative(), parent, scaled(progress, completeBytes, member.size(), total));
+                completed.add(member.relative()); completeBytes += member.size(); progress.update(completeBytes, total);
             }
             return destination;
         }
+        private void saveFolder() throws IOException {
+            var values = new Properties(); values.setProperty("count", Integer.toString(plan.size()));
+            if (destination != null) values.setProperty("destination", destination.toString());
+            for (int i = 0; i < plan.size(); i++) {
+                var member = plan.get(i);
+                values.setProperty(i + ".remote", member.relative()); values.setProperty(i + ".local", member.local());
+                values.setProperty(i + ".folder", Boolean.toString(member.folder())); values.setProperty(i + ".size", Long.toString(member.size()));
+            }
+            DownloadState.write(state.resolve("folder.properties"), values);
+        }
+        private ResumableFile transfer(String relative, Path directory) throws IOException {
+            var existing = transfers.get(relative); if (existing != null) return existing;
+            String hash;
+            try { hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(relative.getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
+            catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+            var transfer = new ResumableFile(state.resolve(hash + ".properties"), directory);
+            transfers.put(relative, transfer); return transfer;
+        }
         private Path downloadMember(String relative, Path directory, DownloadQueue.Progress progress) throws Exception {
             currentMember = relative;
-            return transfers.computeIfAbsent(relative, ignored -> new ResumableFile()).download(directory,
-                    (offset, version) -> manager.downloadChunk(share.contactLink(), share.id(), relative, offset, version), progress);
+            return transfer(relative, directory).download(directory,
+                    (offset, version) -> manager.downloadChunk(owner, shareId, relative, offset, version), progress);
         }
-        public void discard() { transfers.values().forEach(ResumableFile::discard); }
+        public void discard() {
+            transfers.values().forEach(ResumableFile::discard);
+            try { Files.deleteIfExists(state.resolve("folder.properties")); } catch (IOException ignored) {}
+            try { Files.deleteIfExists(state); } catch (IOException ignored) {}
+        }
         public void paused() throws Exception {
             String member = currentMember;
-            if (member != null) manager.notifyDownloadPaused(share.contactLink(), share.id(), member);
+            if (member != null) manager.notifyDownloadPaused(owner, shareId, member);
         }
         private void readPlan(String remote, String local, List<Member> members, int depth, DownloadQueue.Progress progress) throws Exception {
             if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");
-            for (var child : manager.browseSharedFolderForDownload(share.contactLink(), share.id(), remote, progress::stage)) {
+            for (var child : manager.browseSharedFolderForDownload(owner, shareId, remote, progress::stage)) {
                 if (members.size() >= 100000) throw new IOException("Folder download exceeds 100,000 entries.");
                 if (!child.folder() && child.size() > 1024L * 1024 * 1024) throw new IOException(child.name() + " exceeds the 1 GiB file limit.");
                 String childRemote = remote.isEmpty() ? child.name() : remote + "/" + child.name();
@@ -117,9 +180,7 @@ public final class SharedDownloads implements AutoCloseable {
     private static DownloadQueue.Progress scaled(DownloadQueue.Progress target, long offset, long size, long total) {
         return new DownloadQueue.Progress() {
             public void checkpoint() { target.checkpoint(); }
-            public void update(long received, long wireTotal) {
-                target.update(offset + (wireTotal <= 0 ? 0 : received * size / wireTotal), total);
-            }
+            public void update(long received, long wireTotal) { target.update(offset + (wireTotal <= 0 ? 0 : received * size / wireTotal), total); }
             public void stage(String detail) { target.stage(detail); }
         };
     }
