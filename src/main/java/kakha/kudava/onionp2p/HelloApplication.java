@@ -74,6 +74,7 @@ public class HelloApplication extends Application {
 
     private void startServices(HelloController controller) {
         onionServer = new OnionServer();
+        onionServer.setRoutingRecoveryListener(controller::torRoutingRecovery);
         controller.torStarting();
         try {
             contacts = new ContactManager(AppData.directory(), onionServer, controller::contactEvent);

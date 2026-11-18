@@ -10,6 +10,7 @@ import java.nio.channels.FileLock;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.concurrent.*;
+import java.util.function.Consumer;
 import java.util.zip.ZipInputStream;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -19,7 +20,11 @@ public final class OnionServer implements AutoCloseable {
     private Process tor;
     private FileChannel lockChannel;
     private FileLock lock;
-    private boolean closed;
+    private volatile TorCircuitRecovery circuitRecovery;
+    private volatile boolean closed;
+    private final Object routingStatusLock = new Object();
+    private boolean routingRecovery;
+    private Consumer<Boolean> routingRecoveryListener = ignored -> {};
     private final Path data;
     private final CompletableFuture<Integer> socksReady = new CompletableFuture<>();
     private final CompletableFuture<Integer> controlReady = new CompletableFuture<>();
@@ -28,6 +33,27 @@ public final class OnionServer implements AutoCloseable {
     public OnionServer(Path data) { this.data = data.toAbsolutePath(); }
     public CompletableFuture<Integer> socksReady() { return socksReady; }
     public CompletableFuture<Integer> controlReady() { return controlReady; }
+    public void setRoutingRecoveryListener(Consumer<Boolean> listener) {
+        synchronized (routingStatusLock) {
+            routingRecoveryListener = listener == null ? ignored -> {} : listener;
+            notifyRoutingRecovery();
+        }
+    }
+    private void routingRecoveryChanged(boolean active) {
+        synchronized (routingStatusLock) {
+            if (active && closed || routingRecovery == active) return;
+            routingRecovery = active;
+            notifyRoutingRecovery();
+        }
+    }
+    private void notifyRoutingRecovery() {
+        try { routingRecoveryListener.accept(routingRecovery); }
+        catch (RuntimeException error) { System.err.println("Tor routing status update failed."); }
+    }
+    public void contactExchangeSucceeded() {
+        TorCircuitRecovery recovery = circuitRecovery;
+        if (recovery != null) recovery.exchangeSucceeded();
+    }
 
     public void start() throws Exception {
         if (!System.getProperty("os.name").startsWith("Windows")
@@ -106,8 +132,12 @@ public final class OnionServer implements AutoCloseable {
             int port = control.socksPort(); controlReady.complete(port); socksReady.complete(port);
         }
         synchronized (this) {
-            if (!closed) System.out.println("\nOnion address: http://" + address + "/\n"
-                    + "Open in Tor Browser. Publication may take a little longer.\n");
+            if (!closed) {
+                circuitRecovery = new TorCircuitRecovery(data, this::routingRecoveryChanged);
+                circuitRecovery.start();
+                System.out.println("\nOnion address: http://" + address + "/\n"
+                        + "Open in Tor Browser. Publication may take a little longer.\n");
+            }
         }
     }
 
@@ -153,6 +183,8 @@ public final class OnionServer implements AutoCloseable {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        routingRecoveryChanged(false);
+        if (circuitRecovery != null) circuitRecovery.close();
         socksReady.completeExceptionally(new IOException("Tor is stopped."));
         controlReady.completeExceptionally(new IOException("Tor is stopped."));
         if (tor != null) {

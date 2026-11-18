@@ -110,6 +110,8 @@ final class MessengerPane extends BorderPane {
     private static final String REACTION_PREFIX = "\u001eONION_REACTION_V1:";
     private static volatile MessengerPane activePane;
     private final Label torIndicatorDot = new Label("●");
+    private final TorRecoveryNotice torRecoveryNotice = new TorRecoveryNotice();
+    private Tooltip torIndicatorTooltip = new Tooltip("Tor is starting");
     private final ScaleTransition torStartupPulse = new ScaleTransition(Duration.seconds(0.65), torIndicatorDot);
     private final ContactManager manager;
     private final String localUsername;
@@ -636,7 +638,7 @@ final class MessengerPane extends BorderPane {
         torIndicatorDot.setMinSize(28, 28);
         torIndicatorDot.setMaxSize(28, 28);
         torIndicatorDot.setAlignment(javafx.geometry.Pos.CENTER);
-        torIndicatorDot.setTooltip(new Tooltip("Tor is starting"));
+        torIndicatorDot.setTooltip(torIndicatorTooltip);
         torStartupPulse.setFromX(1.0);
         torStartupPulse.setFromY(1.0);
         torStartupPulse.setToX(1.28);
@@ -672,6 +674,7 @@ final class MessengerPane extends BorderPane {
         StackPane.setAlignment(uploadsPane, Pos.BOTTOM_LEFT);
         StackPane.setMargin(uploadsPane, new Insets(12, 12, 12, 32));
         setCenter(workspace);
+        setTop(torRecoveryNotice);
         getStyleClass().add("messenger-pane");
         contactList.getStyleClass().add("contact-list");
         setPadding(Insets.EMPTY);
@@ -730,9 +733,27 @@ final class MessengerPane extends BorderPane {
                 dot.setScaleX(1);
                 dot.setScaleY(1);
             }
-            Tooltip.install(dot, new Tooltip(onionAddress == null
-                    ? message : "Onion service: http://" + onionAddress + "/"));
+            pane.torIndicatorTooltip = new Tooltip(onionAddress == null
+                    ? message : "Onion service: http://" + onionAddress + "/");
+            pane.refreshTorTooltip();
         });
+    }
+
+    void setTorRoutingRecovery(boolean recovering) {
+        if (torRecoveryNotice.isVisible() == recovering) return;
+        torRecoveryNotice.setRecovering(recovering);
+        torIndicatorDot.getStyleClass().remove("tor-dot-recovering");
+        if (recovering) {
+            torIndicatorDot.getStyleClass().add("tor-dot-recovering");
+            torStartupPulse.stop();
+            torIndicatorDot.setScaleX(1); torIndicatorDot.setScaleY(1);
+        }
+        refreshTorTooltip();
+    }
+
+    private void refreshTorTooltip() {
+        torIndicatorDot.setTooltip(torRecoveryNotice.isVisible()
+                ? new Tooltip(TorRecoveryNotice.MESSAGE) : torIndicatorTooltip);
     }
 
     void refreshContacts() { loadContacts(); }

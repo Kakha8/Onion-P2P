@@ -62,6 +62,7 @@ public class HelloController {
     private final SVGPath passwordEye = new SVGPath();
     private volatile ContactManager manager;
     private MessengerPane messengerPane;
+    private boolean torRoutingRecovering;
     private String selectedLink;
     private LocalAccounts accounts;
     private boolean hasLocalAccounts;
@@ -320,9 +321,17 @@ public class HelloController {
         MessengerPane.updateTorIndicator("Tor unavailable", null);
     }
 
+    public void torRoutingRecovery(boolean recovering) {
+        Platform.runLater(() -> {
+            torRoutingRecovering = recovering;
+            if (messengerPane != null) messengerPane.setTorRoutingRecovery(recovering);
+        });
+    }
+
     public void setManager(ContactManager manager) {
         this.manager = manager;
         messengerPane = new MessengerPane(manager, authenticatedUsername, this::showAddContactPane);
+        messengerPane.setTorRoutingRecovery(torRoutingRecovering);
         messengerHost.getChildren().setAll(messengerPane);
         VBox.setVgrow(messengerPane, javafx.scene.layout.Priority.ALWAYS);
     }

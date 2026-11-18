@@ -5,6 +5,7 @@ import java.net.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.util.*;
+import java.util.function.Consumer;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 /** Short-lived, cookie-authenticated loopback control connections. Never logs control commands or keys. */
@@ -64,6 +65,32 @@ public final class TorControl implements AutoCloseable {
     public void unpublish(String address) throws IOException {
         if (!address.matches("[a-z2-7]{56}\\.onion")) throw new IOException("Invalid onion address.");
         command("DEL_ONION " + address.substring(0, 56));
+    }
+
+    /** Ask Tor to use clean circuits for new requests; guard state remains intact. */
+    public void freshCircuits() throws IOException {
+        command("SIGNAL NEWNYM");
+    }
+
+    /** Blocks on a dedicated control connection until Tor disconnects or close() is called. */
+    void monitorCircuitEvents(Consumer<String> events) throws IOException {
+        Objects.requireNonNull(events);
+        output.write("SETEVENTS CIRC STREAM\r\n"); output.flush();
+        boolean subscribed = false;
+        String line;
+        while ((line = input.readLine()) != null) {
+            // Events can arrive before the SETEVENTS response. Keep them separate
+            // from command replies rather than treating them as rejected commands.
+            if (line.startsWith("650 CIRC ") || line.startsWith("650 STREAM ")) {
+                events.accept(line);
+            } else if (!subscribed && line.startsWith("250 ")) {
+                subscribed = true;
+                socket.setSoTimeout(0);
+            } else if (!line.startsWith("650 ")) {
+                throw new IOException("Tor circuit monitor subscription was rejected.");
+            }
+        }
+        throw new EOFException("Tor circuit monitor disconnected.");
     }
 
     public static Socket connect(int socksPort, String onion, int timeoutMillis) throws IOException {

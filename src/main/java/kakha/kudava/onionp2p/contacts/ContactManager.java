@@ -498,6 +498,7 @@ public final class ContactManager implements AutoCloseable {
                 var message = action.send(entry, session, canonical);
                 session.firstMessage = false;
                 session.lastUsed = System.nanoTime();
+                tor.contactExchangeSucceeded();
                 return message;
             } catch (DownloadQueue.QueuedException | DownloadQueue.OwnerStoppedException outcome) {
                 // These are fully authenticated and acknowledged peer responses,
@@ -505,6 +506,7 @@ public final class ContactManager implements AutoCloseable {
                 // which may also be carrying text and presence messages.
                 session.firstMessage = false;
                 session.lastUsed = System.nanoTime();
+                tor.contactExchangeSucceeded();
                 throw outcome;
             } catch (Exception e) {
                 connections.remove(session.socket);

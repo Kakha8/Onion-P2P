@@ -67,6 +67,20 @@
 .tor-dot-starting { -fx-text-fill: #d4a65e; }
 .tor-dot-ready { -fx-text-fill: #55c98a; }
 .tor-dot-failed { -fx-text-fill: #e47d79; }
+.tor-dot-recovering { -fx-text-fill: #9bafc5; }
+.tor-recovery-notice {
+    -fx-background-color: #1b232d;
+    -fx-border-color: transparent transparent #303a47 transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 8 20 8 20;
+    -fx-spacing: 10;
+}
+.tor-recovery-title { -fx-text-fill: #cbd5e1; -fx-font-size: 12px; -fx-font-weight: bold; }
+.tor-recovery-detail { -fx-text-fill: #94a3b5; -fx-font-size: 12px; }
+.tor-recovery-glyph {
+    -fx-fill: transparent; -fx-stroke: #9bafc5; -fx-stroke-width: 1.4;
+    -fx-stroke-line-cap: round; -fx-stroke-line-join: round;
+}
 .tor-status { -fx-text-fill: #758195; -fx-font-size: 9px; }
 .auth-card { -fx-padding: 12 18 20 18; }
 .label.auth-title { -fx-text-fill: #f3f7fc; -fx-font-size: 22px; -fx-font-weight: bold; }
