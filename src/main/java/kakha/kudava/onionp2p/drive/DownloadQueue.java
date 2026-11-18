@@ -157,13 +157,18 @@ public final class DownloadQueue implements AutoCloseable {
             catch (Exception offline) { reachable = false; }
             if (job.cancelled.get() || closed) return;
             if (!reachable) { waiting(job); return; }
-            change(job, State.CONNECTING, "Connecting through Tor…", job.item.received(), job.item.total(), null);
+            if (job.item.state() != State.QUEUED)
+                change(job, State.CONNECTING, "Connecting through Tor…", job.item.received(), job.item.total(), null);
             Path result = job.work.run(new Progress() {
                 private void check() { if (job.cancelled.get() || closed || job.paused.get()) throw new CancellationException(); }
                 public void checkpoint() { check(); }
-                public void stage(String detail) { check(); change(job, State.CONNECTING, detail, job.item.received(), job.item.total(), null); }
+                public void stage(String detail) {
+                    check();
+                    if (job.item.state() != State.QUEUED) change(job, State.CONNECTING, detail, job.item.received(), job.item.total(), null);
+                }
                 public void update(long received, long total) {
                     check(); long now = System.nanoTime();
+                    if (job.item.state() == State.QUEUED && received <= job.item.received()) return;
                     job.resuming.set(false);
                     if (received != total && now - job.lastProgress < TimeUnit.MILLISECONDS.toNanos(100)) return;
                     job.lastProgress = now;

@@ -10,6 +10,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class DownloadQueueTest {
+    @Test void queuePollingDoesNotFlashConnectingOrDownloadingBeforeDataArrives() throws Exception {
+        var queued = new CountDownLatch(1); var polled = new CountDownLatch(3); var complete = new CountDownLatch(1);
+        var admitted = new AtomicBoolean(); var seenQueued = new AtomicBoolean(); var flickered = new AtomicBoolean();
+        try (var queue = new DownloadQueue(owner -> true, 20)) {
+            queue.setListener(items -> items.forEach(item -> {
+                if (item.state() == DownloadQueue.State.QUEUED) { seenQueued.set(true); queued.countDown(); }
+                if (seenQueued.get() && !admitted.get() && (item.state() == DownloadQueue.State.CONNECTING || item.state() == DownloadQueue.State.DOWNLOADING)) flickered.set(true);
+                if (item.state() == DownloadQueue.State.COMPLETE) complete.countDown();
+            }));
+            queue.add("stable-queue", "alice", "Alice", "folder", 100, progress -> {
+                progress.stage("Preparing folder…"); progress.update(0, 100);
+                if (!admitted.get()) { polled.countDown(); throw new DownloadQueue.QueuedException(1); }
+                progress.update(100, 100); return Path.of("done");
+            });
+            assertTrue(queued.await(3, TimeUnit.SECONDS)); assertTrue(polled.await(3, TimeUnit.SECONDS));
+            assertFalse(flickered.get()); admitted.set(true); queue.wake("alice");
+            assertTrue(complete.await(3, TimeUnit.SECONDS));
+        }
+    }
     @Test void queuedDownloadShowsPositionAndStartsAutomaticallyWhenAdmitted() throws Exception {
         var attempts = new AtomicInteger(); var queued = new CountDownLatch(1); var complete = new CountDownLatch(1);
         try (var queue = new DownloadQueue(owner -> true, 20)) {

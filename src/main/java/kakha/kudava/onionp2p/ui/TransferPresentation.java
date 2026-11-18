@@ -12,20 +12,16 @@ final class TransferPresentation {
         scroll.setPrefHeight(Math.min(220, Math.max(48, rows.prefHeight(Math.max(100, width - 20)))));
     }
     private static final PseudoClass CANCELLED = PseudoClass.getPseudoClass("cancelled");
-    static void queued(Region row, Label status, boolean queued) {
-        row.pseudoClassStateChanged(PseudoClass.getPseudoClass("queued"), queued);
-        if (queued) {
-            var icon = new SVGPath(); icon.setContent("M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M12 7v5l3 2");
-            icon.getStyleClass().add("transfer-queued-glyph"); status.setGraphic(icon);
-        }
-    }
-    static void cancelled(Region row, Label status, boolean cancelled) {
+    static void status(Region row, Label status, boolean cancelled, boolean queued) {
         row.pseudoClassStateChanged(CANCELLED, cancelled);
-        if (cancelled) {
-            var icon = new SVGPath();
-            icon.setContent("M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M6 6l12 12");
-            icon.getStyleClass().add("transfer-cancelled-glyph"); status.setGraphic(icon);
-        } else status.setGraphic(null);
+        row.pseudoClassStateChanged(PseudoClass.getPseudoClass("queued"), queued);
+        String kind = cancelled ? "cancelled" : queued ? "queued" : "normal";
+        if (kind.equals(status.getProperties().get("transfer-status-kind"))) return;
+        status.getProperties().put("transfer-status-kind", kind);
+        if (kind.equals("normal")) { status.setGraphic(null); return; }
+        var icon = new SVGPath();
+        icon.setContent("M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 " + (cancelled ? "M6 6l12 12" : "M12 7v5l3 2"));
+        icon.getStyleClass().add(cancelled ? "transfer-cancelled-glyph" : "transfer-queued-glyph"); status.setGraphic(icon);
     }
     static String speedAndEta(long received, long total, double speed) {
         String rate = speed >= 1000000 ? String.format(Locale.ROOT, "%.1f MB/s", speed / 1000000)

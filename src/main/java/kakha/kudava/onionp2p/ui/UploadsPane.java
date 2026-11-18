@@ -95,8 +95,8 @@ final class UploadsPane extends VBox {
                 case CANCELLED_BY_SENDER -> "Cancelled by you";
             };
             ((Label) row.getChildren().get(2)).setText(status);
-            TransferPresentation.cancelled(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.CANCELLED || item.state() == UploadTracker.State.CANCELLED_BY_SENDER);
-            TransferPresentation.queued(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.QUEUED);
+            TransferPresentation.status(row, (Label) row.getChildren().get(2),
+                    item.state() == UploadTracker.State.CANCELLED || item.state() == UploadTracker.State.CANCELLED_BY_SENDER, item.state() == UploadTracker.State.QUEUED);
             ((ProgressBar) row.getChildren().get(3)).setProgress(item.state() == UploadTracker.State.COMPLETE ? 1
                     : item.total() == 0 ? 0 : Math.min(.99, (double) item.sent() / item.total()));
             ((Label) row.getChildren().get(4)).setText(size(item.sent()) + " / " + size(item.total()));

@@ -61,11 +61,19 @@ class UploadsPaneTest {
             tracker.begin("two", "share", "file", "two.bin", 1000, 0, new Object());
             tracker.begin("three", "share", "file", "three.bin", 1000, 0, new Object());
             tracker.begin("four", "share", "file", "four.bin", 1000, 0, new Object());
+            javafx.scene.Node[] queueIcon = new javafx.scene.Node[1];
             fx(() -> {
                 assertEquals(3, pane[0].activeCountProperty().get());
                 var labels = pane[0].lookupAll(".label").stream().map(node -> (Label) node).toList();
                 assertTrue(labels.stream().anyMatch(label -> label.isVisible() && label.getText().contains("3-recipient limit reached")));
                 assertTrue(labels.stream().anyMatch(label -> label.getText().equals("Queued · position 1") && label.getGraphic() != null));
+                queueIcon[0] = labels.stream().filter(label -> label.getText().equals("Queued · position 1")).findFirst().orElseThrow().getGraphic();
+            });
+            tracker.refresh();
+            fx(() -> {
+                var status = pane[0].lookupAll(".label").stream().map(node -> (Label) node)
+                        .filter(label -> label.getText().equals("Queued · position 1")).findFirst().orElseThrow();
+                assertSame(queueIcon[0], status.getGraphic(), "A routine refresh must reuse the queue icon");
             });
         }
     }

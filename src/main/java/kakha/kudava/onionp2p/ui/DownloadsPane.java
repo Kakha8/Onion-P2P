@@ -103,8 +103,7 @@ final class DownloadsPane extends VBox {
             detail.setText(item.detail()); detail.setTooltip(new Tooltip("Shared by " + item.ownerName()));
             boolean complete = item.state() == DownloadQueue.State.COMPLETE;
             boolean paused = item.state() == DownloadQueue.State.PAUSED;
-            TransferPresentation.cancelled(this, detail, item.state() == DownloadQueue.State.CANCELLED);
-            TransferPresentation.queued(this, detail, item.state() == DownloadQueue.State.QUEUED);
+            TransferPresentation.status(this, detail, item.state() == DownloadQueue.State.CANCELLED, item.state() == DownloadQueue.State.QUEUED);
             pause.setVisible(item.active()); pause.setManaged(item.active());
             pause.setGraphic(glyph(paused ? "M8 5l11 7-11 7z" : "M8 5v14 M16 5v14"));
             String pauseLabel = paused ? "Resume download" : "Pause download";

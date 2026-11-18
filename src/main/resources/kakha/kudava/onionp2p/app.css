@@ -16,10 +16,10 @@
 .download-row:cancelled .download-name { -fx-text-fill: #a6aeba; }
 .download-row:cancelled .download-progress > .bar { -fx-background-color: #945c63; }
 .transfer-cancelled-glyph { -fx-fill: transparent; -fx-stroke: #dc9292; -fx-stroke-width: 1.7; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.6; -fx-scale-y: 0.6; }
-.download-row:queued { -fx-background-color: rgba(206, 161, 72, 0.06); }
-.download-row:queued .download-detail { -fx-text-fill: #d4b775; }
-.transfer-queued-glyph { -fx-fill: transparent; -fx-stroke: #d4b775; -fx-stroke-width: 1.7; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.6; -fx-scale-y: 0.6; }
-.transfer-limit-notice { -fx-text-fill: #d4b775; -fx-font-size: 11px; -fx-padding: 7 14; -fx-background-color: rgba(206, 161, 72, 0.06); }
+.download-row:queued { -fx-background-color: transparent; }
+.download-row:queued .download-detail { -fx-text-fill: #aab8c9; }
+.transfer-queued-glyph { -fx-fill: transparent; -fx-stroke: #8fa5bd; -fx-stroke-width: 1.7; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; -fx-scale-x: 0.6; -fx-scale-y: 0.6; }
+.transfer-limit-notice { -fx-text-fill: #9baabe; -fx-font-size: 11px; -fx-padding: 7 14; -fx-background-color: transparent; -fx-border-color: transparent transparent #303a47 transparent; }
 .download-progress { -fx-pref-height: 5; -fx-min-height: 5; -fx-max-height: 5; -fx-padding: 0; -fx-accent: #3b82f6; }
 .download-progress > .track { -fx-background-color: #303b49; -fx-background-insets: 0; -fx-background-radius: 3; }
 .download-progress > .bar { -fx-background-color: #3b82f6; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 0; }
