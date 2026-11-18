@@ -69,6 +69,11 @@ class DownloadsPaneTest {
             queue.cancel(moving);
             fx(() -> assertTrue(pane[0].lookupAll(".label").stream().map(node -> (Label) node)
                     .anyMatch(label -> "Cancelled".equals(label.getText()) && label.getGraphic() != null)));
+            queue.add("queued-ui", "online", "Busy owner", "queued.bin", 100, progress -> { throw new DownloadQueue.QueuedException(2); });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (queue.items().stream().noneMatch(item -> item.state() == DownloadQueue.State.QUEUED) && System.nanoTime() < deadline) Thread.sleep(10);
+            fx(() -> assertTrue(pane[0].lookupAll(".label").stream().map(node -> (Label) node)
+                    .anyMatch(label -> label.getText().contains("Queued · position 2") && label.getGraphic() != null)));
             release.countDown();
         } finally { release.countDown(); }
     }

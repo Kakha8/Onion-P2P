@@ -1,6 +1,6 @@
 package kakha.kudava.onionp2p.ui;
 
-import kakha.kudava.onionp2p.account.AccountStore;
+import kakha.kudava.onionp2p.account.LocalAccounts;
 import kakha.kudava.onionp2p.account.AppData;
 import kakha.kudava.onionp2p.contacts.ContactLink;
 import kakha.kudava.onionp2p.contacts.ContactManager;
@@ -56,12 +56,14 @@ public class HelloController {
     @FXML private PasswordField confirmPasswordField;
     @FXML private VBox confirmPasswordRow;
     @FXML private Button authButton;
+    @FXML private Button authModeButton;
     @FXML private ProgressIndicator authProgress;
     @FXML private VBox appPane;
     private final SVGPath passwordEye = new SVGPath();
     private volatile ContactManager manager;
     private String selectedLink;
-    private AccountStore accounts;
+    private LocalAccounts accounts;
+    private boolean hasLocalAccounts;
     private Runnable onAuthenticated;
     private boolean creatingAccount;
     private String authenticatedUsername;
@@ -85,6 +87,7 @@ public class HelloController {
         passwordVisibilityButton.setGraphic(passwordEye);
         passwordVisibilityButton.setTooltip(new Tooltip());
         passwordVisibilityButton.disableProperty().bind(authButton.disableProperty());
+        authModeButton.disableProperty().bind(authButton.disableProperty());
         setPasswordRevealed(false);
         minimizeButton.setGraphic(windowControlGlyph("M4 12 H20"));
         maximizeButton.setGraphic(windowControlGlyph("M5 5 H19 V19 H5 Z"));
@@ -119,9 +122,9 @@ public class HelloController {
         setAuthBusy(true, "Checking local account…");
         Thread.ofPlatform().daemon().name("account-load").start(() -> {
             try {
-                accounts = new AccountStore(AppData.directory());
-                var profile = accounts.profile();
-                Platform.runLater(() -> showAuth(profile == null));
+                accounts = new LocalAccounts(AppData.rootDirectory());
+                hasLocalAccounts = accounts.hasAccounts();
+                Platform.runLater(() -> showAuth(false));
             } catch (Exception e) {
                 System.err.println("Account load failed: " + e.getMessage());
                 Platform.runLater(() -> {
@@ -212,18 +215,26 @@ public class HelloController {
     private void showAuth(boolean create) {
         creatingAccount = create;
         setPasswordRevealed(false);
-        authTitle.setText(create ? "Set up your account" : "Unlock your account");
+        authTitle.setText(create ? "Create an account" : "Log in");
         authMessage.setText(create ? "Choose a username and a password of at least 12 characters."
-                : "Enter your local username and password.");
+                : hasLocalAccounts ? "Enter your local username and password." : "Welcome. Register an account to get started.");
         confirmPasswordRow.setVisible(create);
         confirmPasswordRow.setManaged(create);
-        authButton.setText(create ? "Create account" : "Unlock");
+        authButton.setText(create ? "Register" : "Log in");
+        authModeButton.setText(create ? "Already have an account? Log in" : "Create an account");
         authButton.setDisable(false);
         authProgress.setVisible(false);
         authProgress.setManaged(false);
         authPane.setVisible(true); authPane.setManaged(true);
         appPane.setVisible(false); appPane.setManaged(false);
+        Stage stage = windowStage();
+        if (stage != null) stage.setHeight(create ? 560 : 510);
         usernameField.requestFocus();
+    }
+    @FXML private void onToggleAuthMode() {
+        if (authButton.isDisabled()) return;
+        passwordField.clear(); confirmPasswordField.clear();
+        showAuth(!creatingAccount);
     }
 
     @FXML private void onTogglePasswordVisibility() {
@@ -261,13 +272,10 @@ public class HelloController {
         setAuthBusy(true, creatingAccount ? "Creating account…" : "Checking password…");
         Thread.ofPlatform().daemon().name("account-authentication").start(() -> {
             try {
-                AccountStore.Profile profile;
-                if (creatingAccount) {
-                    accounts.create(username, password);
-                    profile = accounts.profile();
-                } else profile = accounts.authenticate(username, password);
-                var authenticated = profile;
+                var unlocked = creatingAccount ? accounts.register(username, password) : accounts.login(username, password);
+                var authenticated = unlocked.profile();
                 Platform.runLater(() -> {
+                    AppData.selectAccount(unlocked.directory());
                     authenticatedUsername = authenticated.username();
                     authPane.setVisible(false); authPane.setManaged(false);
                     appPane.setVisible(true); appPane.setManaged(true);

@@ -24,6 +24,8 @@ The **Uploads** icon beside Downloads shows an active transfer count when contac
 
 The sender can cancel an individual transfer from the Uploads panel. The recipient's Downloads panel shows **Download cancelled by sender** and discards unfinished partial data; the share remains available for a separate new download. Removing sharing access instead stops affected downloads with **Sharing access removed by sender**, including paused requests when the recipient receives the share update. Every chunk checks access again. A chunk already sent may finish, and completed files cannot be taken back. Update both apps for sender cancellation notices.
 
+Shared-file uploads serve at most **three distinct recipients** at once. Additional recipients join a queue in request order; multiple files from one recipient use one slot. The sender's Uploads panel shows an inline limit notice and queue positions, while queued recipients see their position and an automatic-start message in Downloads. They retry automatically without refreshing. Completing, pausing, cancelling, or disconnecting frees a slot when that recipient has no other active transfers. A reserved recipient that stops requesting chunks releases its idle slot after 20 seconds, and stale queue entries expire after 30 seconds without a request. Active in-flight chunks are retained until they finish or the connection fails. Both apps need the updated build to display queue responses.
+
 Run `./mvnw.cmd javafx:run` (or run `HelloApplication` in your IDE). The window starts a local HTTP server and Tor in the background. Watch the console for:
 
 ```text
@@ -36,7 +38,7 @@ The persistent identity and Tor state live under `%LOCALAPPDATA%/Onion-P2P` (hom
 
 ## Local account
 
-On first launch, create a local username and password. Later launches ask for those credentials before starting Tor or opening the app. Usernames are 3–32 ASCII letters, numbers, dots, dashes, or underscores; passwords must be at least 12 characters.
+The login pane includes **Create an account**, which opens a registration form with username, password, and password confirmation. Registering signs in to that account; **Already have an account? Log in** returns to login. Usernames are 3–32 ASCII letters, numbers, dots, dashes, or underscores; passwords must be at least 12 characters. Duplicate usernames on this device are rejected. The first account retains the original app data directory; additional accounts use separate directories under `accounts`, with independent identities, chats, contacts, Drive files, and Tor state. Existing accounts remain usable without migration. Tor starts only after successful login or registration.
 
 The username and Argon2id password verifier (unique 16-byte salt, 19 MiB memory, 2 passes, 1 thread) live in the local `contacts.sqlite` database. The verifier can confirm a password but cannot recover it. The password is not currently used to encrypt the database, private keys, or messages; local encryption is still a separate planned feature. Forgetting the password currently means the account cannot be unlocked; there is no password-reset flow yet.
 

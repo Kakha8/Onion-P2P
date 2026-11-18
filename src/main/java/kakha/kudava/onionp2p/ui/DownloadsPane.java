@@ -52,9 +52,10 @@ final class DownloadsPane extends VBox {
     ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<DownloadQueue.Item> items) {
-        int active = 0, done = 0, waiting = 0, paused = 0;
+        int active = 0, done = 0, waiting = 0, paused = 0, queued = 0;
         for (var item : items) {
-            if (item.active() && item.state() != DownloadQueue.State.PAUSED) active++;
+            if (item.active() && item.state() != DownloadQueue.State.PAUSED && item.state() != DownloadQueue.State.QUEUED) active++;
+            if (item.state() == DownloadQueue.State.QUEUED) queued++;
             if (item.state() == DownloadQueue.State.PAUSED) paused++;
             if (item.state() == DownloadQueue.State.WAITING) waiting++;
             if (item.state() == DownloadQueue.State.COMPLETE) {
@@ -65,7 +66,7 @@ final class DownloadsPane extends VBox {
         }
         activeCount.set(active);
         title.setText(active > 0 ? "Downloads · " + active + " active" : "Downloads");
-        summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : ""));
+        summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : "") + (queued > 0 ? " · " + queued + " queued" : ""));
         TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
     }
     private final class Row extends VBox {
@@ -103,6 +104,7 @@ final class DownloadsPane extends VBox {
             boolean complete = item.state() == DownloadQueue.State.COMPLETE;
             boolean paused = item.state() == DownloadQueue.State.PAUSED;
             TransferPresentation.cancelled(this, detail, item.state() == DownloadQueue.State.CANCELLED);
+            TransferPresentation.queued(this, detail, item.state() == DownloadQueue.State.QUEUED);
             pause.setVisible(item.active()); pause.setManaged(item.active());
             pause.setGraphic(glyph(paused ? "M8 5l11 7-11 7z" : "M8 5v14 M16 5v14"));
             String pauseLabel = paused ? "Resume download" : "Pause download";

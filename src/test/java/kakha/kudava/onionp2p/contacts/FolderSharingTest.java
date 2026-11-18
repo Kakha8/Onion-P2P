@@ -14,6 +14,34 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FolderSharingTest {
     @Test @Timeout(30)
+    void fourthRecipientReceivesAnEncryptedQueuePositionAndStartsAfterASlotIsFreed() throws Exception {
+        var owner = new SharedDriveStore(temp.resolve("limited-owner"));
+        Path file = Files.write(temp.resolve("limited.bin"), new byte[900000]);
+        try (var uploads = new kakha.kudava.onionp2p.drive.UploadTracker()) {
+            var sessions = new ArrayList<Session>();
+            var shares = new ArrayList<String>();
+            try {
+                for (int i = 0; i < 4; i++) {
+                    String share = UUID.randomUUID().toString(); shares.add(share);
+                    owner.publish(share, "p" + i, "limited.bin", file, 900000, System.currentTimeMillis());
+                    var session = new Session(owner, "p" + i, true, uploads); sessions.add(session);
+                    if (i < 3) {
+                        ContactMessaging.downloadChunk(session.client, material(false), share, "", 0, "", true);
+                        ContactMessaging.ping(session.client, material(false), false);
+                    }
+                }
+                var fourth = sessions.get(3);
+                var queued = assertThrows(kakha.kudava.onionp2p.drive.DownloadQueue.QueuedException.class,
+                        () -> ContactMessaging.downloadChunk(fourth.client, material(false), shares.get(3), "", 0, "", true));
+                assertEquals(1, queued.position);
+                assertEquals(3, uploads.items().stream().filter(item -> item.state() == kakha.kudava.onionp2p.drive.UploadTracker.State.UPLOADING).count());
+                ContactMessaging.notifyDownloadPaused(sessions.getFirst().client, material(false), shares.getFirst(), "", false);
+                var chunk = ContactMessaging.downloadChunk(fourth.client, material(false), shares.get(3), "", 0, "", false);
+                assertEquals(262144, chunk.bytes().length);
+            } finally { for (Session session : sessions) session.close(); }
+        }
+    }
+    @Test @Timeout(30)
     void senderCancellationBlocksOnlyTheCurrentRequestAndRevocationHasADistinctReason() throws Exception {
         var owner = new SharedDriveStore(temp.resolve("sender-stop"));
         Path file = Files.write(temp.resolve("sender-stop.bin"), new byte[700000]);

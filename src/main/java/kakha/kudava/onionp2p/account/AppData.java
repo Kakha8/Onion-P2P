@@ -13,9 +13,15 @@ import java.util.EnumSet;
 import java.util.List;
 
 public final class AppData {
+    private static volatile Path selectedAccount;
     private AppData() {}
 
     public static Path directory() {
+        Path selected = selectedAccount;
+        return selected != null ? selected : rootDirectory();
+    }
+    public static void selectAccount(Path directory) { selectedAccount = directory.toAbsolutePath().normalize(); }
+    public static Path rootDirectory() {
         String local = System.getenv("LOCALAPPDATA");
         return Path.of(System.getProperty("onion.dataDir",
                 (local == null ? System.getProperty("user.home") : local) + "/Onion-P2P"))

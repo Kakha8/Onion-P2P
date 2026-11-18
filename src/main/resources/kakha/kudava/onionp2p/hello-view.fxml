@@ -38,9 +38,9 @@
     </top>
     <center>
         <StackPane styleClass="window-content">
-            <VBox fx:id="authPane" styleClass="auth-card" alignment="CENTER" spacing="14" maxWidth="338"
+            <VBox fx:id="authPane" styleClass="auth-card" alignment="CENTER" spacing="12" maxWidth="338"
                   visible="false" managed="false">
-                <ImageView fitWidth="112" fitHeight="112" preserveRatio="true" smooth="true"
+                <ImageView fitWidth="80" fitHeight="80" preserveRatio="true" smooth="true"
                            blendMode="LIGHTEN" mouseTransparent="true">
                     <image>
                         <Image url="@onion-owl.png" requestedWidth="224" requestedHeight="224" preserveRatio="true" smooth="true"/>
@@ -75,6 +75,7 @@
                         <StackPane.margin><Insets right="12"/></StackPane.margin>
                     </ProgressIndicator>
                 </StackPane>
+                <Button fx:id="authModeButton" text="Create an account" styleClass="auth-mode-button" onAction="#onToggleAuthMode"/>
             </VBox>
     <VBox fx:id="appPane" styleClass="app-shell" alignment="TOP_LEFT" spacing="0.0" visible="false" managed="false">
     <padding>

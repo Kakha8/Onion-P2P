@@ -71,7 +71,7 @@ class DownloadRestartTest {
                                 if (saved && queue.items().getFirst().state() == DownloadQueue.State.PAUSED) break;
                                 Thread.sleep(20);
                             }
-                            assertEquals(DownloadQueue.State.PAUSED, queue.items().getFirst().state());
+                            assertEquals(DownloadQueue.State.PAUSED, queue.items().getFirst().state(), queue.items().getFirst().detail());
                         } else {
                             var queue = manager.downloads().queue(); assertEquals(1, queue.items().size());
                             assertEquals(queueId, queue.items().getFirst().id());

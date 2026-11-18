@@ -10,6 +10,21 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class DownloadQueueTest {
+    @Test void queuedDownloadShowsPositionAndStartsAutomaticallyWhenAdmitted() throws Exception {
+        var attempts = new AtomicInteger(); var queued = new CountDownLatch(1); var complete = new CountDownLatch(1);
+        try (var queue = new DownloadQueue(owner -> true, 20)) {
+            queue.setListener(items -> items.forEach(item -> {
+                if (item.state() == DownloadQueue.State.QUEUED && item.detail().contains("position 2")) queued.countDown();
+                if (item.state() == DownloadQueue.State.COMPLETE) complete.countDown();
+            }));
+            queue.add("queued", "alice", "Alice", "file", 100, progress -> {
+                if (attempts.incrementAndGet() < 3) throw new DownloadQueue.QueuedException(2);
+                progress.update(100, 100); return Path.of("saved");
+            });
+            assertTrue(queued.await(3, TimeUnit.SECONDS)); assertTrue(complete.await(3, TimeUnit.SECONDS));
+            assertEquals(3, attempts.get());
+        }
+    }
     @Test void cancellingAPausedDownloadNotifiesItsOwner() throws Exception {
         var notice = new CountDownLatch(1);
         try (var queue = new DownloadQueue(owner -> false, 20)) {

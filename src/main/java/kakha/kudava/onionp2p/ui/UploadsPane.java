@@ -14,6 +14,7 @@ import java.util.function.Function;
 final class UploadsPane extends VBox {
     private final ReadOnlyIntegerWrapper activeCount = new ReadOnlyIntegerWrapper();
     private final Label title = new Label("Uploads"), summary = new Label("No uploads yet");
+    private final Label limitNotice = new Label("3-recipient limit reached. Additional recipients are queued.");
     private final VBox rows = new VBox();
     private final ScrollPane scroll = new ScrollPane(rows);
     private final Map<String, VBox> views = new LinkedHashMap<>();
@@ -41,18 +42,22 @@ final class UploadsPane extends VBox {
         header.getStyleClass().add("downloads-header");
         scroll.setFitToWidth(true); scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scroll.setMinHeight(0); scroll.getStyleClass().add("downloads-list");
-        rows.getStyleClass().add("downloads-rows"); getChildren().addAll(header, scroll); hide();
+        limitNotice.getStyleClass().add("transfer-limit-notice"); limitNotice.setWrapText(true); limitNotice.setMaxWidth(Double.MAX_VALUE);
+        limitNotice.setVisible(false); limitNotice.setManaged(false);
+        rows.getStyleClass().add("downloads-rows"); getChildren().addAll(header, limitNotice, scroll); hide();
         tracker.setListener(items -> Platform.runLater(() -> update(items)));
     }
     ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     void reveal() { setVisible(true); setManaged(true); toFront(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<UploadTracker.Item> items) {
-        int active = (int) items.stream().filter(item -> item.state() == UploadTracker.State.UPLOADING).count();
+        int active = (int) items.stream().filter(item -> item.state() == UploadTracker.State.UPLOADING).map(UploadTracker.Item::contact).distinct().count();
+        long queued = items.stream().filter(item -> item.state() == UploadTracker.State.QUEUED && item.queuePosition() > 0).map(UploadTracker.Item::contact).distinct().count();
         activeCount.set(active);
         title.setText(active == 0 ? "Uploads" : "Uploads · " + active + " active");
         long complete = items.stream().filter(item -> item.state() == UploadTracker.State.COMPLETE).count();
-        summary.setText(items.isEmpty() ? "No uploads yet" : complete + " of " + items.size() + " complete");
+        summary.setText(items.isEmpty() ? "No uploads yet" : active + " / 3 recipients · " + complete + " complete" + (queued > 0 ? " · " + queued + " queued" : ""));
+        limitNotice.setVisible(queued > 0); limitNotice.setManaged(queued > 0);
         var keys = new HashSet<String>();
         for (var item : items) {
             keys.add(item.key());
@@ -75,11 +80,12 @@ final class UploadsPane extends VBox {
             HBox heading = (HBox) row.getChildren().get(0);
             ((Label) heading.getChildren().get(0)).setText(item.name());
             boolean canCancel = item.state() == UploadTracker.State.UPLOADING || item.state() == UploadTracker.State.WAITING
-                    || item.state() == UploadTracker.State.PAUSED || item.state() == UploadTracker.State.DISCONNECTED;
+                    || item.state() == UploadTracker.State.PAUSED || item.state() == UploadTracker.State.DISCONNECTED || item.state() == UploadTracker.State.QUEUED;
             heading.getChildren().get(1).setVisible(canCancel); heading.getChildren().get(1).setManaged(canCancel);
             ((Label) row.getChildren().get(1)).setText("To " + contactName.apply(item.contact()));
             String status = switch (item.state()) {
                 case UPLOADING -> "Uploading";
+                case QUEUED -> item.queuePosition() > 0 ? "Queued · position " + item.queuePosition() : "Starting download…";
                 case WAITING -> "Waiting for recipient";
                 case PAUSED -> "Paused by recipient";
                 case DISCONNECTED -> "Recipient disconnected · progress retained";
@@ -90,6 +96,7 @@ final class UploadsPane extends VBox {
             };
             ((Label) row.getChildren().get(2)).setText(status);
             TransferPresentation.cancelled(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.CANCELLED || item.state() == UploadTracker.State.CANCELLED_BY_SENDER);
+            TransferPresentation.queued(row, (Label) row.getChildren().get(2), item.state() == UploadTracker.State.QUEUED);
             ((ProgressBar) row.getChildren().get(3)).setProgress(item.state() == UploadTracker.State.COMPLETE ? 1
                     : item.total() == 0 ? 0 : Math.min(.99, (double) item.sent() / item.total()));
             ((Label) row.getChildren().get(4)).setText(size(item.sent()) + " / " + size(item.total()));

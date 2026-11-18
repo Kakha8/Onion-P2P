@@ -199,6 +199,14 @@ public final class ContactMessaging {
         long timestamp = input.readLong();
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte(); int length = input.readInt();
+        if (type == 17) {
+            byte[] payload = readDriveControl(new DriveResponse(input, output, messageId, timestamp, nonce,
+                    aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic()), type, length), material, 20);
+            if (payload.length != 4) throw new IOException("Invalid download queue response.");
+            int position = ByteBuffer.wrap(payload).getInt();
+            if (position < 1 || position > 100) throw new IOException("Invalid queue position.");
+            throw new DownloadQueue.QueuedException(position);
+        }
         if (type == 7) {
             if (length < 16 || length > 1024) throw new IOException("Invalid unavailable response.");
             byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
@@ -296,6 +304,13 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; in.readFully(nonce); byte type = in.readByte(); int length = in.readInt();
         var result = new DriveResponse(in, out, uuidString(id), timestamp, nonce,
                 aad(id, timestamp, type, material.remotePublic(), material.localPublic()), type, length);
+        if (type == 17) {
+            byte[] payload = readDriveControl(result, material, 20);
+            if (payload.length != 4) throw new IOException("Invalid download queue response.");
+            int position = ByteBuffer.wrap(payload).getInt();
+            if (position < 1 || position > 100) throw new IOException("Invalid queue position.");
+            throw new DownloadQueue.QueuedException(position);
+        }
         if (type == 7) {
             String reason = new String(readDriveControl(result, material, 1024), StandardCharsets.UTF_8);
             if (reason.equals("Download cancelled by sender.") || reason.equals("Sharing access removed by sender."))
@@ -499,6 +514,11 @@ public final class ContactMessaging {
                 if (position > attrs.size()) throw new IOException("Invalid offset.");
                 end = Math.min(attrs.size(), position + 256 * 1024);
                 if (uploads != null) activity = uploads.begin(link, shareId, relative, target.getFileName().toString(), attrs.size(), position, input, requestId);
+                int queuePosition = uploads == null ? 0 : uploads.queuePosition(activity);
+                if (queuePosition > 0) {
+                    sendControl(output, input, material, (byte) 17, ByteBuffer.allocate(4).putInt(queuePosition).array());
+                    return;
+                }
                 var bytes = new java.io.ByteArrayOutputStream();
                 try (var out = new DataOutputStream(bytes); var source = Files.newInputStream(target)) {
                     out.writeUTF(token); out.writeUTF(safeFileName(target.getFileName().toString()));
@@ -617,7 +637,7 @@ public final class ContactMessaging {
                 return;
             }
             if (type == 8) sendControl(output, input, material, (byte) 9, listing);
-            else sendFileOverStreams(output, input, material, link, target);
+            else serveSharedFile(output, input, material, link, shareId, relative, target, uploads);
             return;
         }
         if (type == 5) {
@@ -634,7 +654,7 @@ public final class ContactMessaging {
             if (offer == null || !Files.isRegularFile(Path.of(offer.path()))) {
                 sendControl(output, input, material, (byte) 7, "The owner no longer has this shared file.".getBytes(StandardCharsets.UTF_8));
             } else {
-                sendFileOverStreams(output, input, material, link, Path.of(offer.path()));
+                serveSharedFile(output, input, material, link, shareId, "", Path.of(offer.path()), uploads);
             }
             return;
         }
@@ -763,6 +783,20 @@ public final class ContactMessaging {
             awaitReceiptSend(output, material, nonce, aad);
             if (driveShare && driveShareSignal != null) driveShareSignal.run();
         } finally { Files.deleteIfExists(temporary); }
+    }
+
+    private static void serveSharedFile(DataOutputStream output, DataInputStream input, ContactRendezvous.Material material,
+                                       String link, String share, String relative, Path file,
+                                       kakha.kudava.onionp2p.drive.UploadTracker uploads) throws Exception {
+        String activity = uploads == null ? null : uploads.begin(link, share, relative, file.getFileName().toString(), Files.size(file), 0, input);
+        int position = uploads == null ? 0 : uploads.queuePosition(activity);
+        if (position > 0) {
+            sendControl(output, input, material, (byte) 17, ByteBuffer.allocate(4).putInt(position).array()); return;
+        }
+        try {
+            sendFileOverStreams(output, input, material, link, file);
+            if (uploads != null) uploads.acknowledged(activity, Files.size(file));
+        } catch (Exception error) { if (uploads != null) uploads.failed(activity); throw error; }
     }
 
     private static void sendFileOverStreams(DataOutputStream output, DataInputStream input,

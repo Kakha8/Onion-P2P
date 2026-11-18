@@ -12,13 +12,17 @@ import java.util.function.Consumer;
 /** Download queue with optional durable requests and explicit resume after restart. */
 public final class DownloadQueue implements AutoCloseable {
     public static final class TorNotReadyException extends Exception {}
+    public static final class QueuedException extends java.io.IOException {
+        public final int position;
+        public QueuedException(int position) { super("Sender is serving 3 recipients. Queued · position " + position + ". Starts automatically."); this.position = position; }
+    }
     public static final class OwnerStoppedException extends java.io.IOException {
         public OwnerStoppedException(String message) { super(message); }
     }
-    public enum State { WAITING, CONNECTING, DOWNLOADING, PAUSED, COMPLETE, FAILED, CANCELLED }
+    public enum State { WAITING, QUEUED, CONNECTING, DOWNLOADING, PAUSED, COMPLETE, FAILED, CANCELLED }
     public record Item(String id, String key, String owner, String ownerName, String name,
                        State state, String detail, long received, long total, Path destination) {
-        public boolean active() { return state == State.WAITING || state == State.CONNECTING || state == State.DOWNLOADING || state == State.PAUSED; }
+        public boolean active() { return state == State.WAITING || state == State.QUEUED || state == State.CONNECTING || state == State.DOWNLOADING || state == State.PAUSED; }
     }
     public interface Progress { void update(long received, long total); void stage(String detail); default void checkpoint() {} }
     @FunctionalInterface public interface Work {
@@ -91,7 +95,7 @@ public final class DownloadQueue implements AutoCloseable {
     public void wake(String owner) {
         List<Job> copy;
         synchronized (this) { copy = List.copyOf(jobs.values()); }
-        for (var job : copy) if (job.item.state() == State.WAITING && (owner == null || job.item.owner().equals(owner))) submit(job);
+        for (var job : copy) if ((job.item.state() == State.WAITING || job.item.state() == State.QUEUED) && (owner == null || job.item.owner().equals(owner))) submit(job);
     }
     public synchronized void cancel(String id) {
         var job = jobs.get(id); if (job == null || !job.item.active()) return;
@@ -139,14 +143,14 @@ public final class DownloadQueue implements AutoCloseable {
         submit(job);
     }
     private void submit(Job job) {
-        if (closed || job.item.state() != State.WAITING || job.cancelled.get() || !job.running.compareAndSet(false, true)) return;
+        if (closed || job.item.state() != State.WAITING && job.item.state() != State.QUEUED || job.cancelled.get() || !job.running.compareAndSet(false, true)) return;
         try { executor.execute(() -> run(job)); }
         catch (RejectedExecutionException ignored) { job.running.set(false); }
     }
     private void run(Job job) {
         job.started.set(true);
         try {
-            if (job.cancelled.get() || closed || job.item.state() != State.WAITING) return;
+            if (job.cancelled.get() || closed || job.item.state() != State.WAITING && job.item.state() != State.QUEUED) return;
             boolean reachable;
             try { reachable = online.check(job.item.owner()); }
             catch (TorNotReadyException starting) { waitingForTor(job); return; }
@@ -174,7 +178,8 @@ public final class DownloadQueue implements AutoCloseable {
             else if ((job.cancelled.get() || closed) && job.item.state() != State.CANCELLED) change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
         } catch (Exception error) {
             if (!job.cancelled.get() && !closed) {
-                if (error instanceof OwnerStoppedException) stopByOwner(job, error.getMessage());
+                if (error instanceof QueuedException) change(job, State.QUEUED, error.getMessage(), job.item.received(), job.item.total(), null);
+                else if (error instanceof OwnerStoppedException) stopByOwner(job, error.getMessage());
                 else if (networkFailure(error)) waiting(job);
                 else change(job, State.FAILED, error.getMessage() == null ? "Download failed" : error.getMessage(), job.item.received(), job.item.total(), null);
             }

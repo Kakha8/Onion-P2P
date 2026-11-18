@@ -57,6 +57,16 @@ class UploadsPaneTest {
                 assertTrue(pane[0].lookupAll(".label").stream()
                         .map(node -> (Label) node).anyMatch(label -> "Cancelled by recipient".equals(label.getText()) && label.getGraphic() != null));
             });
+            tracker.begin("one", "share", "file", "one.bin", 1000, 0, new Object());
+            tracker.begin("two", "share", "file", "two.bin", 1000, 0, new Object());
+            tracker.begin("three", "share", "file", "three.bin", 1000, 0, new Object());
+            tracker.begin("four", "share", "file", "four.bin", 1000, 0, new Object());
+            fx(() -> {
+                assertEquals(3, pane[0].activeCountProperty().get());
+                var labels = pane[0].lookupAll(".label").stream().map(node -> (Label) node).toList();
+                assertTrue(labels.stream().anyMatch(label -> label.isVisible() && label.getText().contains("3-recipient limit reached")));
+                assertTrue(labels.stream().anyMatch(label -> label.getText().equals("Queued · position 1") && label.getGraphic() != null));
+            });
         }
     }
 }

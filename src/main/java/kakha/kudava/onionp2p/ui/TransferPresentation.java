@@ -12,6 +12,13 @@ final class TransferPresentation {
         scroll.setPrefHeight(Math.min(220, Math.max(48, rows.prefHeight(Math.max(100, width - 20)))));
     }
     private static final PseudoClass CANCELLED = PseudoClass.getPseudoClass("cancelled");
+    static void queued(Region row, Label status, boolean queued) {
+        row.pseudoClassStateChanged(PseudoClass.getPseudoClass("queued"), queued);
+        if (queued) {
+            var icon = new SVGPath(); icon.setContent("M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M12 7v5l3 2");
+            icon.getStyleClass().add("transfer-queued-glyph"); status.setGraphic(icon);
+        }
+    }
     static void cancelled(Region row, Label status, boolean cancelled) {
         row.pseudoClassStateChanged(CANCELLED, cancelled);
         if (cancelled) {

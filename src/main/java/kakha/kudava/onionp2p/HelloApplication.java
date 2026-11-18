@@ -22,7 +22,7 @@ import java.io.IOException;
 public class HelloApplication extends Application {
     private static final double MESSENGER_WIDTH = 860;
     private static final double MESSENGER_HEIGHT = 600;
-    private final OnionServer onionServer = new OnionServer();
+    private volatile OnionServer onionServer;
     private ContactManager contacts;
 
     @Override
@@ -40,7 +40,7 @@ public class HelloApplication extends Application {
         windowOutline.setLayoutX(0.6);
         windowOutline.setLayoutY(0.6);
         StackPane windowFrame = new StackPane(root, windowOutline);
-        Scene scene = new Scene(windowFrame, 410, 474, Color.TRANSPARENT);
+        Scene scene = new Scene(windowFrame, 410, 510, Color.TRANSPARENT);
         Rectangle windowClip = new Rectangle();
         windowClip.widthProperty().bind(scene.widthProperty());
         windowClip.heightProperty().bind(scene.heightProperty());
@@ -73,6 +73,7 @@ public class HelloApplication extends Application {
     }
 
     private void startServices(HelloController controller) {
+        onionServer = new OnionServer();
         controller.torStarting();
         try {
             contacts = new ContactManager(AppData.directory(), onionServer, controller::contactEvent);
@@ -100,7 +101,7 @@ public class HelloApplication extends Application {
     @Override
     public void stop() {
         if (contacts != null) contacts.close();
-        onionServer.close();
+        if (onionServer != null) onionServer.close();
     }
 
     public static void main(String[] args) {
