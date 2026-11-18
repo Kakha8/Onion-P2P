@@ -102,7 +102,13 @@ class ShareSessionTest {
                     // Enable the readiness gate; no SOCKS service is listening
                     // here, so presence must reuse the supplied socket too.
                     tor.socksReady().complete(1);
-                    assertTrue(manager.isOnline(b));
+                    synchronized (manager.downloads().queue()) {
+                        var presence = CompletableFuture.supplyAsync(() -> {
+                            try { return manager.isOnline(b); }
+                            catch (Exception error) { throw new CompletionException(error); }
+                        });
+                        assertTrue(presence.get(1, TimeUnit.SECONDS), "Download bookkeeping blocked presence");
+                    }
                     assertEquals(3, messages.all(a).size());
                 } finally { release.countDown(); }
             } finally { receiver.close(); serving.get(5, TimeUnit.SECONDS); }

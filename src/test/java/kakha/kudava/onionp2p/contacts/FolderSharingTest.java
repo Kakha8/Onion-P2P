@@ -193,13 +193,18 @@ class FolderSharingTest {
         }
         Session(SharedDriveStore receiver, String contact, boolean receiverIsOwner,
                 kakha.kudava.onionp2p.drive.UploadTracker uploads, java.util.function.Consumer<ContactMessaging.DownloadStop> stopped) throws Exception {
+            this(receiver, contact, receiverIsOwner, uploads, stopped, null);
+        }
+        Session(SharedDriveStore receiver, String contact, boolean receiverIsOwner,
+                kakha.kudava.onionp2p.drive.UploadTracker uploads, java.util.function.Consumer<ContactMessaging.DownloadStop> stopped,
+                Runnable online) throws Exception {
             listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
             client = new Socket(InetAddress.getLoopbackAddress(), listener.getLocalPort()); client.setSoTimeout(5000);
             server = listener.accept();
             receiving = CompletableFuture.runAsync(() -> {
                 try {
                     assertEquals(ContactMessaging.MAGIC, new DataInputStream(server.getInputStream()).readInt());
-                    ContactMessaging.receive(server, material(receiverIsOwner), null, receiver, contact, true, null, null, uploads, stopped);
+                    ContactMessaging.receive(server, material(receiverIsOwner), null, receiver, contact, true, online, null, uploads, stopped);
                 } catch (Exception error) {
                     if (!server.isClosed()) throw new CompletionException(error);
                 }
@@ -207,6 +212,29 @@ class FolderSharingTest {
         }
         public void close() throws Exception {
             server.close(); client.close(); listener.close(); receiving.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test @Timeout(15)
+    void presenceIsAcknowledgedBeforeSlowOnlineBookkeeping() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        Runnable slowOnline = () -> {
+            entered.countDown();
+            try { release.await(); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+        };
+        var store = new SharedDriveStore(temp.resolve("slow-online"));
+        try (var session = new Session(store, "owner", false, null, ignored -> {}, slowOnline)) {
+            try {
+                var ping = CompletableFuture.runAsync(() -> {
+                    try { ContactMessaging.ping(session.client, material(true), true); }
+                    catch (Exception error) { throw new CompletionException(error); }
+                });
+                assertTrue(entered.await(2, TimeUnit.SECONDS));
+                ping.get(1, TimeUnit.SECONDS);
+            } finally { release.countDown(); }
+            ContactMessaging.ping(session.client, material(true), false);
         }
     }
 

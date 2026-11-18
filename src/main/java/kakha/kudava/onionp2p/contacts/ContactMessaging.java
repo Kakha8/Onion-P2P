@@ -669,8 +669,8 @@ public final class ContactMessaging {
                 if (!MessageDigest.isEqual(plaintext, "PING".getBytes(StandardCharsets.US_ASCII)))
                     throw new GeneralSecurityException("Invalid connection check.");
             } finally { Arrays.fill(plaintext, (byte) 0); }
-            if (onlineSignal != null) onlineSignal.run();
             awaitReceiptSend(output, material, nonce, aad);
+            if (onlineSignal != null) onlineSignal.run();
             return;
         }
         if (type == 3) {

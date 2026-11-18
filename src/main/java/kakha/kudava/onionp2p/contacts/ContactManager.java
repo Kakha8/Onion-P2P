@@ -43,6 +43,7 @@ public final class ContactManager implements AutoCloseable {
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
     private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncDirty = ConcurrentHashMap.newKeySet();
+    private final Set<String> onlineUpdates = ConcurrentHashMap.newKeySet();
     private final ConcurrentMap<String, Long> lastDriveSync = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
         Thread thread = new Thread(r, "contact-retry"); thread.setDaemon(true); return thread;
@@ -321,10 +322,17 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private void signalContactOnline(String link) {
-        downloads.queue().wake(link);
         try { presenceListener.accept(link); }
         catch (RuntimeException e) { System.err.println("Presence update failed: " + safeMessage(e)); }
-        requestDriveSync(link, false);
+        // The receive loop must be free to acknowledge the next request.
+        // Database and download-queue locks belong on background workers.
+        if (closed || !onlineUpdates.add(link)) return;
+        try {
+            driveShareRetries.execute(() -> {
+                try { downloads.queue().wake(link); requestDriveSync(link, false); }
+                finally { onlineUpdates.remove(link); }
+            });
+        } catch (RejectedExecutionException ignored) { onlineUpdates.remove(link); }
     }
 
     private void requestDriveSync(String link, boolean changed) {
