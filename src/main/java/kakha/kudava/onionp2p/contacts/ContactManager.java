@@ -499,6 +499,13 @@ public final class ContactManager implements AutoCloseable {
                 session.firstMessage = false;
                 session.lastUsed = System.nanoTime();
                 return message;
+            } catch (DownloadQueue.QueuedException | DownloadQueue.OwnerStoppedException outcome) {
+                // These are fully authenticated and acknowledged peer responses,
+                // not a broken transport. Queue polling must keep the same stream,
+                // which may also be carrying text and presence messages.
+                session.firstMessage = false;
+                session.lastUsed = System.nanoTime();
+                throw outcome;
             } catch (Exception e) {
                 connections.remove(session.socket);
                 try { session.socket.close(); } catch (Exception ignored) {}
