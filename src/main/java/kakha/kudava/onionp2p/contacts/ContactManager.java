@@ -31,6 +31,7 @@ public final class ContactManager implements AutoCloseable {
     private final Consumer<Event> events;
     private volatile Consumer<String> presenceListener = ignored -> {};
     private volatile Consumer<String> driveShareListener = ignored -> {};
+    private volatile Runnable contactsChanged = () -> {};
     private final ConcurrentMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MessageSession> messageSessions = new ConcurrentHashMap<>();
     // Presence, text and share metadata reuse the same authenticated stream.
@@ -69,6 +70,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     public List<ContactStore.Contact> contacts() throws Exception { return store.all(); }
+    public void setContactsChangedListener(Runnable listener) { contactsChanged = listener == null ? () -> {} : listener; }
     public void setPresenceListener(Consumer<String> listener) {
         presenceListener = listener == null ? ignored -> {} : listener;
     }
@@ -668,6 +670,8 @@ public final class ContactManager implements AutoCloseable {
         if (closed || entry.stopped) throw new IllegalStateException("Contact service is stopped.");
         store.acknowledge(entry.link, entry.material.addresses().remote(), entry.material.remoteUsername());
         entry.saved = true;
+        try { contactsChanged.run(); }
+        catch (RuntimeException error) { System.err.println("Contact list update failed: " + safeMessage(error)); }
         event(entry.link, "Acknowledged—contact saved locally.");
         System.out.println("Contact acknowledged and saved: " + entry.material.addresses().remote());
     }

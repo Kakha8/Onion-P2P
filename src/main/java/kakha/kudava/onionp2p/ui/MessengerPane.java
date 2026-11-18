@@ -217,9 +217,11 @@ final class MessengerPane extends BorderPane {
     private final UploadsPane uploadsPane;
 
     private boolean loaded;
+    private long contactLoadRevision;
 
     MessengerPane(ContactManager manager, String username, Runnable onAddContact) {
         this.manager = manager;
+        manager.setContactsChangedListener(() -> Platform.runLater(this::refreshContacts));
         downloadsPane = new DownloadsPane(manager.downloads().queue(), () -> {
             if (refreshSharedDrive != null) refreshSharedDrive.run();
         });
@@ -733,11 +735,14 @@ final class MessengerPane extends BorderPane {
         });
     }
 
+    void refreshContacts() { loadContacts(); }
     private void loadContacts() {
+        long revision = ++contactLoadRevision;
         Thread.ofPlatform().daemon().name("messenger-contacts").start(() -> {
             try {
                 List<ContactStore.Contact> contacts = manager.contacts();
                 Platform.runLater(() -> {
+                    if (revision != contactLoadRevision) return;
                     ContactStore.Contact previous = selected;
                     allContacts.setAll(contacts);
                     if (previous != null) {
@@ -746,11 +751,11 @@ final class MessengerPane extends BorderPane {
                     }
                     if (contactList.getSelectionModel().getSelectedItem() == null && !contacts.isEmpty())
                         contactList.getSelectionModel().selectFirst();
-                    if (contacts.isEmpty()) status.setText("Pair with a contact first, then reopen Messenger.");
+                    if (contacts.isEmpty()) status.setText("Add a contact to start chatting.");
                     checkContactsPresence(contacts);
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> status.setText("Could not load contacts: " + safe(e)));
+                Platform.runLater(() -> { if (revision == contactLoadRevision) status.setText("Could not load contacts: " + safe(e)); });
             }
         });
     }

@@ -61,6 +61,7 @@ public class HelloController {
     @FXML private VBox appPane;
     private final SVGPath passwordEye = new SVGPath();
     private volatile ContactManager manager;
+    private MessengerPane messengerPane;
     private String selectedLink;
     private LocalAccounts accounts;
     private boolean hasLocalAccounts;
@@ -321,9 +322,9 @@ public class HelloController {
 
     public void setManager(ContactManager manager) {
         this.manager = manager;
-        var pane = new MessengerPane(manager, authenticatedUsername, this::showAddContactPane);
-        messengerHost.getChildren().setAll(pane);
-        VBox.setVgrow(pane, javafx.scene.layout.Priority.ALWAYS);
+        messengerPane = new MessengerPane(manager, authenticatedUsername, this::showAddContactPane);
+        messengerHost.getChildren().setAll(messengerPane);
+        VBox.setVgrow(messengerPane, javafx.scene.layout.Priority.ALWAYS);
     }
 
     private void showAddContactPane() {
@@ -339,6 +340,7 @@ public class HelloController {
         addContactPane.setManaged(false);
         messengerHost.setVisible(true);
         messengerHost.setManaged(true);
+        if (messengerPane != null) messengerPane.refreshContacts();
     }
 
     @FXML
