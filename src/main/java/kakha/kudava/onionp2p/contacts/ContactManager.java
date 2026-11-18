@@ -41,16 +41,16 @@ public final class ContactManager implements AutoCloseable {
     private final ConcurrentMap<String, Long> shareRetryStarted = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> shareRetryLast = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
-    private final Set<String> driveShareChecks = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncDirty = ConcurrentHashMap.newKeySet();
     private final ConcurrentMap<String, Long> lastDriveSync = new ConcurrentHashMap<>();
     private final ScheduledExecutorService retries = Executors.newScheduledThreadPool(2, r -> {
         Thread thread = new Thread(r, "contact-retry"); thread.setDaemon(true); return thread;
     });
-    private final ExecutorService driveShareRetries = Executors.newFixedThreadPool(4, r -> {
-        Thread thread = new Thread(r, "drive-share-retry"); thread.setDaemon(true); return thread;
-    });
+    // Contact work blocks on network replies and per-contact locks. An offline
+    // contact must not occupy a shared worker needed by a reachable contact.
+    private final ExecutorService driveShareRetries = Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("drive-share-retry-", 0).factory());
     private final ScheduledExecutorService driveShareRetryScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "drive-share-scheduler"); thread.setDaemon(true); return thread;
     });
@@ -129,6 +129,13 @@ public final class ContactManager implements AutoCloseable {
     }
     private static boolean established(MessageSession session) {
         return session != null && session.socket != null && !session.socket.isClosed() && !session.firstMessage;
+    }
+
+    private ConcurrentMap<String, MessageSession> controlSessions(String link) {
+        String canonical = canonicalLink(link);
+        if (established(messageSessions.get(canonical))) return messageSessions;
+        if (established(transferSessions.get(canonical))) return transferSessions;
+        return shareSessions;
     }
     public void markSharedDownload(String id, Path path) throws Exception { sharedDriveStore.markDownloaded(id, path); }
     public boolean isTorReady() { return tor.socksReady().isDone() && !tor.socksReady().isCompletedExceptionally(); }
@@ -238,7 +245,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private void sendDriveShareOnce(Pending entry, String canonical, String shareId, Path file) throws Exception {
-        withSession(shareSessions, canonical, ignored -> {}, () -> false, 1, (contact, session, link) -> {
+        withSession(controlSessions(canonical), canonical, ignored -> {}, () -> false, 1, (contact, session, link) -> {
             ContactMessaging.sendDriveShare(session.socket, contact.material, sharedDriveStore, link, shareId, file,
                     session.firstMessage, ignored -> {}, () -> false);
             return null;
@@ -334,7 +341,7 @@ public final class ContactManager implements AutoCloseable {
                 try {
                     deliverPendingDriveShares(link);
                     driveSyncDirty.remove(link);
-                    withSession(shareSessions, link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
+                    withSession(controlSessions(link), link, ignored -> {}, () -> false, 1, (entry, session, canonical) -> {
                         ContactMessaging.syncDriveShares(session.socket, entry.material, sharedDriveStore, canonical, session.firstMessage);
                         return null;
                     });
@@ -362,21 +369,10 @@ public final class ContactManager implements AutoCloseable {
                 long started = shareRetryStarted.computeIfAbsent(link, ignored -> now);
                 long delay = now - started < TimeUnit.MINUTES.toMillis(2) ? 1000 : 15000;
                 if (now - shareRetryLast.getOrDefault(link, 0L) < delay) continue;
-                if (!driveShareChecks.add(link)) continue;
-                try {
-                    driveShareRetries.execute(() -> {
-                        try {
-                            // Delivery itself establishes an authenticated connection. A separate
-                            // presence ping doubles the Tor setup delay for queued shares.
-                            deliverPendingDriveShares(link);
-                        } catch (Exception ignored) {
-                            // Offline contacts are expected; keep their queue for the next sweep.
-                        } finally {
-                            shareRetryLast.put(link, System.currentTimeMillis());
-                            driveShareChecks.remove(link);
-                        }
-                    });
-                } catch (RejectedExecutionException ignored) { driveShareChecks.remove(link); return; }
+                // Coalesce online signals, reconciliation and timer retries for
+                // each contact rather than stacking workers behind its lock.
+                shareRetryLast.put(link, now);
+                requestDriveSync(link, false);
             }
         } catch (Exception error) {
             if (!closed) System.err.println("Could not check queued Drive shares: " + safeMessage(error));
@@ -390,7 +386,7 @@ public final class ContactManager implements AutoCloseable {
         // probe can be sent as soon as Tor is ready, even while that listener is publishing.
         if (entry == null || !entry.saved || entry.stopped) return false;
         if (!isTorReady()) return false;
-        withSession(shareSessions, canonical, ignored -> {}, () -> false, 1, (contact, session, ignored) -> {
+        withSession(controlSessions(canonical), canonical, ignored -> {}, () -> false, 1, (contact, session, ignored) -> {
             ContactMessaging.ping(session.socket, contact.material, session.firstMessage);
             return null;
         });
@@ -454,7 +450,7 @@ public final class ContactManager implements AutoCloseable {
     private MessageStore.Message withMessageSession(String link, java.util.function.Consumer<String> status,
                                                     java.util.function.BooleanSupplier cancelled, int connectAttempts,
                                                     SessionSend action) throws Exception {
-        return withSession(messageSessions, link, status, cancelled, connectAttempts, action);
+        return withSession(controlSessions(link), link, status, cancelled, connectAttempts, action);
     }
 
     private MessageStore.Message withSession(ConcurrentMap<String, MessageSession> sessions, String link,
@@ -465,7 +461,10 @@ public final class ContactManager implements AutoCloseable {
         Pending entry = pending.get(canonical);
         if (entry == null || !entry.saved) throw new IllegalStateException("This contact is not ready. Keep both apps open until pairing is acknowledged.");
         MessageSession session = sessions.computeIfAbsent(canonical, ignored -> new MessageSession());
-        synchronized (session) {
+        // Chunk loops and presence probes must not repeatedly overtake a text
+        // or share update already waiting for this authenticated stream.
+        session.exchange.lockInterruptibly();
+        try {
             if (closed) throw new IllegalStateException("Contact service is stopped.");
             checkCancelled(cancelled);
             if (session.socket != null && !session.socket.isClosed() && !session.firstMessage
@@ -499,7 +498,7 @@ public final class ContactManager implements AutoCloseable {
                 session.firstMessage = true;
                 throw e;
             }
-        }
+        } finally { session.exchange.unlock(); }
     }
 
     private Socket connectWithRetry(MessageSession session, int socksPort, String onion, java.util.function.Consumer<String> status,
@@ -722,6 +721,7 @@ public final class ContactManager implements AutoCloseable {
     }
 
     private static final class MessageSession {
+        final java.util.concurrent.locks.ReentrantLock exchange = new java.util.concurrent.locks.ReentrantLock(true);
         volatile Socket socket;
         volatile boolean firstMessage = true;
         long lastUsed;

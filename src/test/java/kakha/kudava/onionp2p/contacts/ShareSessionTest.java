@@ -18,7 +18,7 @@ class ShareSessionTest {
     @TempDir Path temp;
 
     @Test @Timeout(20)
-    void textRemoveAndReAddUseTheSameWorkingConnection() throws Exception {
+    void textRemoveAndReAddUseWorkingConnectionsWithoutRetryWorkerStarvation() throws Exception {
         Path alice = temp.resolve("alice"), bob = temp.resolve("bob");
         String a = ContactLink.loadOrCreate(alice, "Alice"), b = ContactLink.loadOrCreate(bob, "Bob");
         try (var material = ContactRendezvous.derive(bob, a);
@@ -69,6 +69,42 @@ class ShareSessionTest {
                 manager.notifyDownloadCancelled(b, remoteId, "", false);
                 manager.send(b, "Still working");
                 assertEquals(2, messages.all(a).size());
+
+                // Four slow contacts must not hold up a fifth reachable contact.
+                // Its only established stream is a transfer stream: don't start
+                // a new Tor connection just to announce a small share offer.
+                var workersField = ContactManager.class.getDeclaredField("driveShareRetries");
+                workersField.setAccessible(true);
+                var workers = (ExecutorService) workersField.get(manager);
+                var blocked = new CountDownLatch(4);
+                var release = new CountDownLatch(1);
+                try {
+                    for (int i = 0; i < 4; i++) workers.submit(() -> {
+                        blocked.countDown();
+                        try { release.await(); }
+                        catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+                    });
+                    assertTrue(blocked.await(2, TimeUnit.SECONDS));
+                    var transfersField = ContactManager.class.getDeclaredField("transferSessions");
+                    transfersField.setAccessible(true);
+                    ((Map<String, Object>) transfersField.get(manager)).put(b, sessions.remove(b));
+                    Path next = Files.writeString(alice.resolve("pending.txt"), "Deliver without waiting for other contacts");
+                    var outgoing = new SharedDriveStore(alice);
+                    outgoing.queueShares(b, List.of(next));
+                    var sync = ContactManager.class.getDeclaredMethod("requestDriveSync", String.class, boolean.class);
+                    sync.setAccessible(true);
+                    sync.invoke(manager, b, true);
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+                    while (!outgoing.pendingShares(b).isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+                    assertTrue(outgoing.pendingShares(b).isEmpty(), "Reachable contact was blocked by other contacts");
+                    assertEquals("pending.txt", offers.all().getFirst().name());
+                    manager.send(b, "Text also uses the working transfer stream");
+                    // Enable the readiness gate; no SOCKS service is listening
+                    // here, so presence must reuse the supplied socket too.
+                    tor.socksReady().complete(1);
+                    assertTrue(manager.isOnline(b));
+                    assertEquals(3, messages.all(a).size());
+                } finally { release.countDown(); }
             } finally { receiver.close(); serving.get(5, TimeUnit.SECONDS); }
         }
     }
