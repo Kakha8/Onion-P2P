@@ -168,6 +168,7 @@ final class MessengerPane extends BorderPane {
     });
     private final java.util.Set<String> checkingPresence = ConcurrentHashMap.newKeySet();
     private final Map<String, Presence> presence = new ConcurrentHashMap<>();
+    private final Map<String, List<Label>> sharedOwnerIndicators = new HashMap<>();
     private final Map<String, ActiveTransfer> activeTransfers = new ConcurrentHashMap<>();
     private final Map<String, ActiveOutgoingMessage> activeOutgoingMessages = new ConcurrentHashMap<>();
     private final java.util.Set<String> readReceiptsSent = ConcurrentHashMap.newKeySet();
@@ -784,7 +785,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private void checkContactsPresence() {
-        checkContactsPresence(List.copyOf(contactList.getItems()));
+        checkContactsPresence(List.copyOf(allContacts));
     }
 
     private void checkContactsPresence(List<ContactStore.Contact> contacts) {
@@ -813,6 +814,7 @@ final class MessengerPane extends BorderPane {
                 boolean stateChanged = oldState == null || oldState.checkedAt() == 0 || oldState.online() != result;
                 if (stateChanged) Platform.runLater(() -> {
                     contactList.refresh();
+                    refreshSharedOwnerPresence(contact.link());
                     if (selected != null && selected.link().equals(contact.link())) updateConversationHeader();
                 });
             });
@@ -824,12 +826,29 @@ final class MessengerPane extends BorderPane {
         presence.compute(link, (ignored, old) -> new Presence(true, now));
         Platform.runLater(() -> {
             contactList.refresh();
+            refreshSharedOwnerPresence(link);
             if (selected != null && selected.link().equals(link)) updateConversationHeader();
         });
     }
 
     private record Presence(boolean online, long checkedAt) {
         static Presence checking() { return new Presence(false, 0); }
+    }
+
+    private void refreshSharedOwnerPresence(String link) {
+        for (Label indicator : sharedOwnerIndicators.getOrDefault(link, List.of())) updateSharedOwnerPresence(indicator, link);
+    }
+
+    private void updateSharedOwnerPresence(Label indicator, String link) {
+        Presence state = presence.getOrDefault(link, Presence.checking());
+        String kind = state.online() ? "online" : state.checkedAt() == 0 ? "checking" : "offline";
+        String description = state.online() ? "Online" : state.checkedAt() == 0 ? "Checking connection…" : "Offline or unreachable";
+        indicator.getStyleClass().removeAll("online", "offline", "checking");
+        indicator.getStyleClass().add(kind);
+        indicator.setText(kind.equals("checking") ? "○" : "●");
+        String message = indicator.getProperties().get("ownerName") + " · " + description;
+        indicator.setAccessibleText(message);
+        indicator.setTooltip(new Tooltip(message));
     }
 
     private void updateConversationHeader() {
@@ -2046,6 +2065,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private void renderDrivePage(VBox content, boolean myFiles, Path currentDirectory) {
+        sharedOwnerIndicators.clear();
         content.getChildren().clear();
         SVGPath headingGlyph = myFiles ? folderGlyph() : sharedPeopleGlyph();
         Label title = new Label(myFiles ? "My files" : "Shared with me", headingGlyph);
@@ -2378,8 +2398,25 @@ final class MessengerPane extends BorderPane {
         Label type = new Label(file.folder() ? "Folder" : fileTypeLabel(Path.of(file.name())));
         Label size = new Label(file.folder() ? "—" : formatBytes(file.size()));
         Label sharedBy = new Label(sender);
-        Label state = new Label(file.downloaded() ? "Downloaded" : "Available");
-        if (!file.downloaded()) state.getStyleClass().add("drive-share-available");
+        sharedBy.setMinWidth(0);
+        sharedBy.setTooltip(new Tooltip(sender));
+        Label ownerPresence = new Label();
+        ownerPresence.getStyleClass().add("drive-owner-presence");
+        ownerPresence.getProperties().put("ownerName", sender);
+        ownerPresence.setMinWidth(10); ownerPresence.setPrefWidth(10); ownerPresence.setMaxWidth(10);
+        ownerPresence.setAlignment(Pos.CENTER);
+        sharedOwnerIndicators.computeIfAbsent(file.contactLink(), ignored -> new ArrayList<>()).add(ownerPresence);
+        updateSharedOwnerPresence(ownerPresence, file.contactLink());
+        HBox ownerCell = new HBox(6, ownerPresence, sharedBy);
+        ownerCell.setAlignment(Pos.CENTER); ownerCell.setMinWidth(0); ownerCell.setMaxWidth(Double.MAX_VALUE);
+        boolean downloaded = file.downloaded();
+        Label state = new Label(null, driveMenuGlyph(downloaded
+                ? "M8 12l3 3 5-6 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z"
+                : "M7 17H6a4 4 0 0 1-.8-7.9A7 7 0 0 1 18.5 8a5 5 0 0 1 .5 9 M12 12v9 M8 17l4 4 4-4"));
+        String statusDescription = downloaded ? "Downloaded" : file.folder() ? "Shared folder · Available to browse and download" : "Available to download";
+        state.getStyleClass().addAll("drive-share-status", downloaded ? "drive-share-downloaded" : "drive-share-available");
+        state.setAccessibleText(statusDescription);
+        state.setTooltip(new Tooltip(statusDescription));
         for (Label label : List.of(type, size, sharedBy, state)) {
             label.getStyleClass().add("drive-table-cell");
             label.setMaxWidth(Double.MAX_VALUE);
@@ -2396,7 +2433,7 @@ final class MessengerPane extends BorderPane {
         GridPane cells = new GridPane();
         cells.setAlignment(Pos.CENTER);
         cells.getColumnConstraints().setAll(sharedDriveColumns());
-        cells.add(nameCell, 0, 0); cells.add(type, 1, 0); cells.add(size, 2, 0); cells.add(sharedBy, 3, 0); cells.add(state, 4, 0); cells.add(more, 5, 0);
+        cells.add(nameCell, 0, 0); cells.add(type, 1, 0); cells.add(size, 2, 0); cells.add(ownerCell, 3, 0); cells.add(state, 4, 0); cells.add(more, 5, 0);
         GridPane.setHalignment(more, javafx.geometry.HPos.CENTER);
         HBox row = new HBox(cells);
         HBox.setHgrow(cells, Priority.ALWAYS);
