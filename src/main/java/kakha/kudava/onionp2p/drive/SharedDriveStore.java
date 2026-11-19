@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /** Local metadata for Drive shares. Incoming rows are offers until the user downloads them. */
@@ -93,6 +95,8 @@ public final class SharedDriveStore {
     }
 
     public synchronized void publish(String id, String recipientLink, String name, Path source, long size, long sharedAt) throws SQLException {
+        if (Files.isSymbolicLink(source) || !(size == -1 ? Files.isDirectory(source) : Files.isRegularFile(source)))
+            throw new SQLException("The shared item is no longer available.");
         try (var c = connect(); var s = c.prepareStatement("INSERT OR REPLACE INTO drive_share_offers VALUES(?,?,?,?,?,?)")) {
             s.setString(1, id); s.setString(2, recipientLink); s.setString(3, name);
             s.setString(4, source.toAbsolutePath().normalize().toString()); s.setLong(5, size); s.setLong(6, sharedAt); s.executeUpdate();
@@ -133,6 +137,8 @@ public final class SharedDriveStore {
             c.setAutoCommit(false);
             try (var s = c.prepareStatement("INSERT OR IGNORE INTO pending_drive_shares(contact_link,file_path,queued_at,share_id) VALUES(?,?,?,?)")) {
                 for (Path file : files) {
+                    if (Files.isSymbolicLink(file) || !Files.isRegularFile(file) && !Files.isDirectory(file))
+                        throw new SQLException("The item selected for sharing is no longer available.");
                     s.setString(1, contactLink);
                     s.setString(2, file.toAbsolutePath().normalize().toString());
                     s.setLong(3, System.currentTimeMillis());
@@ -185,6 +191,63 @@ public final class SharedDriveStore {
         try (var c = connect(); var s = c.prepareStatement("DELETE FROM pending_drive_shares WHERE file_path=? AND contact_link=?")) {
             s.setString(1, file.toAbsolutePath().normalize().toString()); s.setString(2, contactLink); return s.executeUpdate();
         }
+    }
+
+    /** Contacts whose access is affected by deleting this item, including shared parent folders. */
+    public synchronized int deletionShareCount(Path file) throws SQLException {
+        Path deleted = file.toAbsolutePath().normalize();
+        Set<String> contacts = new HashSet<>();
+        try (var c = connect(); var s = c.createStatement(); var rows = s.executeQuery(
+                "SELECT contact_link,file_path,file_size=-1 AS folder FROM drive_share_offers UNION ALL "
+                        + "SELECT contact_link,file_path,0 AS folder FROM pending_drive_shares")) {
+            while (rows.next()) {
+                Path path = Path.of(rows.getString(2)).toAbsolutePath().normalize();
+                boolean folder = rows.getBoolean(3) || Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if (path.startsWith(deleted) || folder && deleted.startsWith(path)) contacts.add(rows.getString(1));
+            }
+        }
+        return contacts.size();
+    }
+
+    /** Revoke deleted roots and their separately shared descendants in one transaction. */
+    public synchronized Set<String> removeDeletedShares(Path file) throws SQLException {
+        Path deleted = file.toAbsolutePath().normalize();
+        Set<String> contacts = new HashSet<>();
+        try (var c = connect()) {
+            c.setAutoCommit(false);
+            try {
+                for (String table : List.of("drive_share_offers", "pending_drive_shares")) {
+                    var removed = new ArrayList<String[]>();
+                    try (var s = c.createStatement(); var rows = s.executeQuery("SELECT contact_link,file_path FROM " + table)) {
+                        while (rows.next()) {
+                            Path path = Path.of(rows.getString(2)).toAbsolutePath().normalize();
+                            if (path.startsWith(deleted)) removed.add(new String[]{rows.getString(1), rows.getString(2)});
+                        }
+                    }
+                    try (var s = c.prepareStatement("DELETE FROM " + table + " WHERE contact_link=? AND file_path=?")) {
+                        for (String[] row : removed) {
+                            contacts.add(row[0]); s.setString(1, row[0]); s.setString(2, row[1]); s.addBatch();
+                        }
+                        s.executeBatch();
+                    }
+                }
+                c.commit();
+            } catch (SQLException error) { c.rollback(); throw error; }
+        }
+        return Set.copyOf(contacts);
+    }
+
+    /** Unknown/inaccessible paths are retained; only confirmed missing sources qualify. */
+    public synchronized Set<Path> missingSharedPaths() throws SQLException {
+        Set<Path> missing = new HashSet<>();
+        try (var c = connect(); var s = c.createStatement(); var rows = s.executeQuery(
+                "SELECT file_path FROM drive_share_offers UNION SELECT file_path FROM pending_drive_shares")) {
+            while (rows.next()) {
+                Path path = Path.of(rows.getString(1)).toAbsolutePath().normalize();
+                if (Files.notExists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) missing.add(path);
+            }
+        }
+        return Set.copyOf(missing);
     }
 
     public synchronized Map<String, ShareCount> shareCountsForFiles(List<Path> files) throws SQLException {

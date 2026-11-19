@@ -40,6 +40,8 @@ public final class ContactManager implements AutoCloseable {
     private final ConcurrentMap<String, String> shareDeliveryErrors = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> shareRetryStarted = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> shareRetryLast = new ConcurrentHashMap<>();
+    private final Map<Path, Long> missingSharedSources = new HashMap<>();
+    private long lastMissingSourceCheck;
     private final ConcurrentMap<String, Object> driveShareLocks = new ConcurrentHashMap<>();
     private final Set<String> driveSyncInFlight = ConcurrentHashMap.newKeySet();
     private final Set<String> driveSyncDirty = ConcurrentHashMap.newKeySet();
@@ -154,6 +156,18 @@ public final class ContactManager implements AutoCloseable {
         sharedDriveStore.removePendingShares(file, canonical);
         requestDriveSync(canonical, true);
         return removed;
+    }
+
+    public int driveDeletionShareCount(Path file) throws Exception {
+        return sharedDriveStore.deletionShareCount(file);
+    }
+
+    /** Called after a successful owner-side delete; revocation persists even while recipients are offline. */
+    public void driveEntryDeleted(Path file) throws Exception {
+        for (String link : sharedDriveStore.removeDeletedShares(file)) {
+            requestDriveSync(link, true);
+            signalDriveShare(link);
+        }
     }
 
     public boolean isDriveFileSharedWith(Path file, String contactLink) throws Exception {
@@ -369,9 +383,13 @@ public final class ContactManager implements AutoCloseable {
 
     /** Retry offline shares in the background, even while the user is viewing Drive. */
     private void retryPendingDriveShares() {
-        if (closed || !tor.socksReady().isDone()) return;
+        if (closed) return;
         try {
-            for (String link : sharedDriveStore.pendingShareContacts()) {
+            pruneDeletedDriveSources();
+            if (!isTorReady()) return;
+            Set<String> contacts = new HashSet<>(sharedDriveStore.pendingShareContacts());
+            contacts.addAll(driveSyncDirty);
+            for (String link : contacts) {
                 if (closed) return;
                 long now = System.currentTimeMillis();
                 long started = shareRetryStarted.computeIfAbsent(link, ignored -> now);
@@ -384,6 +402,23 @@ public final class ContactManager implements AutoCloseable {
             }
         } catch (Exception error) {
             if (!closed) System.err.println("Could not check queued Drive shares: " + safeMessage(error));
+        }
+    }
+
+    private void pruneDeletedDriveSources() throws Exception {
+        long now = System.currentTimeMillis();
+        if (now - lastMissingSourceCheck < 5000) return;
+        lastMissingSourceCheck = now;
+        Set<Path> missing = sharedDriveStore.missingSharedPaths();
+        missingSharedSources.keySet().retainAll(missing);
+        for (Path path : missing) {
+            Long firstMissing = missingSharedSources.putIfAbsent(path, now);
+            // A rename moves the file before updating share metadata. Recheck
+            // on the next sweep so a short transition cannot revoke that share.
+            if (firstMissing != null && now - firstMissing >= 5000) {
+                driveEntryDeleted(path);
+                missingSharedSources.remove(path);
+            }
         }
     }
 
