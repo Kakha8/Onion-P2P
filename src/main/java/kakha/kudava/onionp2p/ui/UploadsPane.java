@@ -21,6 +21,17 @@ final class UploadsPane extends VBox {
     private final Function<String, String> contactName;
     private final java.util.function.Consumer<String> cancelUpload;
     private boolean minimized;
+    private boolean embedded;
+
+    UploadsPane embedded() {
+        embedded = true;
+        scroll.setContent(null);
+        getStyleClass().setAll("activity-section");
+        var heading = new VBox(2, title, summary); heading.getStyleClass().add("activity-section-header");
+        getChildren().setAll(heading, limitNotice, rows);
+        setPrefWidth(USE_COMPUTED_SIZE); setMaxWidth(Double.MAX_VALUE);
+        reveal(); return this;
+    }
 
     UploadsPane(UploadTracker tracker, Function<String, String> contactName) {
         this(tracker, contactName, ignored -> {});
@@ -104,7 +115,7 @@ final class UploadsPane extends VBox {
                     ? TransferPresentation.speedAndEta(item.sent(), item.total(), item.speed()) : "0 B/s · —");
         }
         views.entrySet().removeIf(entry -> { if (keys.contains(entry.getKey())) return false; rows.getChildren().remove(entry.getValue()); return true; });
-        TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
+        if (!embedded) TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
     }
     private static Button icon(String path, String label) {
         Button button = new Button(null, glyph(path)); button.getStyleClass().add("download-icon-button");

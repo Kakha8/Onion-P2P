@@ -1,0 +1,77 @@
+package kakha.kudava.onionp2p.ui;
+
+import javafx.beans.property.*;
+import javafx.geometry.Pos;
+import javafx.scene.control.*;
+import javafx.scene.layout.*;
+import javafx.scene.shape.SVGPath;
+
+/** One floating activity list with type filters and the existing transfer controls. */
+final class DriveActivityPane extends VBox {
+    enum Filter { ALL, ADDING, UPLOADING, DOWNLOADING }
+    private final ReadOnlyIntegerWrapper active = new ReadOnlyIntegerWrapper();
+    private final VBox sections;
+    private final ScrollPane scroll;
+    private final HBox filters = new HBox(3);
+    private final ToggleGroup group = new ToggleGroup();
+    private final ImportsPane imports;
+    private final UploadsPane uploads;
+    private final DownloadsPane downloads;
+    private final Button minimize;
+    private boolean minimized;
+
+    DriveActivityPane(ImportsPane imports, UploadsPane uploads, DownloadsPane downloads) {
+        this.imports = imports; this.uploads = uploads.embedded(); this.downloads = downloads.embedded();
+        getStyleClass().addAll("downloads-panel", "drive-activity-panel");
+        setMinSize(0, 0); setPrefWidth(420); setMaxWidth(420); setMaxHeight(USE_PREF_SIZE);
+        var title = new Label("Activity"); title.getStyleClass().add("downloads-title");
+        var summary = new Label(); summary.getStyleClass().add("downloads-summary");
+        active.bind(imports.activeCountProperty().add(uploads.activeCountProperty()).add(downloads.activeCountProperty()));
+        summary.textProperty().bind(javafx.beans.binding.Bindings.when(active.greaterThan(0)).then(active.asString("%d active")).otherwise("All file activity"));
+        var labels = new VBox(2, title, summary); HBox.setHgrow(labels, Priority.ALWAYS);
+        minimize = icon("M6 9l6 6 6-6", "Minimize activity");
+        var close = icon("M6 6l12 12 M18 6L6 18", "Hide activity — transfers continue");
+        var heading = new HBox(6, labels, minimize, close); heading.setAlignment(Pos.CENTER_LEFT); heading.getStyleClass().add("downloads-header");
+        String[] names = {"All", "Adding", "Uploading", "Downloading"};
+        for (Filter filter : Filter.values()) {
+            var button = new ToggleButton(names[filter.ordinal()]); button.setUserData(filter); button.setToggleGroup(group);
+            button.getStyleClass().add("activity-filter"); button.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(button, Priority.ALWAYS);
+            button.setOnAction(event -> { if (!button.isSelected()) button.setSelected(true); applyFilter(filter); });
+            filters.getChildren().add(button);
+        }
+        filters.getStyleClass().add("activity-filters");
+        sections = new VBox(imports, uploads, downloads);
+        scroll = new ScrollPane(sections); scroll.setFitToWidth(true); scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.getStyleClass().addAll("downloads-list", "activity-list"); scroll.setMinHeight(0);
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+        // Compute height from current visible sections during layout, including wrapped status text.
+        scroll.prefViewportHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                () -> Math.min(260, Math.max(64, sections.prefHeight(390))), sections.needsLayoutProperty(), widthProperty()));
+        getChildren().addAll(heading, filters, scroll);
+        minimize.setOnAction(event -> {
+            minimized = !minimized; scroll.setVisible(!minimized); scroll.setManaged(!minimized); filters.setVisible(!minimized); filters.setManaged(!minimized);
+            ((SVGPath) minimize.getGraphic()).setContent(minimized ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6");
+        });
+        close.setOnAction(event -> hide()); select(Filter.ALL); hide();
+    }
+    ReadOnlyIntegerProperty activeCountProperty() { return active.getReadOnlyProperty(); }
+    void reveal() {
+        minimized = false; scroll.setVisible(true); scroll.setManaged(true); filters.setVisible(true); filters.setManaged(true);
+        ((SVGPath) minimize.getGraphic()).setContent("M6 9l6 6 6-6");
+        setVisible(true); setManaged(true); toFront();
+    }
+    void reveal(Filter filter) { select(filter); reveal(); }
+    void hide() { setVisible(false); setManaged(false); }
+    void select(Filter filter) { group.selectToggle((Toggle) filters.getChildren().get(filter.ordinal())); applyFilter(filter); }
+    private void applyFilter(Filter filter) {
+        show(imports, filter == Filter.ALL || filter == Filter.ADDING);
+        show(uploads, filter == Filter.ALL || filter == Filter.UPLOADING);
+        show(downloads, filter == Filter.ALL || filter == Filter.DOWNLOADING);
+        if (scroll != null) scroll.setVvalue(0);
+    }
+    private static void show(javafx.scene.Node node, boolean show) { node.setVisible(show); node.setManaged(show); }
+    private static Button icon(String path, String label) {
+        var glyph = new SVGPath(); glyph.setContent(path); glyph.getStyleClass().add("download-glyph");
+        var button = new Button(null, glyph); button.getStyleClass().add("download-icon-button"); button.setAccessibleText(label); button.setTooltip(new Tooltip(label)); return button;
+    }
+}

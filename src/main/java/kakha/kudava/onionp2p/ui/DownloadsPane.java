@@ -23,6 +23,17 @@ final class DownloadsPane extends VBox {
     private final Set<String> completed = new HashSet<>();
     private final Runnable onCompleted;
     private boolean minimized;
+    private boolean embedded;
+
+    DownloadsPane embedded() {
+        embedded = true;
+        scroll.setContent(null);
+        getStyleClass().setAll("activity-section");
+        var heading = new VBox(2, title, summary); heading.getStyleClass().add("activity-section-header");
+        getChildren().setAll(heading, rows);
+        setPrefWidth(USE_COMPUTED_SIZE); setMaxWidth(Double.MAX_VALUE);
+        reveal(); return this;
+    }
 
     DownloadsPane(DownloadQueue queue, Runnable onCompleted) {
         this.queue = queue; this.onCompleted = onCompleted;
@@ -67,7 +78,7 @@ final class DownloadsPane extends VBox {
         activeCount.set(active);
         title.setText(active > 0 ? "Downloads · " + active + " active" : "Downloads");
         summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : "") + (queued > 0 ? " · " + queued + " queued" : ""));
-        TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
+        if (!embedded) TransferPresentation.fitList(scroll, rows, getWidth() > 0 ? getWidth() : getPrefWidth());
     }
     private final class Row extends VBox {
         final Label name = new Label(), detail = new Label(), bytes = new Label(), metrics = new Label();

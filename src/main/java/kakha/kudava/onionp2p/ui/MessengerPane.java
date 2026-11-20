@@ -216,8 +216,10 @@ final class MessengerPane extends BorderPane {
     private boolean activeVoiceTransfer;
     private boolean sending;
     private Runnable refreshSharedDrive;
+    private Runnable refreshLocalDrive;
     private final DownloadsPane downloadsPane;
     private final UploadsPane uploadsPane;
+    private final DriveActivityPane activityPane;
 
     private boolean loaded;
     private long contactLoadRevision;
@@ -230,8 +232,10 @@ final class MessengerPane extends BorderPane {
         });
         uploadsPane = new UploadsPane(manager.uploads(), link -> allContacts.stream().filter(contact -> contact.link().equals(link))
                 .map(ContactStore.Contact::username).findFirst().orElse("Contact"), manager::cancelUpload);
-        downloadsPane.visibleProperty().addListener((obs, before, visible) -> { if (visible) uploadsPane.hide(); });
-        uploadsPane.visibleProperty().addListener((obs, before, visible) -> { if (visible) downloadsPane.hide(); });
+        var importsPane = new ImportsPane(manager.imports(), () -> {
+            if (refreshLocalDrive != null) refreshLocalDrive.run();
+        });
+        activityPane = new DriveActivityPane(importsPane, uploadsPane, downloadsPane);
         localUsername = username;
         this.onAddContact = onAddContact;
         activePane = this;
@@ -571,31 +575,18 @@ final class MessengerPane extends BorderPane {
         mainSection.getStyleClass().add("main-section-switcher");
         drivePage.setVisible(false);
         drivePage.setManaged(false);
-        Button downloadsLauncher = new Button();
-        Label downloadCount = new Label(); downloadCount.getStyleClass().add("upload-count-badge");
-        downloadCount.textProperty().bind(downloadsPane.activeCountProperty().asString());
-        downloadCount.visibleProperty().bind(downloadsPane.activeCountProperty().greaterThan(0));
-        StackPane downloadIcon = new StackPane(driveMenuGlyph("M12 3v12 M7 10l5 5 5-5 M4 19h16"), downloadCount);
-        StackPane.setAlignment(downloadCount, Pos.TOP_RIGHT);
-        downloadsLauncher.setGraphic(downloadIcon);
-        downloadsLauncher.getStyleClass().add("drive-download-launcher");
-        downloadsLauncher.setAccessibleText("Downloads");
-        downloadsLauncher.setTooltip(new Tooltip("Downloads"));
-        downloadsLauncher.setOnAction(event -> downloadsPane.reveal());
-        downloadsLauncher.visibleProperty().bind(drivePage.visibleProperty().and(downloadsPane.visibleProperty().not()));
-        downloadsLauncher.managedProperty().bind(downloadsLauncher.visibleProperty());
-        Button uploadsLauncher = new Button();
-        uploadsLauncher.getStyleClass().add("drive-download-launcher");
-        Label uploadCount = new Label(); uploadCount.getStyleClass().add("upload-count-badge");
-        uploadCount.textProperty().bind(uploadsPane.activeCountProperty().asString());
-        uploadCount.visibleProperty().bind(uploadsPane.activeCountProperty().greaterThan(0));
-        StackPane uploadIcon = new StackPane(driveMenuGlyph("M12 17V5 M7 10l5-5 5 5 M4 21h16"), uploadCount);
-        StackPane.setAlignment(uploadCount, Pos.TOP_RIGHT);
-        uploadsLauncher.setGraphic(uploadIcon);
-        uploadsLauncher.setAccessibleText("Uploads"); uploadsLauncher.setTooltip(new Tooltip("Uploads"));
-        uploadsLauncher.setOnAction(event -> uploadsPane.reveal());
-        uploadsLauncher.visibleProperty().bind(drivePage.visibleProperty().and(uploadsPane.visibleProperty().not()));
-        uploadsLauncher.managedProperty().bind(uploadsLauncher.visibleProperty());
+        Button activityLauncher = new Button();
+        Label activityCount = new Label(); activityCount.getStyleClass().add("upload-count-badge");
+        activityCount.textProperty().bind(activityPane.activeCountProperty().asString());
+        activityCount.visibleProperty().bind(activityPane.activeCountProperty().greaterThan(0));
+        StackPane activityIcon = new StackPane(driveMenuGlyph("M7 17V3 M3 7l4-4 4 4 M17 7v14 M13 17l4 4 4-4"), activityCount);
+        StackPane.setAlignment(activityCount, Pos.TOP_RIGHT);
+        activityLauncher.setGraphic(activityIcon);
+        activityLauncher.getStyleClass().add("drive-download-launcher");
+        activityLauncher.setAccessibleText("File activity"); activityLauncher.setTooltip(new Tooltip("File activity"));
+        activityLauncher.setOnAction(event -> activityPane.reveal());
+        activityLauncher.visibleProperty().bind(drivePage.visibleProperty().and(activityPane.visibleProperty().not()));
+        activityLauncher.managedProperty().bind(activityLauncher.visibleProperty());
 
         Runnable showChats = () -> {
             chatsNavigation.getStyleClass().add("rail-button-selected");
@@ -604,8 +595,7 @@ final class MessengerPane extends BorderPane {
             driveNavigationPane.setVisible(false); driveNavigationPane.setManaged(false);
             conversation.setVisible(true); conversation.setManaged(true);
             drivePage.setVisible(false); drivePage.setManaged(false);
-            downloadsPane.hide();
-            uploadsPane.hide();
+            activityPane.hide();
         };
         showChatsAction = showChats;
         Runnable showDrive = () -> {
@@ -666,16 +656,12 @@ final class MessengerPane extends BorderPane {
         mainSplit.widthProperty().addListener((obs, oldWidth, newWidth) -> clampContactColumn(mainSplit, leftColumns));
         mainSplit.getDividers().getFirst().positionProperty()
                 .addListener((obs, oldPosition, newPosition) -> clampContactColumn(mainSplit, leftColumns));
-        mainSection.getChildren().addAll(downloadsLauncher, uploadsLauncher, downloadsPane, uploadsPane);
+        mainSection.getChildren().addAll(activityLauncher, activityPane);
         StackPane workspace = new StackPane(mainSplit);
-        StackPane.setAlignment(downloadsLauncher, Pos.BOTTOM_LEFT);
-        StackPane.setMargin(downloadsLauncher, new Insets(16, 16, 16, 32));
-        StackPane.setAlignment(downloadsPane, Pos.BOTTOM_LEFT);
-        StackPane.setMargin(downloadsPane, new Insets(12, 12, 12, 32));
-        StackPane.setAlignment(uploadsLauncher, Pos.BOTTOM_LEFT);
-        StackPane.setMargin(uploadsLauncher, new Insets(16, 16, 16, 84));
-        StackPane.setAlignment(uploadsPane, Pos.BOTTOM_LEFT);
-        StackPane.setMargin(uploadsPane, new Insets(12, 12, 12, 32));
+        StackPane.setAlignment(activityLauncher, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(activityLauncher, new Insets(16, 16, 16, 32));
+        StackPane.setAlignment(activityPane, Pos.BOTTOM_LEFT);
+        StackPane.setMargin(activityPane, new Insets(12, 12, 12, 32));
         setCenter(workspace);
         setTop(torRecoveryNotice);
         getStyleClass().add("messenger-pane");
@@ -2065,6 +2051,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private void renderDrivePage(VBox content, boolean myFiles, Path currentDirectory) {
+        refreshLocalDrive = myFiles ? () -> renderDrivePage(content, true, currentDirectory) : null;
         sharedOwnerIndicators.clear();
         content.getChildren().clear();
         SVGPath headingGlyph = myFiles ? folderGlyph() : sharedPeopleGlyph();
@@ -2103,10 +2090,6 @@ final class MessengerPane extends BorderPane {
         addButton.setAccessibleText("Create a folder or text file");
         addButton.setTooltip(new Tooltip("Create a folder or text file"));
         addButton.setDisable(!myFiles);
-        ProgressIndicator importing = new ProgressIndicator();
-        importing.setMaxSize(18, 18);
-        importing.setVisible(false);
-        importing.setManaged(false);
         Label feedback = new Label();
         feedback.setVisible(false);
         feedback.setManaged(false);
@@ -2116,7 +2099,7 @@ final class MessengerPane extends BorderPane {
             chooser.setTitle("Add files to My files");
             List<File> selectedFiles = chooser.showOpenMultipleDialog(getScene() == null ? null : getScene().getWindow());
             if (selectedFiles != null && !selectedFiles.isEmpty()) {
-                importIntoDrive(selectedFiles.stream().map(File::toPath).toList(), content, currentDirectory, addFiles, addFolder, importing, feedback);
+                importIntoDrive(selectedFiles.stream().map(File::toPath).toList(), currentDirectory);
             }
         });
         addFolder.setOnAction(event -> {
@@ -2124,7 +2107,7 @@ final class MessengerPane extends BorderPane {
             chooser.setTitle("Add folder to My files");
             File selected = chooser.showDialog(getScene() == null ? null : getScene().getWindow());
             if (selected != null) {
-                importIntoDrive(List.of(selected.toPath()), content, currentDirectory, addFiles, addFolder, importing, feedback);
+                importIntoDrive(List.of(selected.toPath()), currentDirectory);
             }
         });
         addButton.setOnAction(event -> {
@@ -2136,7 +2119,7 @@ final class MessengerPane extends BorderPane {
             addMenu.show(addButton, Side.BOTTOM, 0, 2);
         });
         shareFiles.setOnAction(event -> shareSelectedDriveEntries());
-        HBox actionGroup = new HBox(8, importing, shareFiles, addFiles, addFolder);
+        HBox actionGroup = new HBox(8, shareFiles, addFiles, addFolder);
         actionGroup.setAlignment(Pos.CENTER_RIGHT);
         actionGroup.getStyleClass().add("drive-header-actions");
         HBox header = new HBox(16, heading, spacer, actionGroup);
@@ -2441,7 +2424,7 @@ final class MessengerPane extends BorderPane {
         row.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 if (file.folder()) {
-                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, downloadsPane::reveal).show();
+                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, () -> activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING)).show();
                 } else if (file.downloaded()) {
                     try { java.awt.Desktop.getDesktop().open(path.toFile()); }
                     catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
@@ -2458,7 +2441,7 @@ final class MessengerPane extends BorderPane {
         menu.getStyleClass().add("drive-entry-menu");
         if (file.folder()) {
             menu.getItems().add(driveMenuItem("Open folder", "M3 7h7l2 2h9v11H3z M3 9h18",
-                    () -> new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, downloadsPane::reveal).show()));
+                    () -> new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, () -> activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING)).show()));
         } else if (file.downloaded()) {
             menu.getItems().add(driveMenuItem("Open", "M14 3h7v7 M21 3l-11 11 M10 3H3v18h18v-7", () -> {
                 try { java.awt.Desktop.getDesktop().open(Path.of(file.path()).toFile()); }
@@ -3241,7 +3224,7 @@ final class MessengerPane extends BorderPane {
         if (file.folder()) manager.downloads().folderItem(file, sender, "", file.name(), true, -1,
                 AppData.directory().resolve("drive/shared"));
         else manager.downloads().file(file, sender);
-        downloadsPane.reveal();
+        activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING);
     }
 
     private static String shortAddress(String address) {
@@ -3314,38 +3297,9 @@ final class MessengerPane extends BorderPane {
         try { return Files.size(file); } catch (IOException ignored) { return 0; }
     }
 
-    private void importIntoDrive(List<Path> sources, VBox content, Path currentDirectory, Button addFiles, Button addFolder,
-                                 ProgressIndicator importing, Label feedback) {
-        Path driveDirectory = AppData.directory().resolve("drive");
-        addFiles.setDisable(true);
-        addFolder.setDisable(true);
-        importing.setManaged(true);
-        importing.setVisible(true);
-        feedback.setText("Adding files and calculating checksums…");
-        feedback.setManaged(true);
-        feedback.setVisible(true);
-        driveWorkers.execute(() -> {
-            Exception failure = null;
-            try {
-                Files.createDirectories(driveDirectory);
-                for (Path source : sources) kakha.kudava.onionp2p.drive.DriveImports.add(source, driveDirectory, manager.driveChecksums());
-            } catch (Exception error) {
-                failure = error;
-            }
-            Exception result = failure;
-            Platform.runLater(() -> {
-                if (content.getScene() == null) return;
-                if (result == null) {
-                    renderDrivePage(content, true, currentDirectory);
-                } else {
-                    addFiles.setDisable(false);
-                    addFolder.setDisable(false);
-                    importing.setVisible(false);
-                    importing.setManaged(false);
-                    feedback.setText("Could not add the selected item: " + result.getMessage());
-                }
-            });
-        });
+    private void importIntoDrive(List<Path> sources, Path currentDirectory) {
+        manager.imports().add(sources, currentDirectory);
+        activityPane.reveal(DriveActivityPane.Filter.ADDING);
     }
 
     private void searchConversation() {

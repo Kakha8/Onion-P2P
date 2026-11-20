@@ -6,6 +6,14 @@
 .downloads-header { -fx-padding: 9 10 9 14; -fx-border-color: transparent transparent #303a47 transparent; }
 .downloads-title { -fx-text-fill: #e5edf6; -fx-font-size: 14px; -fx-font-weight: bold; }
 .downloads-summary { -fx-text-fill: #94a3b5; -fx-font-size: 11px; }
+.activity-section { -fx-background-color: transparent; }
+.drive-activity-panel { -fx-padding: 0 0 6 0; }
+.activity-section-header { -fx-padding: 8 14; -fx-background-color: #202832; }
+.activity-section-header .downloads-title { -fx-font-size: 12px; }
+.activity-filters { -fx-padding: 6 8; -fx-border-color: transparent transparent #303a47 transparent; }
+.toggle-button.activity-filter { -fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #94a3b5; -fx-padding: 5 7; -fx-background-radius: 5; -fx-font-size: 11px; -fx-cursor: hand; }
+.toggle-button.activity-filter:hover { -fx-background-color: #293442; -fx-text-fill: #e5edf6; }
+.toggle-button.activity-filter:selected { -fx-background-color: #303c4b; -fx-text-fill: #e5edf6; }
 .downloads-list, .downloads-list > .viewport, .downloads-rows { -fx-background-color: transparent; -fx-background-insets: 0; }
 .downloads-list { -fx-padding: 0; -fx-border-width: 0; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; }
 .download-row { -fx-padding: 8 12 8 14; -fx-spacing: 3; -fx-border-color: transparent transparent #303a47 transparent; }
@@ -226,27 +234,36 @@
 .drive-add-folder-button .drive-action-glyph { -fx-stroke: #d8e0eb; }
 .drive-items-viewport { -fx-background-color: transparent; -fx-background: transparent; -fx-border-color: transparent; -fx-padding: 0; }
 .drive-items-viewport > .viewport { -fx-background-color: transparent; }
-.drive-items-viewport > .scroll-bar {
+.drive-items-viewport > .scroll-bar, .activity-list > .scroll-bar {
     -fx-background-color: transparent;
     -fx-background-insets: 0;
     -fx-padding: 0;
 }
-.drive-items-viewport > .scroll-bar:vertical { -fx-min-width: 6; -fx-pref-width: 6; -fx-max-width: 6; }
-.drive-items-viewport > .scroll-bar:horizontal { -fx-min-height: 6; -fx-pref-height: 6; -fx-max-height: 6; }
+.drive-items-viewport > .scroll-bar:vertical, .activity-list > .scroll-bar:vertical { -fx-min-width: 6; -fx-pref-width: 6; -fx-max-width: 6; }
+.drive-items-viewport > .scroll-bar:horizontal, .activity-list > .scroll-bar:horizontal { -fx-min-height: 6; -fx-pref-height: 6; -fx-max-height: 6; }
 .drive-items-viewport > .scroll-bar > .track,
 .drive-items-viewport > .scroll-bar > .track-background,
-.drive-items-viewport > .corner { -fx-background-color: transparent; -fx-background-insets: 0; }
-.drive-items-viewport > .scroll-bar > .thumb {
+.drive-items-viewport > .corner,
+.activity-list > .scroll-bar > .track,
+.activity-list > .scroll-bar > .track-background,
+.activity-list > .corner { -fx-background-color: transparent; -fx-background-insets: 0; }
+.drive-items-viewport > .scroll-bar > .thumb, .activity-list > .scroll-bar > .thumb {
     -fx-background-color: #3b4655;
     -fx-background-insets: 1;
     -fx-background-radius: 3;
 }
 .drive-items-viewport > .scroll-bar > .thumb:hover,
-.drive-items-viewport > .scroll-bar > .thumb:pressed { -fx-background-color: #566376; }
+.drive-items-viewport > .scroll-bar > .thumb:pressed,
+.activity-list > .scroll-bar > .thumb:hover,
+.activity-list > .scroll-bar > .thumb:pressed { -fx-background-color: #566376; }
 .drive-items-viewport > .scroll-bar > .increment-button,
 .drive-items-viewport > .scroll-bar > .decrement-button,
 .drive-items-viewport > .scroll-bar > .increment-button > .increment-arrow,
-.drive-items-viewport > .scroll-bar > .decrement-button > .decrement-arrow {
+.drive-items-viewport > .scroll-bar > .decrement-button > .decrement-arrow,
+.activity-list > .scroll-bar > .increment-button,
+.activity-list > .scroll-bar > .decrement-button,
+.activity-list > .scroll-bar > .increment-button > .increment-arrow,
+.activity-list > .scroll-bar > .decrement-button > .decrement-arrow {
     -fx-min-width: 0; -fx-pref-width: 0; -fx-max-width: 0;
     -fx-min-height: 0; -fx-pref-height: 0; -fx-max-height: 0;
     -fx-padding: 0; -fx-background-color: transparent; -fx-opacity: 0;

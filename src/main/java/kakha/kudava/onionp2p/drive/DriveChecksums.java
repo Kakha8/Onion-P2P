@@ -86,16 +86,28 @@ public final class DriveChecksums {
 
     /** Stream the exact bytes written to the new managed copy into the digest. */
     public void copy(Path source, Path target) throws IOException, SQLException {
+        copy(source, target, (copied, hashed, total) -> {});
+    }
+
+    @FunctionalInterface public interface CopyProgress { void update(long copied, long hashed, long total); }
+
+    public void copy(Path source, Path target, CopyProgress progress) throws IOException, SQLException {
         Version original = version(source);
         var hash = digest();
+        long copied = 0;
         boolean created = false;
         try {
             try (var input = Files.newInputStream(source);
                  var output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                 created = true;
+                progress.update(0, 0, original.size());
                 byte[] buffer = new byte[128 * 1024];
                 for (int read; (read = input.read(buffer)) != -1;) {
-                    output.write(buffer, 0, read); hash.update(buffer, 0, read);
+                    if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Adding stopped.");
+                    output.write(buffer, 0, read);
+                    progress.update(copied + read, copied, original.size());
+                    hash.update(buffer, 0, read); copied += read;
+                    progress.update(copied, copied, original.size());
                 }
             }
             if (!original.equals(version(source))) throw new IOException("The selected file changed while being added. Try again.");

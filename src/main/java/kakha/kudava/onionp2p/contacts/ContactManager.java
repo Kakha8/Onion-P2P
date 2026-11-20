@@ -26,6 +26,7 @@ public final class ContactManager implements AutoCloseable {
     private final MessageStore messageStore;
     private final SharedDriveStore sharedDriveStore;
     private final kakha.kudava.onionp2p.drive.DriveChecksums driveChecksums;
+    private final kakha.kudava.onionp2p.drive.ImportQueue imports;
     private final SharedDownloads downloads;
     private final kakha.kudava.onionp2p.drive.UploadTracker uploads = new kakha.kudava.onionp2p.drive.UploadTracker();
     private final String localUsername;
@@ -68,6 +69,7 @@ public final class ContactManager implements AutoCloseable {
         messageStore = new MessageStore(directory);
         sharedDriveStore = new SharedDriveStore(directory);
         driveChecksums = new kakha.kudava.onionp2p.drive.DriveChecksums(directory);
+        imports = new kakha.kudava.onionp2p.drive.ImportQueue(driveChecksums);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
         downloads = new SharedDownloads(this, directory);
@@ -89,6 +91,7 @@ public final class ContactManager implements AutoCloseable {
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
     public SharedDownloads downloads() { return downloads; }
     public kakha.kudava.onionp2p.drive.DriveChecksums driveChecksums() { return driveChecksums; }
+    public kakha.kudava.onionp2p.drive.ImportQueue imports() { return imports; }
     public kakha.kudava.onionp2p.drive.UploadTracker uploads() { return uploads; }
     public void cancelUpload(String key) {
         var cancellation = uploads.cancelBySender(key); if (cancellation == null) return;
@@ -761,6 +764,7 @@ public final class ContactManager implements AutoCloseable {
         if (closed) return;
         closed = true;
         downloads.close();
+        imports.close();
         uploads.close();
         retries.shutdownNow();
         driveShareRetries.shutdownNow();
