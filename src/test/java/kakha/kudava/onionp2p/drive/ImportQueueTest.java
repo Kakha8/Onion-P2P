@@ -38,7 +38,8 @@ class ImportQueueTest {
                 assertEquals(item.total(), item.copied()); assertEquals(item.total(), item.hashed());
                 assertEquals(item.files(), item.filesDone());
             }
-            assertTrue(snapshots.stream().flatMap(List::stream).anyMatch(item -> item.state() == ImportQueue.State.ADDING));
+            assertTrue(snapshots.stream().flatMap(List::stream).anyMatch(item -> item.state() == ImportQueue.State.COPYING));
+            assertTrue(snapshots.stream().flatMap(List::stream).anyMatch(item -> item.state() == ImportQueue.State.HASHING));
             assertThrows(UnsupportedOperationException.class, () -> items.clear());
         }
     }
@@ -56,10 +57,26 @@ class ImportQueueTest {
         for (var sample : samples) {
             assertTrue(sample[0] >= copied); assertTrue(sample[1] >= hashed);
             assertTrue(sample[1] <= sample[0]); assertEquals(data.length, sample[2]);
+            if (sample[1] > 0) assertEquals(data.length, sample[0], "Hashing must only start after copying finishes");
             copied = sample[0]; hashed = sample[1];
         }
         assertEquals(data.length, copied); assertEquals(data.length, hashed);
         assertArrayEquals(data, Files.readAllBytes(target));
         assertEquals(DriveChecksums.calculate(source, () -> {}), checksums.sha256(target));
+    }
+
+    @Test void folderCopyFinishesBeforeAnyOfItsFilesAreHashed() throws Exception {
+        var checksums = new DriveChecksums(temp.resolve("profile"));
+        Path folder = Files.createDirectory(temp.resolve("folder"));
+        Files.writeString(folder.resolve("first.txt"), "first"); Files.writeString(folder.resolve("second.txt"), "second");
+        var copied = new java.util.HashSet<Path>(); var hashed = new java.util.HashSet<Path>();
+        DriveImports.add(folder, temp.resolve("drive"), checksums, new DriveImports.Progress() {
+            @Override public void file(Path source, long bytes, long hash, long total) { assertTrue(hashed.isEmpty()); }
+            @Override public void copied(Path source, long bytes) { copied.add(source); }
+            @Override public void hashing(Path source, long bytes, long total) {
+                assertEquals(2, copied.size(), "Copy the entire folder before hashing"); hashed.add(source);
+            }
+        });
+        assertEquals(copied, hashed);
     }
 }

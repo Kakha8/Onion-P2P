@@ -55,11 +55,19 @@ public final class DriveChecksums {
 
     /** Always reads the saved bytes; receiver verification must never use the metadata cache. */
     public static String calculate(Path path, Runnable checkpoint) throws IOException {
+        return calculate(path, checkpoint, ignored -> {});
+    }
+
+    private static String calculate(Path path, Runnable checkpoint, java.util.function.LongConsumer progress) throws IOException {
         Version before = version(path);
         var hash = digest();
+        long hashed = 0;
+        progress.accept(0);
         try (var input = Files.newInputStream(path)) {
             byte[] buffer = new byte[128 * 1024];
-            for (int read; (read = input.read(buffer)) != -1;) { checkpoint.run(); hash.update(buffer, 0, read); }
+            for (int read; (read = input.read(buffer)) != -1;) {
+                checkpoint.run(); hash.update(buffer, 0, read); hashed += read; progress.accept(hashed);
+            }
         }
         checkpoint.run();
         if (!before.equals(version(path))) throw new IOException("The file changed while calculating its checksum.");
@@ -84,7 +92,7 @@ public final class DriveChecksums {
         }
     }
 
-    /** Stream the exact bytes written to the new managed copy into the digest. */
+    /** Copy first, then hash the saved bytes before publishing the checksum. */
     public void copy(Path source, Path target) throws IOException, SQLException {
         copy(source, target, (copied, hashed, total) -> {});
     }
@@ -92,27 +100,44 @@ public final class DriveChecksums {
     @FunctionalInterface public interface CopyProgress { void update(long copied, long hashed, long total); }
 
     public void copy(Path source, Path target, CopyProgress progress) throws IOException, SQLException {
+        long total = version(source).size();
+        copyBytes(source, target, copied -> progress.update(copied, 0, total));
+        try { hashImported(target, hashed -> progress.update(total, hashed, total)); }
+        catch (IOException | SQLException failure) {
+            try { Files.deleteIfExists(target); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    /** Records a fresh digest after the copy phase; never reuses an earlier cached hash. */
+    public String hashImported(Path target, java.util.function.LongConsumer progress) throws IOException, SQLException {
+        Version before = version(target);
+        String value = calculate(target, () -> {
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Adding stopped.");
+        }, progress);
+        if (!before.equals(version(target))) throw new IOException("The added file changed while hashing. Try again.");
+        save(target.toAbsolutePath().normalize(), value, before);
+        return value;
+    }
+
+    static void copyBytes(Path source, Path target, java.util.function.LongConsumer progress) throws IOException {
         Version original = version(source);
-        var hash = digest();
         long copied = 0;
         boolean created = false;
         try {
             try (var input = Files.newInputStream(source);
                  var output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                 created = true;
-                progress.update(0, 0, original.size());
+                progress.accept(0);
                 byte[] buffer = new byte[128 * 1024];
                 for (int read; (read = input.read(buffer)) != -1;) {
                     if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Adding stopped.");
                     output.write(buffer, 0, read);
-                    progress.update(copied + read, copied, original.size());
-                    hash.update(buffer, 0, read); copied += read;
-                    progress.update(copied, copied, original.size());
+                    copied += read; progress.accept(copied);
                 }
             }
             if (!original.equals(version(source))) throw new IOException("The selected file changed while being added. Try again.");
-            save(target.toAbsolutePath().normalize(), HexFormat.of().formatHex(hash.digest()), version(target));
-        } catch (IOException | SQLException failure) {
+        } catch (IOException failure) {
             if (created) try { Files.deleteIfExists(target); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }

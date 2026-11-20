@@ -7,10 +7,10 @@ import java.util.function.Consumer;
 
 /** Serial local imports keep disk work off the UI and publish bounded progress updates. */
 public final class ImportQueue implements AutoCloseable {
-    public enum State { QUEUED, SCANNING, ADDING, COMPLETE, FAILED }
+    public enum State { QUEUED, SCANNING, COPYING, HASHING, COMPLETE, FAILED }
     public record Item(String id, String name, State state, String detail, long copied, long hashed,
                        long total, int filesDone, int files, double speed, Path destination) {
-        public boolean active() { return state == State.QUEUED || state == State.SCANNING || state == State.ADDING; }
+        public boolean active() { return state == State.QUEUED || state == State.SCANNING || state == State.COPYING || state == State.HASHING; }
     }
     private final DriveChecksums checksums;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> Thread.ofPlatform().daemon().name("drive-import").unstarted(r));
@@ -36,23 +36,35 @@ public final class ImportQueue implements AutoCloseable {
         String name = source.getFileName().toString();
         update(new Item(id, name, State.SCANNING, "Preparing files…", 0, 0, -1, 0, 0, 0, null));
         class Progress implements DriveImports.Progress {
-            long total = -1, done, copied, hashed, last;
+            long total = -1, done, copiedDone, copied, hashed, last;
             int count, finished;
+            State state = State.COPYING;
             final TransferRate rate = new TransferRate();
             Progress() { rate.reset(0); }
-            public void planned(long bytes, int files) { total = bytes; count = files; rate.reset(0); emit("Copying and calculating SHA-256…", true); }
+            public void planned(long bytes, int files) { total = bytes; count = files; rate.reset(0); emit("Copying…", true); }
             public void file(Path path, long copy, long hash, long size) {
-                copied = done + copy; hashed = done + hash;
+                copied = copiedDone + copy;
                 // A source can grow between scanning and opening. Never show more than 100%.
                 total = Math.max(total, copied);
-                emit(path.equals(source.toAbsolutePath().normalize()) ? "Copying and calculating SHA-256…" : source.toAbsolutePath().normalize().relativize(path).toString(), false);
+                emit(detail("Copying", path), false);
             }
-            public void finished(Path path, long bytes) { done += bytes; finished++; copied = hashed = done; emit("Adding files…", false); }
+            public void copied(Path path, long bytes) { copiedDone += bytes; copied = copiedDone; }
+            public void hashing(Path path, long hash, long size) {
+                boolean starting = state != State.HASHING;
+                if (starting) { state = State.HASHING; total = copied; rate.reset(0); }
+                hashed = done + hash;
+                emit(detail("Hashing SHA-256", path), starting);
+            }
+            public void finished(Path path, long bytes) { done += bytes; finished++; hashed = done; emit(detail("Hashing SHA-256", path), false); }
+            String detail(String phase, Path path) {
+                Path root = source.toAbsolutePath().normalize();
+                return path.equals(root) ? phase + "…" : phase + " · " + root.relativize(path);
+            }
             void emit(String detail, boolean force) {
                 long now = System.nanoTime();
                 if (!force && now - last < TimeUnit.MILLISECONDS.toNanos(100)) return;
                 last = now;
-                update(new Item(id, name, State.ADDING, detail, copied, hashed, total, finished, count, rate.update(hashed), null));
+                update(new Item(id, name, state, detail, copied, hashed, total, finished, count, rate.update(state == State.COPYING ? copied : hashed), null));
             }
         }
         var progress = new Progress();

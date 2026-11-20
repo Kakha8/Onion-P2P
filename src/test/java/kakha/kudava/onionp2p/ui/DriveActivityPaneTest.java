@@ -34,12 +34,23 @@ class DriveActivityPaneTest {
                 scene.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
                 pane[0].reveal();
             });
-            downloads.add("one", "offline", "Bob", "Waiting.zip", 1000, progress -> Path.of("unused"));
-            uploads.begin("alice", "share", "", "Sending.zip", 1000, 0, new Object());
             Path source = Files.writeString(temp.resolve("Added.txt"), "abc");
             imports.add(java.util.List.of(source), temp.resolve("drive"));
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             while (imports.items().stream().anyMatch(ImportQueue.Item::active) && System.nanoTime() < deadline) Thread.sleep(10);
+            fx(() -> {
+                root[0].applyCss(); root[0].layout();
+                root[0].requestLayout(); root[0].layout();
+                assertEquals(1, pane[0].lookupAll(".progress-bar").size(), "One import uses one progress bar");
+                var list = (ScrollPane) pane[0].lookup(".activity-list");
+                var content = (javafx.scene.layout.VBox) list.getContent();
+                assertTrue(list.getViewportBounds().getHeight() >= content.prefHeight(list.getViewportBounds().getWidth()) - 2,
+                        "A single complete entry must fit without scrolling");
+                assertTrue(pane[0].getHeight() < 280, "One entry should keep the pane compact");
+                snapshot(root[0], "-single");
+            });
+            downloads.add("one", "offline", "Bob", "Waiting.zip", 1000, progress -> Path.of("unused"));
+            uploads.begin("alice", "share", "", "Sending.zip", 1000, 0, new Object());
             fx(() -> {
                 root[0].applyCss(); root[0].layout();
                 assertEquals(2, pane[0].activeCountProperty().get());
@@ -62,14 +73,17 @@ class DriveActivityPaneTest {
                 assertEquals(DownloadQueue.State.CANCELLED, downloads.items().getFirst().state());
                 assertEquals(UploadTracker.State.CANCELLED_BY_SENDER, uploads.items().getFirst().state());
                 root[0].applyCss(); root[0].layout();
-                String snapshot = System.getProperty("onion.activitySnapshot");
-                if (snapshot != null) {
-                    var image = root[0].snapshot(null, null);
-                    var bitmap = new java.awt.image.BufferedImage((int) image.getWidth(), (int) image.getHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
-                    for (int y = 0; y < bitmap.getHeight(); y++) for (int x = 0; x < bitmap.getWidth(); x++) bitmap.setRGB(x, y, image.getPixelReader().getArgb(x, y));
-                    try { javax.imageio.ImageIO.write(bitmap, "png", Path.of(snapshot).toFile()); } catch (java.io.IOException e) { throw new RuntimeException(e); }
-                }
+                snapshot(root[0], "");
             });
+        }
+    }
+    private static void snapshot(StackPane root, String suffix) {
+        String snapshot = System.getProperty("onion.activitySnapshot");
+        if (snapshot != null) {
+            var image = root.snapshot(null, null);
+            var bitmap = new java.awt.image.BufferedImage((int) image.getWidth(), (int) image.getHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < bitmap.getHeight(); y++) for (int x = 0; x < bitmap.getWidth(); x++) bitmap.setRGB(x, y, image.getPixelReader().getArgb(x, y));
+            try { javax.imageio.ImageIO.write(bitmap, "png", Path.of(snapshot + suffix + ".png").toFile()); } catch (java.io.IOException e) { throw new RuntimeException(e); }
         }
     }
 }

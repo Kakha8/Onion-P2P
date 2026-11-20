@@ -18,6 +18,8 @@ final class DriveActivityPane extends VBox {
     private final UploadsPane uploads;
     private final DownloadsPane downloads;
     private final Button minimize;
+    private final Label empty = new Label("No file activity yet");
+    private Filter selected = Filter.ALL;
     private boolean minimized;
 
     DriveActivityPane(ImportsPane imports, UploadsPane uploads, DownloadsPane downloads) {
@@ -40,13 +42,22 @@ final class DriveActivityPane extends VBox {
             filters.getChildren().add(button);
         }
         filters.getStyleClass().add("activity-filters");
-        sections = new VBox(imports, uploads, downloads);
-        scroll = new ScrollPane(sections); scroll.setFitToWidth(true); scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        empty.getStyleClass().addAll("downloads-summary", "activity-section-header");
+        sections = new VBox(imports, uploads, downloads, empty);
+        scroll = new ScrollPane(sections) {
+            @Override protected double computePrefHeight(double width) {
+                double available = DriveActivityPane.this.getWidth() > 0 ? DriveActivityPane.this.getWidth() - 10 : 410;
+                return Math.min(280, Math.max(64, sections.prefHeight(available))) + snappedTopInset() + snappedBottomInset();
+            }
+        };
+        scroll.setFitToWidth(true); scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scroll.getStyleClass().addAll("downloads-list", "activity-list"); scroll.setMinHeight(0);
         VBox.setVgrow(scroll, Priority.ALWAYS);
-        // Compute height from current visible sections during layout, including wrapped status text.
-        scroll.prefViewportHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
-                () -> Math.min(260, Math.max(64, sections.prefHeight(390))), sections.needsLayoutProperty(), widthProperty()));
+        // Propagate row additions and wrapped text changes to the floating panel's preferred height.
+        sections.needsLayoutProperty().addListener((obs, before, dirty) -> { if (dirty) scroll.requestLayout(); });
+        imports.itemCountProperty().addListener((obs, before, count) -> applyFilter(selected));
+        uploads.itemCountProperty().addListener((obs, before, count) -> applyFilter(selected));
+        downloads.itemCountProperty().addListener((obs, before, count) -> applyFilter(selected));
         getChildren().addAll(heading, filters, scroll);
         minimize.setOnAction(event -> {
             minimized = !minimized; scroll.setVisible(!minimized); scroll.setManaged(!minimized); filters.setVisible(!minimized); filters.setManaged(!minimized);
@@ -64,9 +75,11 @@ final class DriveActivityPane extends VBox {
     void hide() { setVisible(false); setManaged(false); }
     void select(Filter filter) { group.selectToggle((Toggle) filters.getChildren().get(filter.ordinal())); applyFilter(filter); }
     private void applyFilter(Filter filter) {
-        show(imports, filter == Filter.ALL || filter == Filter.ADDING);
-        show(uploads, filter == Filter.ALL || filter == Filter.UPLOADING);
-        show(downloads, filter == Filter.ALL || filter == Filter.DOWNLOADING);
+        selected = filter;
+        show(imports, filter == Filter.ADDING || filter == Filter.ALL && imports.itemCountProperty().get() > 0);
+        show(uploads, filter == Filter.UPLOADING || filter == Filter.ALL && uploads.itemCountProperty().get() > 0);
+        show(downloads, filter == Filter.DOWNLOADING || filter == Filter.ALL && downloads.itemCountProperty().get() > 0);
+        show(empty, filter == Filter.ALL && imports.itemCountProperty().get() + uploads.itemCountProperty().get() + downloads.itemCountProperty().get() == 0);
         if (scroll != null) scroll.setVvalue(0);
     }
     private static void show(javafx.scene.Node node, boolean show) { node.setVisible(show); node.setManaged(show); }

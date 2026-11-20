@@ -10,6 +10,7 @@ import java.util.*;
 /** Local copy and checksum work is displayed alongside network transfers. */
 final class ImportsPane extends VBox {
     private final ReadOnlyIntegerWrapper active = new ReadOnlyIntegerWrapper();
+    private final ReadOnlyIntegerWrapper itemCount = new ReadOnlyIntegerWrapper();
     private final Label summary = new Label("No files being added");
     private final VBox rows = new VBox();
     private final Map<String, Row> views = new LinkedHashMap<>();
@@ -21,6 +22,7 @@ final class ImportsPane extends VBox {
         var heading = new VBox(2, title, summary); heading.getStyleClass().add("activity-section-header");
         getChildren().addAll(heading, rows);
         queue.setListener(items -> Platform.runLater(() -> {
+            itemCount.set(items.size());
             active.set((int) items.stream().filter(ImportQueue.Item::active).count());
             long done = items.stream().filter(item -> item.state() == ImportQueue.State.COMPLETE).count();
             summary.setText(items.isEmpty() ? "No files being added" : done + " of " + items.size() + " added" + (active.get() > 0 ? " · " + active.get() + " pending" : ""));
@@ -34,26 +36,26 @@ final class ImportsPane extends VBox {
         }));
     }
     ReadOnlyIntegerProperty activeCountProperty() { return active.getReadOnlyProperty(); }
+    ReadOnlyIntegerProperty itemCountProperty() { return itemCount.getReadOnlyProperty(); }
     private static final class Row extends VBox {
         final Label name = label("download-name"), detail = label("download-detail"),
-                copyLabel = label("downloads-summary"), hashLabel = label("downloads-summary"), metrics = label("downloads-summary");
-        final ProgressBar copy = bar(), hash = bar();
+                bytes = label("downloads-summary"), metrics = label("downloads-summary");
+        final ProgressBar progress = bar();
         Row() {
             getStyleClass().add("download-row"); detail.setWrapText(true);
-            getChildren().addAll(name, detail, copyLabel, copy, hashLabel, hash, metrics);
+            getChildren().addAll(name, detail, progress, bytes, metrics);
         }
         void update(ImportQueue.Item item) {
             name.setText(item.name()); name.setTooltip(new Tooltip(item.name()));
             detail.setText(item.detail());
             boolean done = item.state() == ImportQueue.State.COMPLETE;
-            copyLabel.setText("Copying · " + amount(item.copied(), item.total(), done));
-            hashLabel.setText("SHA-256 · " + amount(item.hashed(), item.total(), done));
+            long processed = item.state() == ImportQueue.State.COPYING ? item.copied() : item.hashed();
+            bytes.setText(amount(processed, item.total(), done));
             double total = item.total();
-            copy.setProgress(done ? 1 : total < 0 ? -1 : total == 0 ? 0 : Math.min(.99, item.copied() / total));
-            hash.setProgress(done ? 1 : total < 0 ? -1 : total == 0 ? 0 : Math.min(.99, item.hashed() / total));
+            progress.setProgress(done ? 1 : item.state() == ImportQueue.State.QUEUED ? 0 : total < 0 ? -1 : total == 0 ? 0 : Math.min(.99, processed / total));
             String files = item.files() > 1 ? item.filesDone() + " / " + item.files() + " files · " : "";
-            metrics.setText(files + (item.state() == ImportQueue.State.ADDING
-                    ? TransferPresentation.speedAndEta(item.hashed(), item.total(), item.speed())
+            metrics.setText(files + (item.state() == ImportQueue.State.COPYING || item.state() == ImportQueue.State.HASHING
+                    ? TransferPresentation.speedAndEta(processed, item.total(), item.speed())
                     : done ? "Ready to share" : item.state() == ImportQueue.State.QUEUED ? "Starts automatically" : "—"));
         }
         static String amount(long bytes, long total, boolean done) {
