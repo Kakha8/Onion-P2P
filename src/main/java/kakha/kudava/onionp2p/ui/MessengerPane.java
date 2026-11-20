@@ -3259,7 +3259,17 @@ final class MessengerPane extends BorderPane {
             details.put("Modified", Files.getLastModifiedTime(entry).toInstant()
                     .atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, yyyy HH:mm", Locale.ENGLISH)));
         } catch (IOException ignored) { }
-        DriveItemDialogs.properties(getScene() == null ? null : getScene().getWindow(), entry.getFileName().toString(), details).showAndWait();
+        boolean file = Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        if (file) details.put("SHA-256", "Calculating…");
+        var dialog = DriveItemDialogs.properties(getScene() == null ? null : getScene().getWindow(), entry.getFileName().toString(), details);
+        if (file) Thread.ofVirtual().name("drive-properties-checksum").start(() -> {
+            String checksum;
+            try { checksum = manager.driveChecksums().sha256(entry); }
+            catch (Exception error) { checksum = "Unavailable — the file may have changed. Reopen Properties to retry."; }
+            String result = checksum;
+            Platform.runLater(() -> { if (dialog.isShowing()) DriveItemDialogs.updateProperty(dialog, "SHA-256", result); });
+        });
+        dialog.showAndWait();
     }
 
     private void showDriveAlert(Alert.AlertType type, String title, String message) {
@@ -3311,12 +3321,14 @@ final class MessengerPane extends BorderPane {
         addFolder.setDisable(true);
         importing.setManaged(true);
         importing.setVisible(true);
-        feedback.setText("Copying into " + driveDirectory + "…");
+        feedback.setText("Adding files and calculating checksums…");
+        feedback.setManaged(true);
+        feedback.setVisible(true);
         driveWorkers.execute(() -> {
             Exception failure = null;
             try {
                 Files.createDirectories(driveDirectory);
-                for (Path source : sources) copyIntoDrive(source, driveDirectory);
+                for (Path source : sources) kakha.kudava.onionp2p.drive.DriveImports.add(source, driveDirectory, manager.driveChecksums());
             } catch (Exception error) {
                 failure = error;
             }
@@ -3334,53 +3346,6 @@ final class MessengerPane extends BorderPane {
                 }
             });
         });
-    }
-
-    private static void copyIntoDrive(Path source, Path driveDirectory) throws IOException {
-        Path normalizedSource = source.toAbsolutePath().normalize();
-        if (!Files.exists(normalizedSource)) throw new IOException("The selected item no longer exists.");
-        if (Files.isDirectory(normalizedSource)) {
-            Path normalizedDrive = driveDirectory.toAbsolutePath().normalize();
-            if (normalizedDrive.startsWith(normalizedSource)) {
-                throw new IOException("Choose a folder that does not contain the app's Drive folder.");
-            }
-            Path destination = uniqueDrivePath(driveDirectory, normalizedSource.getFileName().toString());
-            Files.walkFileTree(normalizedSource, new SimpleFileVisitor<>() {
-                @Override public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
-                    if (Files.isSymbolicLink(directory)) return FileVisitResult.SKIP_SUBTREE;
-                    Files.createDirectories(destination.resolve(normalizedSource.relativize(directory)));
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                    if (!Files.isSymbolicLink(file)) {
-                        Path target = destination.resolve(normalizedSource.relativize(file));
-                        Files.copy(file, target);
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } else if (Files.isRegularFile(normalizedSource) && !Files.isSymbolicLink(normalizedSource)) {
-            Files.copy(normalizedSource, uniqueDrivePath(driveDirectory, normalizedSource.getFileName().toString()));
-        } else {
-            throw new IOException("Only regular files and folders can be added.");
-        }
-    }
-
-    private static Path uniqueDrivePath(Path directory, String fileName) {
-        Path candidate = directory.resolve(fileName);
-        if (!Files.exists(candidate)) return candidate;
-        String base = fileName;
-        String extension = "";
-        int dot = fileName.lastIndexOf('.');
-        if (dot > 0) {
-            base = fileName.substring(0, dot);
-            extension = fileName.substring(dot);
-        }
-        for (int suffix = 2; ; suffix++) {
-            candidate = directory.resolve(base + " (" + suffix + ")" + extension);
-            if (!Files.exists(candidate)) return candidate;
-        }
     }
 
     private void searchConversation() {

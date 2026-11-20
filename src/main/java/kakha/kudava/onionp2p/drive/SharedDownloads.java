@@ -52,7 +52,6 @@ public final class SharedDownloads implements AutoCloseable {
         final Path saveIn, state;
         List<Member> plan;
         Path destination;
-        final Set<String> completed = new HashSet<>();
         final Map<String, ResumableFile> transfers = new HashMap<>();
         long completeBytes;
         volatile String currentMember;
@@ -82,10 +81,7 @@ public final class SharedDownloads implements AutoCloseable {
                     var member = new Member(saved.getProperty(i + ".remote"), local,
                             Boolean.parseBoolean(saved.getProperty(i + ".folder")), Long.parseLong(saved.getProperty(i + ".size")));
                     members.add(member);
-                    if (destination != null && !member.folder()) {
-                        var transfer = transfer(member.relative(), destination.resolve(member.local()).getParent());
-                        if (transfer.completedPath() != null) { completed.add(member.relative()); completeBytes += member.size(); }
-                    }
+                    if (destination != null && !member.folder()) transfer(member.relative(), destination.resolve(member.local()).getParent());
                 }
                 plan = List.copyOf(members);
             }
@@ -99,11 +95,6 @@ public final class SharedDownloads implements AutoCloseable {
         }
         public Path run(DownloadQueue.Progress progress) throws Exception {
             if (!folder) {
-                if (rootFile) {
-                    var saved = manager.sharedDriveFiles().stream().filter(file -> file.id().equals(shareId)
-                            && file.contactLink().equals(owner) && file.downloaded()).findFirst();
-                    if (saved.isPresent()) return Path.of(saved.get().path());
-                }
                 Path path = downloadMember(relative, saveIn, progress);
                 if (rootFile) manager.markSharedDownload(shareId, path);
                 return path;
@@ -121,14 +112,14 @@ public final class SharedDownloads implements AutoCloseable {
                     catch (FileAlreadyExistsException exists) { if (i > 10000) throw exists; }
                 }
             }
+            completeBytes = 0;
             progress.update(completeBytes, total);
             for (var member : plan) {
                 progress.checkpoint();
                 if (member.folder()) { Files.createDirectories(destination.resolve(member.local())); continue; }
-                if (completed.contains(member.relative())) continue;
                 Path parent = destination.resolve(member.local()).getParent(); Files.createDirectories(parent);
                 downloadMember(member.relative(), parent, scaled(progress, completeBytes, member.size(), total));
-                completed.add(member.relative()); completeBytes += member.size(); progress.update(completeBytes, total);
+                completeBytes += member.size(); progress.update(completeBytes, total);
             }
             return destination;
         }

@@ -7,6 +7,9 @@ import java.nio.file.*;
 /** Keeps only complete authenticated chunks across pauses and network failures. */
 public final class ResumableFile {
     public static final int CHUNK_SIZE = 256 * 1024;
+    public static final class VerificationException extends IOException {
+        public VerificationException(String message) { super(message); }
+    }
     public record Chunk(String version, String name, long total, long offset, byte[] bytes) {}
     @FunctionalInterface public interface Source { Chunk read(long offset, String version) throws Exception; }
     private Path partial, destination;
@@ -38,6 +41,9 @@ public final class ResumableFile {
                 try (var channel = java.nio.channels.FileChannel.open(partial, StandardOpenOption.WRITE)) { channel.truncate(received); }
             }
             if (destination == null && partial == null) { version = ""; name = null; received = 0; total = -1; }
+            // Old checkpoints contain no authenticated expected digest. Keep any
+            // published copy, but start unfinished work afresh with a checked sender.
+            if (!version.isEmpty() && !hasChecksum(version)) { destination = null; discard(); }
         } catch (IllegalArgumentException error) { throw new IOException("Invalid download checkpoint.", error); }
     }
     public Path completedPath() { return destination; }
@@ -54,12 +60,16 @@ public final class ResumableFile {
     }
 
     public Path download(Path directory, Source source, DownloadQueue.Progress progress) throws Exception {
-        if (destination != null) return destination;
+        if (destination != null) { verify(destination, progress); return destination; }
         Files.createDirectories(directory);
         while (true) {
             progress.checkpoint();
             Chunk chunk = source.read(received, version);
             FolderAccess.validateName(chunk.name());
+            if (!hasChecksum(chunk.version())) {
+                discard();
+                throw new VerificationException("The sender does not provide file checksums. Update both apps and retry.");
+            }
             if (!version.isEmpty() && (!version.equals(chunk.version()) || total != chunk.total() || !name.equals(chunk.name()))) {
                 discard(); throw new IOException("The shared file changed. Retry to download the new version.");
             }
@@ -82,9 +92,11 @@ public final class ResumableFile {
             progress.update(received, total);
             progress.checkpoint();
             if (received == total) {
+                verify(partial, progress);
                 Path target = directory.resolve(name);
                 for (int i = 1; Files.exists(target); i++) target = directory.resolve(i + "-" + name);
                 save(target);
+                progress.checkpoint();
                 Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE);
                 partial = null; destination = target;
                 save(null);
@@ -92,9 +104,31 @@ public final class ResumableFile {
             }
         }
     }
+
+    private static boolean hasChecksum(String version) {
+        return version != null && version.length() > 72 && version.startsWith("sha256:")
+                && version.charAt(71) == ':' && version.substring(7, 71).matches("[0-9a-f]{64}");
+    }
+
+    private void verify(Path file, DownloadQueue.Progress progress) throws IOException {
+        progress.stage("Verifying " + name + "…");
+        try {
+            if (!hasChecksum(version) || Files.size(file) != total)
+                throw new IOException("Size or checksum metadata does not match.");
+            String actual = DriveChecksums.calculate(file, progress::checkpoint);
+            if (!java.security.MessageDigest.isEqual(actual.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                    version.substring(7, 71).getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
+                throw new IOException("Checksum does not match.");
+        } catch (IOException mismatch) {
+            discard(); // Published copies are retained; only our temporary file is deleted.
+            throw new VerificationException("Verification failed. Retry to download a fresh copy.");
+        }
+        progress.checkpoint();
+    }
+
     public void discard() {
         if (partial != null) try { Files.deleteIfExists(partial); } catch (IOException ignored) {}
-        partial = null; version = ""; name = null; received = 0; total = -1;
+        partial = null; destination = null; version = ""; name = null; received = 0; total = -1;
         if (checkpoint != null) try { Files.deleteIfExists(checkpoint); } catch (IOException ignored) {}
     }
 }

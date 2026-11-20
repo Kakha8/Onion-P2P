@@ -102,6 +102,7 @@ class FolderSharingTest {
             String version;
             try (var session = new Session(owner, "recipient", true, uploads)) {
                 var chunk = ContactMessaging.downloadChunk(session.client, material(false), id, "", 0, "", true);
+                assertTrue(chunk.version().startsWith("sha256:" + kakha.kudava.onionp2p.drive.DriveChecksums.calculate(file, () -> {}) + ":"));
                 version = chunk.version();
                 ContactMessaging.notifyDownloadPaused(session.client, material(false), id, "", false);
                 assertEquals(kakha.kudava.onionp2p.drive.UploadTracker.State.PAUSED, uploads.items().getFirst().state());

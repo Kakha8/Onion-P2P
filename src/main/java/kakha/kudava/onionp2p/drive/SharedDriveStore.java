@@ -30,6 +30,8 @@ public final class SharedDriveStore {
     }
     public record PendingShare(String id, String contactLink, String path) {}
     private final String url;
+    private final DriveChecksums checksums;
+    public String sourceChecksum(Path file) throws Exception { return checksums.sha256(file); }
 
     /** Keep grants and queued offers attached to their IDs when an item is renamed. */
     public synchronized void moved(Path before, Path after) throws SQLException {
@@ -59,6 +61,7 @@ public final class SharedDriveStore {
     }
 
     public SharedDriveStore(Path appDirectory) throws Exception {
+        checksums = new DriveChecksums(appDirectory);
         Files.createDirectories(appDirectory);
         Path file = appDirectory.resolve("contacts.sqlite");
         if (!Files.exists(file)) Files.createFile(file);

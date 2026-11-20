@@ -19,11 +19,12 @@ class DownloadPersistenceTest {
 
     @Test void reopenedFileUsesSavedOffsetAndProducesTheSameBytes() throws Exception {
         byte[] source = new byte[700000]; new Random(81).nextBytes(source);
+        String expectedVersion = version(source);
         Path checkpoint = temp.resolve("state/file.properties"), output = temp.resolve("output");
         var first = new ResumableFile(checkpoint, output);
         assertThrows(SocketException.class, () -> first.download(output, (offset, version) -> {
             if (offset > 0) throw new SocketException("closed");
-            return new ResumableFile.Chunk("v1", "file.bin", source.length, offset, Arrays.copyOfRange(source, 0, ResumableFile.CHUNK_SIZE));
+            return new ResumableFile.Chunk(expectedVersion, "file.bin", source.length, offset, Arrays.copyOfRange(source, 0, ResumableFile.CHUNK_SIZE));
         }, PROGRESS));
         // Simulate a crash after writing bytes but before advancing the checkpoint.
         try (var files = Files.list(output)) {
@@ -32,8 +33,8 @@ class DownloadPersistenceTest {
         var reopened = new ResumableFile(checkpoint, output);
         assertEquals(ResumableFile.CHUNK_SIZE, reopened.received());
         Path complete = reopened.download(output, (offset, version) -> {
-            assertTrue(offset >= ResumableFile.CHUNK_SIZE); assertEquals("v1", version);
-            return new ResumableFile.Chunk("v1", "file.bin", source.length, offset,
+            assertTrue(offset >= ResumableFile.CHUNK_SIZE); assertEquals(expectedVersion, version);
+            return new ResumableFile.Chunk(expectedVersion, "file.bin", source.length, offset,
                     Arrays.copyOfRange(source, (int) offset, (int) Math.min(source.length, offset + ResumableFile.CHUNK_SIZE)));
         }, PROGRESS);
         assertArrayEquals(source, Files.readAllBytes(complete));
@@ -65,7 +66,7 @@ class DownloadPersistenceTest {
         var transfer = new ResumableFile(checkpoint, output);
         assertThrows(SocketException.class, () -> transfer.download(output, (offset, version) -> {
             if (offset > 0) throw new SocketException("offline");
-            return new ResumableFile.Chunk("v1", "test.bin", 2, 0, new byte[]{1});
+            return new ResumableFile.Chunk(version(new byte[]{1, 2}), "test.bin", 2, 0, new byte[]{1});
         }, PROGRESS));
         var discarded = new CountDownLatch(1);
         DownloadQueue.Work work = new DownloadQueue.Work() {
@@ -79,5 +80,9 @@ class DownloadPersistenceTest {
         assertTrue(discarded.await(3, TimeUnit.SECONDS));
         try (var files = Files.list(output)) { assertEquals(0, files.count()); }
         try (var reopened = new DownloadQueue(owner -> true, journal, values -> work)) { assertTrue(reopened.items().isEmpty()); }
+    }
+
+    private static String version(byte[] bytes) throws Exception {
+        return "sha256:" + HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)) + ":v1";
     }
 }

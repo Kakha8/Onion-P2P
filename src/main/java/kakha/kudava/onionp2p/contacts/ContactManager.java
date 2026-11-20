@@ -25,6 +25,7 @@ public final class ContactManager implements AutoCloseable {
     private final ContactStore store;
     private final MessageStore messageStore;
     private final SharedDriveStore sharedDriveStore;
+    private final kakha.kudava.onionp2p.drive.DriveChecksums driveChecksums;
     private final SharedDownloads downloads;
     private final kakha.kudava.onionp2p.drive.UploadTracker uploads = new kakha.kudava.onionp2p.drive.UploadTracker();
     private final String localUsername;
@@ -66,6 +67,7 @@ public final class ContactManager implements AutoCloseable {
         store = new ContactStore(directory);
         messageStore = new MessageStore(directory);
         sharedDriveStore = new SharedDriveStore(directory);
+        driveChecksums = new kakha.kudava.onionp2p.drive.DriveChecksums(directory);
         var profile = new AccountStore(directory).profile();
         localUsername = profile == null ? "local" : profile.username();
         downloads = new SharedDownloads(this, directory);
@@ -86,6 +88,7 @@ public final class ContactManager implements AutoCloseable {
     }
     public List<SharedDriveStore.SharedFile> sharedDriveFiles() throws Exception { return sharedDriveStore.all(); }
     public SharedDownloads downloads() { return downloads; }
+    public kakha.kudava.onionp2p.drive.DriveChecksums driveChecksums() { return driveChecksums; }
     public kakha.kudava.onionp2p.drive.UploadTracker uploads() { return uploads; }
     public void cancelUpload(String key) {
         var cancellation = uploads.cancelBySender(key); if (cancellation == null) return;
@@ -168,6 +171,8 @@ public final class ContactManager implements AutoCloseable {
             requestDriveSync(link, true);
             signalDriveShare(link);
         }
+        try { driveChecksums.deleted(file); }
+        catch (Exception error) { System.err.println("Could not clear deleted file checksums: " + safeMessage(error)); }
     }
 
     public boolean isDriveFileSharedWith(Path file, String contactLink) throws Exception {
@@ -279,7 +284,11 @@ public final class ContactManager implements AutoCloseable {
         });
     }
 
-    public void driveEntryMoved(Path before, Path after) throws Exception { sharedDriveStore.moved(before, after); }
+    public void driveEntryMoved(Path before, Path after) throws Exception {
+        sharedDriveStore.moved(before, after);
+        try { driveChecksums.moved(before, after); }
+        catch (Exception error) { System.err.println("Could not move cached file checksums: " + safeMessage(error)); }
+    }
 
     public List<FolderAccess.Entry> browseSharedFolder(String link, String id, String relative,
                                                      java.util.function.Consumer<String> status) throws Exception {

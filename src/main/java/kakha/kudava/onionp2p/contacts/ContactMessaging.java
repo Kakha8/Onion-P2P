@@ -48,7 +48,9 @@ public final class ContactMessaging {
     }
     static kakha.kudava.onionp2p.drive.ResumableFile.Chunk downloadChunk(Socket socket, ContactRendezvous.Material material,
             String shareId, String relative, long offset, String version, boolean first, String requestId) throws Exception {
-        socket.setSoTimeout(15000);
+        // Previously imported files have a cached hash; older files may need
+        // their first full checksum pass before the first response is ready.
+        socket.setSoTimeout(version.isEmpty() ? 60000 : 15000);
         var bytes = new java.io.ByteArrayOutputStream();
         try (var out = new DataOutputStream(bytes)) {
             out.writeUTF(shareId); out.writeUTF(relative); out.writeLong(offset); out.writeUTF(version); out.writeUTF(requestId);
@@ -508,9 +510,9 @@ public final class ContactMessaging {
                 }
                 var attrs = Files.readAttributes(target, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
                 if (!attrs.isRegularFile() || attrs.size() > MAX_FILE_BYTES) throw new IOException("Unavailable file.");
-                String token = attrs.size() + ":" + attrs.lastModifiedTime() + ":" + attrs.fileKey();
+                String sourceVersion = attrs.size() + ":" + attrs.lastModifiedTime() + ":" + attrs.fileKey();
                 // Bind every chunk to the same source version. A changed source is never appended.
-                long position = !version.isEmpty() && !version.equals(token) ? 0 : offset;
+                long position = !version.isEmpty() && !version.endsWith(":" + sourceVersion) ? 0 : offset;
                 if (position > attrs.size()) throw new IOException("Invalid offset.");
                 end = Math.min(attrs.size(), position + 256 * 1024);
                 if (uploads != null) activity = uploads.begin(link, shareId, relative, target.getFileName().toString(), attrs.size(), position, input, requestId);
@@ -519,6 +521,7 @@ public final class ContactMessaging {
                     sendControl(output, input, material, (byte) 17, ByteBuffer.allocate(4).putInt(queuePosition).array());
                     return;
                 }
+                String token = "sha256:" + sharedStore.sourceChecksum(target) + ":" + sourceVersion;
                 var bytes = new java.io.ByteArrayOutputStream();
                 try (var out = new DataOutputStream(bytes); var source = Files.newInputStream(target)) {
                     out.writeUTF(token); out.writeUTF(safeFileName(target.getFileName().toString()));

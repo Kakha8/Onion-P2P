@@ -93,7 +93,11 @@ class SharedDriveActionsTest {
             var fields = new LinkedHashMap<String, String>();
             fields.put("Type", "PDF"); fields.put("Size", "254.2 KiB"); fields.put("Shared by", "bobgun");
             fields.put("Access", "Read only"); fields.put("Status", "Available to download");
+            fields.put("SHA-256", "Calculating…");
             var properties = DriveItemDialogs.properties(null, file.getFileName().toString(), fields);
+            String checksum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+            DriveItemDialogs.updateProperty(properties, "SHA-256", checksum);
+            assertTrue(labels(properties).contains(checksum));
             assertNull(properties.getDialogPane().getHeaderText());
             assertTrue(labels(properties).containsAll(List.of("Shared by", "bobgun", "Read only")));
             render(properties, "properties");

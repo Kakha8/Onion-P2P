@@ -28,6 +28,7 @@ final class DriveItemDialogs {
         for (var field : fields.entrySet()) {
             var key = text(field.getKey(), "drive-property-key");
             var value = text(field.getValue(), "drive-property-value");
+            dialog.getDialogPane().getProperties().put("drive-property:" + field.getKey(), value);
             grid.add(key, 0, row); grid.add(value, 1, row++);
             GridPane.setValignment(key, javafx.geometry.VPos.TOP);
             GridPane.setValignment(value, javafx.geometry.VPos.TOP);
@@ -38,6 +39,14 @@ final class DriveItemDialogs {
         dialog.getDialogPane().setContent(body);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
         return dialog;
+    }
+
+    static void updateProperty(Dialog<?> dialog, String key, String value) {
+        if (dialog.getDialogPane().getProperties().get("drive-property:" + key) instanceof Label label) {
+            label.setText(value);
+            if (dialog.isShowing() && dialog.getDialogPane().getScene().getWindow() instanceof javafx.stage.Stage stage)
+                stage.sizeToScene();
+        }
     }
 
     static Dialog<ButtonType> delete(Window owner, Path entry, int recipients) {
