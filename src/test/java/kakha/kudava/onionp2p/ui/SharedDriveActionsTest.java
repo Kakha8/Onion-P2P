@@ -97,7 +97,7 @@ class SharedDriveActionsTest {
             var properties = DriveItemDialogs.properties(null, file.getFileName().toString(), fields);
             String checksum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
             DriveItemDialogs.updateProperty(properties, "SHA-256", checksum);
-            assertTrue(labels(properties).contains(checksum));
+            assertTrue(labels(properties).stream().map(text -> text.replace("\n", "")).anyMatch(checksum::equals));
             assertNull(properties.getDialogPane().getHeaderText());
             assertTrue(labels(properties).containsAll(List.of("Shared by", "bobgun", "Read only")));
             render(properties, "properties");
@@ -106,6 +106,25 @@ class SharedDriveActionsTest {
 
     private static List<String> labels(Dialog<?> dialog) {
         return dialog.getDialogPane().getContent().lookupAll(".label").stream().map(node -> ((Label) node).getText()).toList();
+    }
+
+    @Test @Timeout(15)
+    void checksumIsFullyVisibleAndCopyIsEnabledOnlyForACompleteHash() throws Exception {
+        fx(() -> {
+            String hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+            var properties = DriveItemDialogs.properties(null, "File.exe", Map.of("SHA-256", "Calculating…"));
+            var copy = (Button) properties.getDialogPane().lookup(".drive-checksum-copy");
+            assertNotNull(copy); assertNotNull(copy.getGraphic()); assertTrue(copy.isDisabled());
+            DriveItemDialogs.updateProperty(properties, "SHA-256", hash);
+            assertFalse(copy.isDisabled());
+            render(properties, "checksum-copy");
+            var value = (Label) properties.getDialogPane().lookup(".drive-checksum-value");
+            assertEquals(hash.substring(0, 32) + "\n" + hash.substring(32), value.getText());
+            assertTrue(value.getWidth() >= value.prefWidth(-1) - 1, "Both complete checksum lines must fit");
+            assertTrue(value.getHeight() >= value.prefHeight(value.getWidth()) - 1, "Checksum must not be cut off vertically");
+            DriveItemDialogs.updateProperty(properties, "SHA-256", "Unavailable");
+            assertTrue(copy.isDisabled());
+        });
     }
 
     private void render(Dialog<?> dialog, String name) {

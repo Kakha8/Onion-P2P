@@ -29,7 +29,49 @@ final class DriveItemDialogs {
             var key = text(field.getKey(), "drive-property-key");
             var value = text(field.getValue(), "drive-property-value");
             dialog.getDialogPane().getProperties().put("drive-property:" + field.getKey(), value);
-            grid.add(key, 0, row); grid.add(value, 1, row++);
+            grid.add(key, 0, row);
+            if (field.getKey().equals("SHA-256")) {
+                value.getStyleClass().add("drive-checksum-value");
+                value.setMinWidth(0); value.setMinHeight(Region.USE_PREF_SIZE);
+                value.setTextOverrun(OverrunStyle.CLIP);
+                value.setText(formatChecksum(field.getValue()));
+                String copyPath = "M9 9h12v12H9z M5 15H3V3h12v2";
+                var icon = new SVGPath();
+                icon.setContent(copyPath);
+                icon.getStyleClass().add("drive-checksum-copy-glyph");
+                var copy = new Button(null, icon);
+                copy.getStyleClass().add("drive-checksum-copy");
+                copy.setAccessibleText("Copy SHA-256 checksum");
+                copy.setTooltip(new Tooltip("Copy checksum"));
+                copy.disableProperty().bind(javafx.beans.binding.Bindings.createBooleanBinding(
+                        () -> !value.getText().replace("\n", "").matches("[0-9a-fA-F]{64}"), value.textProperty()));
+                var feedback = text("Copied", "drive-checksum-feedback");
+                feedback.setVisible(false);
+                var reset = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(2));
+                Runnable clearFeedback = () -> {
+                    feedback.setVisible(false);
+                    icon.setContent(copyPath);
+                    copy.getTooltip().setText("Copy checksum");
+                };
+                reset.setOnFinished(event -> clearFeedback.run());
+                value.textProperty().addListener((observable, previous, current) -> {
+                    reset.stop(); clearFeedback.run();
+                });
+                copy.setOnAction(event -> {
+                    var content = new javafx.scene.input.ClipboardContent();
+                    content.putString(value.getText().replace("\n", ""));
+                    boolean copied = javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+                    feedback.setText(copied ? "Copied" : "Couldn’t copy. Try again.");
+                    feedback.setVisible(true);
+                    icon.setContent(copied ? "M5 12l4 4L19 6" : copyPath);
+                    copy.getTooltip().setText(copied ? "Checksum copied" : "Try copying again");
+                    reset.playFromStart();
+                });
+                HBox.setHgrow(value, Priority.ALWAYS);
+                var checksum = new HBox(8, value, copy); checksum.setAlignment(Pos.CENTER_LEFT);
+                checksum.setMinWidth(0); checksum.setMaxWidth(Double.MAX_VALUE);
+                grid.add(new VBox(3, checksum, feedback), 1, row++);
+            } else grid.add(value, 1, row++);
             GridPane.setValignment(key, javafx.geometry.VPos.TOP);
             GridPane.setValignment(value, javafx.geometry.VPos.TOP);
         }
@@ -43,10 +85,15 @@ final class DriveItemDialogs {
 
     static void updateProperty(Dialog<?> dialog, String key, String value) {
         if (dialog.getDialogPane().getProperties().get("drive-property:" + key) instanceof Label label) {
-            label.setText(value);
+            label.setText(key.equals("SHA-256") ? formatChecksum(value) : value);
             if (dialog.isShowing() && dialog.getDialogPane().getScene().getWindow() instanceof javafx.stage.Stage stage)
                 stage.sizeToScene();
         }
+    }
+
+    private static String formatChecksum(String value) {
+        if (value == null) return "—";
+        return value.matches("[0-9a-fA-F]{64}") ? value.substring(0, 32) + "\n" + value.substring(32) : value;
     }
 
     static Dialog<ButtonType> delete(Window owner, Path entry, int recipients) {
