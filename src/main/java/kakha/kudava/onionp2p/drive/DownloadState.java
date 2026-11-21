@@ -19,7 +19,21 @@ final class DownloadState {
             AppData.restrictToOwner(temporary);
             try (var output = Files.newOutputStream(temporary)) { values.store(output, "Onion-P2P download state"); }
             try (var channel = java.nio.channels.FileChannel.open(temporary, StandardOpenOption.WRITE)) { channel.force(true); }
-            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    break;
+                } catch (AccessDeniedException locked) {
+                    // Windows can briefly deny replacement while a reader or scanner has the checkpoint open.
+                    if (attempt >= 5) throw locked;
+                    try { Thread.sleep(10L << attempt); }
+                    catch (InterruptedException stopped) {
+                        Thread.currentThread().interrupt();
+                        var interrupted = new InterruptedIOException("Checkpoint write interrupted.");
+                        interrupted.initCause(stopped); throw interrupted;
+                    }
+                }
+            }
         } finally { Files.deleteIfExists(temporary); }
     }
 }

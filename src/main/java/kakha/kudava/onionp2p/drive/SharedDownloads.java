@@ -23,8 +23,12 @@ public final class SharedDownloads implements AutoCloseable {
         });
     }
     public DownloadQueue queue() { return queue; }
+    public Path defaultDestination() { return defaultDestination; }
     public void file(SharedDriveStore.SharedFile share, String sender) {
-        add(share, sender, "", share.name(), false, share.size(), defaultDestination, true);
+        file(share, sender, defaultDestination);
+    }
+    public void file(SharedDriveStore.SharedFile share, String sender, Path saveIn) {
+        add(share, sender, "", share.name(), false, share.size(), saveIn, true);
     }
     public void folderItem(SharedDriveStore.SharedFile share, String sender, String relative,
                            String name, boolean folder, long size, Path saveIn) {
@@ -33,6 +37,7 @@ public final class SharedDownloads implements AutoCloseable {
     private void add(SharedDriveStore.SharedFile share, String sender, String relative, String name,
                      boolean folder, long size, Path saveIn, boolean rootFile) {
         try {
+            saveIn = saveIn.toAbsolutePath().normalize();
             var values = new Properties();
             values.setProperty("request.task", UUID.randomUUID().toString());
             values.setProperty("request.share", share.id()); values.setProperty("request.owner", share.contactLink());
@@ -40,7 +45,9 @@ public final class SharedDownloads implements AutoCloseable {
             values.setProperty("request.folder", Boolean.toString(folder)); values.setProperty("request.size", Long.toString(size));
             values.setProperty("request.saveIn", saveIn.toAbsolutePath().normalize().toString());
             values.setProperty("request.rootFile", Boolean.toString(rootFile));
-            String key = share.contactLink() + ":" + share.id() + (rootFile ? "" : ":" + relative + ":" + saveIn);
+            String key = share.contactLink() + ":" + share.id() + (rootFile
+                    ? saveIn.equals(defaultDestination) ? "" : ":to:" + saveIn
+                    : ":" + relative + ":" + saveIn);
             queue.add(key, share.contactLink(), sender, name, folder ? -1 : size, new FileWork(values));
         } catch (IOException error) { throw new UncheckedIOException("Could not save download request", error); }
     }

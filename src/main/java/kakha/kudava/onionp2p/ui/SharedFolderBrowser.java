@@ -1,6 +1,5 @@
 package kakha.kudava.onionp2p.ui;
 
-import kakha.kudava.onionp2p.account.AppData;
 import kakha.kudava.onionp2p.contacts.ContactManager;
 import kakha.kudava.onionp2p.drive.FolderAccess;
 import kakha.kudava.onionp2p.drive.SharedDriveStore;
@@ -153,15 +152,21 @@ final class SharedFolderBrowser {
         });
     }
     private void downloadSelection(FolderAccess.Entry selected) {
+        downloadSelection(selected, false);
+    }
+    private void downloadSelection(FolderAccess.Entry selected, boolean chooseDestination) {
         String path = selected == null ? relative : childPath(selected.name());
         boolean folder = selected == null || selected.folder();
         String name = selected == null ? (relative.isEmpty() ? share.name() : relative.substring(relative.lastIndexOf('/') + 1)) : selected.name();
-        DirectoryChooser chooser = new DirectoryChooser(); chooser.setTitle("Save " + name + " in…");
-        Path defaults = AppData.directory().resolve("drive").resolve("shared");
-        try { Files.createDirectories(defaults); chooser.setInitialDirectory(defaults.toFile()); } catch (Exception ignored) {}
-        var chosen = chooser.showDialog(dialog.getDialogPane().getScene().getWindow());
-        if (chosen == null) return;
-        manager.downloads().folderItem(share, sender, path, name, folder, selected == null ? -1 : selected.size(), chosen.toPath());
+        Path destination = manager.downloads().defaultDestination();
+        if (chooseDestination) {
+            DirectoryChooser chooser = new DirectoryChooser(); chooser.setTitle("Download " + name + " to…");
+            try { Files.createDirectories(destination); chooser.setInitialDirectory(destination.toFile()); } catch (Exception ignored) {}
+            var chosen = chooser.showDialog(dialog.getDialogPane().getScene().getWindow());
+            if (chosen == null) return;
+            destination = chosen.toPath();
+        }
+        manager.downloads().folderItem(share, sender, path, name, folder, selected == null ? -1 : selected.size(), destination);
         dialog.close();
         showDownloads.run();
     }
@@ -176,6 +181,7 @@ final class SharedFolderBrowser {
         if (entry != null && entry.folder()) menu.getItems().add(menuItem("Open",
                 "M3 7h7l2 2h9v11H3z M3 9h18", () -> load(childPath(entry.name()))));
         menu.getItems().addAll(menuItem("Download", "M12 3v12 M7 10l5 5 5-5 M4 19h16", () -> downloadSelection(entry)),
+                menuItem("Download to…", "M3 7V4h6l2 3h10v14H3z M12 10v8 M8 14l4 4 4-4", () -> downloadSelection(entry, true)),
                 new SeparatorMenuItem(), menuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z",
                         () -> showProperties(entry)));
         menu.setOnShown(event -> {

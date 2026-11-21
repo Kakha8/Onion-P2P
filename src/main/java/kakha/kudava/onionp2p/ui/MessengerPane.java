@@ -2450,6 +2450,7 @@ final class MessengerPane extends BorderPane {
         }
         menu.getItems().addAll(
                 driveMenuItem("Download", "M12 3v12 M7 10l5 5 5-5 M4 19h16", () -> downloadSharedDriveFile(file, sender)),
+                driveMenuItem("Download to…", "M3 7V4h6l2 3h10v14H3z M12 10v8 M8 14l4 4 4-4", () -> downloadSharedDriveFileTo(file, sender)),
                 new SeparatorMenuItem(),
                 driveMenuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z", () -> showSharedDriveProperties(file, sender)));
         menu.setOnShown(event -> {
@@ -3221,9 +3222,21 @@ final class MessengerPane extends BorderPane {
     }
 
     private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender) {
-        if (file.folder()) manager.downloads().folderItem(file, sender, "", file.name(), true, -1,
-                AppData.directory().resolve("drive/shared"));
-        else manager.downloads().file(file, sender);
+        downloadSharedDriveFile(file, sender, manager.downloads().defaultDestination());
+    }
+
+    private void downloadSharedDriveFileTo(SharedDriveStore.SharedFile file, String sender) {
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Download " + file.name() + " to…");
+        Path defaults = manager.downloads().defaultDestination();
+        try { Files.createDirectories(defaults); chooser.setInitialDirectory(defaults.toFile()); } catch (IOException ignored) {}
+        File chosen = chooser.showDialog(getScene() == null ? null : getScene().getWindow());
+        if (chosen != null) downloadSharedDriveFile(file, sender, chosen.toPath());
+    }
+
+    private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender, Path directory) {
+        if (file.folder()) manager.downloads().folderItem(file, sender, "", file.name(), true, -1, directory);
+        else manager.downloads().file(file, sender, directory);
         activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING);
     }
 

@@ -58,7 +58,7 @@ class SharedFolderMenuTest {
                             new FolderAccess.Entry("notes.txt", false, 512), new FolderAccess.Entry("Nested", true, -1)}) {
                         ContextMenu menu = (ContextMenu) menuMethod.invoke(browser, entry);
                         List<MenuItem> options = menu.getItems().stream().filter(item -> !(item instanceof SeparatorMenuItem)).toList();
-                        assertEquals(entry != null && entry.folder() ? List.of("Open", "Download", "Properties") : List.of("Download", "Properties"),
+                        assertEquals(entry != null && entry.folder() ? List.of("Open", "Download", "Download to…", "Properties") : List.of("Download", "Download to…", "Properties"),
                                 options.stream().map(MenuItem::getText).toList());
                         assertTrue(options.stream().allMatch(item -> item.getGraphic() != null));
                         assertTrue(menu.getStyleClass().contains("drive-entry-menu"));

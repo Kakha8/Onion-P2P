@@ -40,7 +40,7 @@ class SharedDriveActionsTest {
                 var pane = new MessengerPane(manager, "Alice", () -> {});
                 var file = new SharedDriveStore.SharedFile(UUID.randomUUID().toString(), "test-contact", "Report.pdf", null, 260300, 0);
                 var menu = pane.sharedDriveEntryMenu(file, "Bob");
-                assertEquals(List.of("Download", "Properties"), menu.getItems().stream()
+                assertEquals(List.of("Download", "Download to…", "Properties"), menu.getItems().stream()
                         .filter(item -> !(item instanceof SeparatorMenuItem)).map(MenuItem::getText).toList());
                 assertTrue(menu.getItems().stream().filter(item -> !(item instanceof SeparatorMenuItem)).allMatch(item -> item.getGraphic() != null));
                 var paneRoot = new StackPane(pane);
@@ -66,9 +66,25 @@ class SharedDriveActionsTest {
                     assertEquals(1, manager.downloads().queue().items().size(), "Download menu must enqueue the transfer");
                     assertEquals("Report.pdf", manager.downloads().queue().items().getFirst().name());
                     var folder = new SharedDriveStore.SharedFile(UUID.randomUUID().toString(), "test-contact", "Documents", null, -1, 0);
-                    assertEquals(List.of("Open folder", "Download", "Properties"), pane.sharedDriveEntryMenu(folder, "Bob").getItems().stream()
+                    assertEquals(List.of("Open folder", "Download", "Download to…", "Properties"), pane.sharedDriveEntryMenu(folder, "Bob").getItems().stream()
                             .filter(item -> !(item instanceof SeparatorMenuItem)).map(MenuItem::getText).toList());
-                } catch (ReflectiveOperationException error) { throw new RuntimeException(error); }
+                    Path chosen = temp.resolve("Chosen downloads");
+                    var downloadTo = MessengerPane.class.getDeclaredMethod("downloadSharedDriveFile", SharedDriveStore.SharedFile.class, String.class, Path.class);
+                    downloadTo.setAccessible(true); downloadTo.invoke(pane, file, "Bob", chosen);
+                    assertEquals(2, manager.downloads().queue().items().size(), "A custom destination must not reuse a request to a different folder");
+                    manager.downloads().file(file, "Bob", chosen.resolve("sub/.."));
+                    assertEquals(2, manager.downloads().queue().items().size(), "The same normalized destination should reuse its active request");
+                    try (var journals = Files.list(temp.resolve("download-state/queue"))) {
+                        assertTrue(journals.filter(path -> path.getFileName().toString().endsWith(".properties")).anyMatch(path -> {
+                            try {
+                                var saved = new Properties();
+                                try (var input = Files.newInputStream(path)) { saved.load(input); }
+                                return chosen.toAbsolutePath().toString().equals(saved.getProperty("request.saveIn"))
+                                        && "true".equals(saved.getProperty("request.rootFile"));
+                            } catch (java.io.IOException error) { throw new java.io.UncheckedIOException(error); }
+                        }), "The chosen folder must be saved for resume after restarting");
+                    }
+                } catch (ReflectiveOperationException | java.io.IOException error) { throw new RuntimeException(error); }
                 finally { paneRoot.getChildren().clear(); }
             });
         } finally {
