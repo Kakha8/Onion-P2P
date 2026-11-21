@@ -6,6 +6,9 @@ import kakha.kudava.onionp2p.drive.SharedDriveStore;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ReadOnlyBooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Pos;
 import javafx.geometry.Side;
 import javafx.scene.control.*;
@@ -42,10 +45,16 @@ final class SharedFolderBrowser {
     private int generation;
     private boolean busy;
     private boolean loadingRequest;
+    private final BooleanProperty ownerOnline = new SimpleBooleanProperty();
 
     SharedFolderBrowser(Window owner, ContactManager manager, SharedDriveStore.SharedFile share,
                         String sender, ExecutorService workers, Runnable showDownloads) {
+        this(owner, manager, share, sender, workers, showDownloads, null);
+    }
+    SharedFolderBrowser(Window owner, ContactManager manager, SharedDriveStore.SharedFile share,
+                        String sender, ExecutorService workers, Runnable showDownloads, ReadOnlyBooleanProperty online) {
         this.manager = manager; this.share = share; this.workers = workers;
+        if (online != null) ownerOnline.bind(online);
         this.sender = sender; this.showDownloads = showDownloads;
         dialog.initOwner(owner); dialog.initStyle(StageStyle.TRANSPARENT); dialog.setTitle(share.name());
         DialogPane pane = dialog.getDialogPane();
@@ -132,6 +141,7 @@ final class SharedFolderBrowser {
                 Platform.runLater(() -> {
                     if (request != generation) return;
                     loadingRequest = false;
+                    if (!ownerOnline.isBound()) ownerOnline.set(true);
                     cache.put(path, entries); files.getItems().setAll(entries); busy(false);
                     status.setText(entries.size() + " items · Updates automatically");
                 });
@@ -139,6 +149,7 @@ final class SharedFolderBrowser {
                 Platform.runLater(() -> {
                     if (request != generation) return;
                     loadingRequest = false;
+                    if (!ownerOnline.isBound()) ownerOnline.set(false);
                     busy(false);
                     if ("Folder or file is unavailable. Access may have been removed.".equals(error.getMessage())) {
                         cache.remove(path); files.getItems().clear();
@@ -155,6 +166,7 @@ final class SharedFolderBrowser {
         downloadSelection(selected, false);
     }
     private void downloadSelection(FolderAccess.Entry selected, boolean chooseDestination) {
+        if (!ownerOnline.get()) return;
         String path = selected == null ? relative : childPath(selected.name());
         boolean folder = selected == null || selected.folder();
         String name = selected == null ? (relative.isEmpty() ? share.name() : relative.substring(relative.lastIndexOf('/') + 1)) : selected.name();
@@ -166,6 +178,7 @@ final class SharedFolderBrowser {
             if (chosen == null) return;
             destination = chosen.toPath();
         }
+        if (!ownerOnline.get()) return;
         manager.downloads().folderItem(share, sender, path, name, folder, selected == null ? -1 : selected.size(), destination);
         dialog.close();
         showDownloads.run();
@@ -180,8 +193,10 @@ final class SharedFolderBrowser {
         menu.getStyleClass().add("drive-entry-menu");
         if (entry != null && entry.folder()) menu.getItems().add(menuItem("Open",
                 "M3 7h7l2 2h9v11H3z M3 9h18", () -> load(childPath(entry.name()))));
-        menu.getItems().addAll(menuItem("Download", "M12 3v12 M7 10l5 5 5-5 M4 19h16", () -> downloadSelection(entry)),
-                menuItem("Download to…", "M3 7V4h6l2 3h10v14H3z M12 10v8 M8 14l4 4 4-4", () -> downloadSelection(entry, true)),
+        var download = menuItem("Download", "M12 3v12 M7 10l5 5 5-5 M4 19h16", () -> downloadSelection(entry));
+        var downloadTo = menuItem("Download to…", "M3 7V4h6l2 3h10v14H3z M12 10v8 M8 14l4 4 4-4", () -> downloadSelection(entry, true));
+        download.disableProperty().bind(ownerOnline.not()); downloadTo.disableProperty().bind(ownerOnline.not());
+        menu.getItems().addAll(download, downloadTo,
                 new SeparatorMenuItem(), menuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z",
                         () -> showProperties(entry)));
         menu.setOnShown(event -> {

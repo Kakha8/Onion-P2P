@@ -169,6 +169,7 @@ final class MessengerPane extends BorderPane {
     private final java.util.Set<String> checkingPresence = ConcurrentHashMap.newKeySet();
     private final Map<String, Presence> presence = new ConcurrentHashMap<>();
     private final Map<String, List<Label>> sharedOwnerIndicators = new HashMap<>();
+    private final Map<String, BooleanProperty> sharedOwnerOnline = new HashMap<>();
     private final Map<String, ActiveTransfer> activeTransfers = new ConcurrentHashMap<>();
     private final Map<String, ActiveOutgoingMessage> activeOutgoingMessages = new ConcurrentHashMap<>();
     private final java.util.Set<String> readReceiptsSent = ConcurrentHashMap.newKeySet();
@@ -822,7 +823,13 @@ final class MessengerPane extends BorderPane {
     }
 
     private void refreshSharedOwnerPresence(String link) {
+        sharedOwnerOnlineProperty(link).set(presence.getOrDefault(link, Presence.checking()).online());
         for (Label indicator : sharedOwnerIndicators.getOrDefault(link, List.of())) updateSharedOwnerPresence(indicator, link);
+    }
+
+    private BooleanProperty sharedOwnerOnlineProperty(String link) {
+        return sharedOwnerOnline.computeIfAbsent(link, ignored -> new SimpleBooleanProperty(
+                presence.getOrDefault(link, Presence.checking()).online()));
     }
 
     private void updateSharedOwnerPresence(Label indicator, String link) {
@@ -2424,7 +2431,8 @@ final class MessengerPane extends BorderPane {
         row.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 if (file.folder()) {
-                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, () -> activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING)).show();
+                    new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers,
+                            () -> activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING), sharedOwnerOnlineProperty(file.contactLink())).show();
                 } else if (file.downloaded()) {
                     try { java.awt.Desktop.getDesktop().open(path.toFile()); }
                     catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
@@ -2441,16 +2449,19 @@ final class MessengerPane extends BorderPane {
         menu.getStyleClass().add("drive-entry-menu");
         if (file.folder()) {
             menu.getItems().add(driveMenuItem("Open folder", "M3 7h7l2 2h9v11H3z M3 9h18",
-                    () -> new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers, () -> activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING)).show()));
+                    () -> new SharedFolderBrowser(getScene().getWindow(), manager, file, sender, driveWorkers,
+                            () -> activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING), sharedOwnerOnlineProperty(file.contactLink())).show()));
         } else if (file.downloaded()) {
             menu.getItems().add(driveMenuItem("Open", "M14 3h7v7 M21 3l-11 11 M10 3H3v18h18v-7", () -> {
                 try { java.awt.Desktop.getDesktop().open(Path.of(file.path()).toFile()); }
                 catch (Exception error) { showDriveAlert(Alert.AlertType.ERROR, "Open file", "Could not open this file: " + error.getMessage()); }
             }));
         }
-        menu.getItems().addAll(
-                driveMenuItem("Download", "M12 3v12 M7 10l5 5 5-5 M4 19h16", () -> downloadSharedDriveFile(file, sender)),
-                driveMenuItem("Download to…", "M3 7V4h6l2 3h10v14H3z M12 10v8 M8 14l4 4 4-4", () -> downloadSharedDriveFileTo(file, sender)),
+        var download = driveMenuItem("Download", "M12 3v12 M7 10l5 5 5-5 M4 19h16", () -> downloadSharedDriveFile(file, sender));
+        var downloadTo = driveMenuItem("Download to…", "M3 7V4h6l2 3h10v14H3z M12 10v8 M8 14l4 4 4-4", () -> downloadSharedDriveFileTo(file, sender));
+        var online = sharedOwnerOnlineProperty(file.contactLink());
+        download.disableProperty().bind(online.not()); downloadTo.disableProperty().bind(online.not());
+        menu.getItems().addAll(download, downloadTo,
                 new SeparatorMenuItem(),
                 driveMenuItem("Properties", "M12 8h.01 M11 12h1v4h1 M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0Z", () -> showSharedDriveProperties(file, sender)));
         menu.setOnShown(event -> {
@@ -3226,6 +3237,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private void downloadSharedDriveFileTo(SharedDriveStore.SharedFile file, String sender) {
+        if (!presence.getOrDefault(file.contactLink(), Presence.checking()).online()) return;
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Download " + file.name() + " to…");
         Path defaults = manager.downloads().defaultDestination();
@@ -3235,6 +3247,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender, Path directory) {
+        if (!presence.getOrDefault(file.contactLink(), Presence.checking()).online()) return;
         if (file.folder()) manager.downloads().folderItem(file, sender, "", file.name(), true, -1, directory);
         else manager.downloads().file(file, sender, directory);
         activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING);

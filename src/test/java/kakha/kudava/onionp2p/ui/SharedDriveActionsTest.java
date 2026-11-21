@@ -62,6 +62,13 @@ class SharedDriveActionsTest {
                     assertEquals(1, row.lookupAll(".button").size());
                     assertNotNull(row.lookup(".drive-entry-more"));
                     assertNull(row.lookup(".drive-row-action"));
+                    assertTrue(menu.getItems().getFirst().isDisable());
+                    assertTrue(menu.getItems().get(1).isDisable());
+                    var online = MessengerPane.class.getDeclaredMethod("contactCameOnline", String.class);
+                    online.setAccessible(true); online.invoke(pane, file.contactLink());
+                    var refreshPresence = MessengerPane.class.getDeclaredMethod("refreshSharedOwnerPresence", String.class);
+                    refreshPresence.setAccessible(true); refreshPresence.invoke(pane, file.contactLink());
+                    assertFalse(menu.getItems().getFirst().isDisable());
                     menu.getItems().getFirst().fire();
                     assertEquals(1, manager.downloads().queue().items().size(), "Download menu must enqueue the transfer");
                     assertEquals("Report.pdf", manager.downloads().queue().items().getFirst().name());

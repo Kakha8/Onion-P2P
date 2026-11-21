@@ -48,7 +48,8 @@ class SharedFolderMenuTest {
             fx(() -> {
                 try {
                     var share = new SharedDriveStore.SharedFile(UUID.randomUUID().toString(), "owner", "Documents", null, -1, 0);
-                    var browser = new SharedFolderBrowser(null, manager, share, "Alice", workers, () -> {});
+                    var online = new javafx.beans.property.SimpleBooleanProperty(false);
+                    var browser = new SharedFolderBrowser(null, manager, share, "Alice", workers, () -> {}, online);
                     var dialog = (Dialog<?>) field(browser, "dialog");
                     assertTrue(dialog.getDialogPane().getContent().lookupAll(".button").stream()
                             .map(node -> ((Button) node).getText()).noneMatch(text -> text != null && text.contains("Download")));
@@ -62,6 +63,16 @@ class SharedFolderMenuTest {
                                 options.stream().map(MenuItem::getText).toList());
                         assertTrue(options.stream().allMatch(item -> item.getGraphic() != null));
                         assertTrue(menu.getStyleClass().contains("drive-entry-menu"));
+                        var downloads = options.stream().filter(item -> item.getText().startsWith("Download")).toList();
+                        assertEquals(2, downloads.size());
+                        assertTrue(downloads.stream().allMatch(MenuItem::isDisable));
+                        downloads.forEach(MenuItem::fire);
+                        assertTrue(manager.downloads().queue().items().isEmpty());
+                        online.set(true);
+                        assertTrue(downloads.stream().noneMatch(MenuItem::isDisable));
+                        online.set(false);
+                        assertTrue(downloads.stream().allMatch(MenuItem::isDisable));
+                        assertFalse(options.getLast().isDisable());
                     }
                 } catch (Exception error) { throw new RuntimeException(error); }
             });

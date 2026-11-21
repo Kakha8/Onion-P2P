@@ -5,7 +5,7 @@ import kakha.kudava.onionp2p.drive.SharedDriveStore;
 import kakha.kudava.onionp2p.tor.OnionServer;
 import javafx.application.Platform;
 import javafx.scene.Scene;
-import javafx.scene.control.Label;
+import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -32,6 +32,7 @@ class SharedDriveStatusTest {
         String bob = ContactLink.loadOrCreate(temp.resolve("bob"), "Bob");
         Path downloaded = Files.writeString(temp.resolve("Saved.pdf"), "saved");
         var rows = new ArrayList<HBox>();
+        var menus = new ArrayList<ContextMenu>();
         MessengerPane[] pane = new MessengerPane[1];
         try (var tor = new OnionServer(temp); var manager = new ContactManager(temp, tor, ignored -> {})) {
             fx(() -> {
@@ -39,8 +40,18 @@ class SharedDriveStatusTest {
                 try {
                     var factory = MessengerPane.class.getDeclaredMethod("sharedDriveEntryRow", SharedDriveStore.SharedFile.class, String.class);
                     factory.setAccessible(true);
-                    rows.add((HBox) factory.invoke(pane[0], new SharedDriveStore.SharedFile("one", bob, "Report.pdf", null, 260300, 0), "Bob"));
-                    rows.add((HBox) factory.invoke(pane[0], new SharedDriveStore.SharedFile("two", bob, "Saved.pdf", downloaded.toString(), 5, 0), "Bob"));
+                    var availableFile = new SharedDriveStore.SharedFile("one", bob, "Report.pdf", null, 260300, 0);
+                    var completedFile = new SharedDriveStore.SharedFile("two", bob, "Saved.pdf", downloaded.toString(), 5, 0);
+                    rows.add((HBox) factory.invoke(pane[0], availableFile, "Bob"));
+                    rows.add((HBox) factory.invoke(pane[0], completedFile, "Bob"));
+                    menus.add(pane[0].sharedDriveEntryMenu(availableFile, "Bob"));
+                    menus.add(pane[0].sharedDriveEntryMenu(completedFile, "Bob"));
+                    for (var menu : menus) {
+                        assertDownloadsDisabled(menu, true);
+                        menu.getItems().stream().filter(item -> "Download".equals(item.getText()) || "Download to…".equals(item.getText())).forEach(MenuItem::fire);
+                    }
+                    assertTrue(manager.downloads().queue().items().isEmpty(), "Offline actions must not start a download or open a picker");
+                    assertFalse(menus.get(1).getItems().getFirst().isDisable(), "Opening a local copy must remain available offline");
                     var root = new VBox(rows.toArray(HBox[]::new));
                     var scene = new Scene(root, 820, 128);
                     scene.getStylesheets().add(getClass().getResource("/kakha/kudava/onionp2p/app.css").toExternalForm());
@@ -59,6 +70,7 @@ class SharedDriveStatusTest {
             });
             var offline = new CompletableFuture<Void>();
             fx(() -> {
+                menus.forEach(menu -> assertDownloadsDisabled(menu, false));
                 for (HBox row : rows) {
                     var indicator = (Label) row.lookup(".drive-owner-presence");
                     assertTrue(indicator.getStyleClass().contains("online"));
@@ -80,6 +92,7 @@ class SharedDriveStatusTest {
             });
             offline.get(5, TimeUnit.SECONDS);
             fx(() -> {
+                menus.forEach(menu -> assertDownloadsDisabled(menu, true));
                 for (HBox row : rows) {
                     var indicator = (Label) row.lookup(".drive-owner-presence");
                     assertTrue(indicator.getStyleClass().contains("offline"));
@@ -89,5 +102,10 @@ class SharedDriveStatusTest {
         } finally {
             if (previous == null) System.clearProperty("onion.dataDir"); else System.setProperty("onion.dataDir", previous);
         }
+    }
+    private static void assertDownloadsDisabled(ContextMenu menu, boolean disabled) {
+        var downloads = menu.getItems().stream().filter(item -> "Download".equals(item.getText()) || "Download to…".equals(item.getText())).toList();
+        assertEquals(2, downloads.size()); downloads.forEach(item -> assertEquals(disabled, item.isDisable()));
+        assertFalse(menu.getItems().getLast().isDisable(), "Properties must stay available offline");
     }
 }

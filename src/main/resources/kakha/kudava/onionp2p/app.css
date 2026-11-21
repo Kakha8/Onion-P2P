@@ -295,6 +295,8 @@
 .drive-entry-menu .menu-item { -fx-padding: 8 14 8 10; -fx-background-radius: 5; }
 .drive-entry-menu .menu-item .label { -fx-text-fill: #dce3ec; -fx-font-size: 12px; }
 .drive-entry-menu .menu-item:focused { -fx-background-color: #293442; }
+.drive-entry-menu .menu-item:disabled { -fx-opacity: 0.4; }
+.drive-entry-menu .menu-item:disabled:focused { -fx-background-color: transparent; }
 .drive-entry-menu .menu-item .drive-menu-glyph { -fx-min-width: 18; -fx-pref-width: 18; -fx-max-width: 18; -fx-min-height: 18; -fx-pref-height: 18; -fx-max-height: 18; }
 .drive-entry-menu .separator .line { -fx-border-color: #35404d transparent transparent transparent; }
 .drive-entry-icon { -fx-alignment: center; -fx-min-width: 36; -fx-pref-width: 36; -fx-max-width: 36; -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36; -fx-background-color: #202a37; -fx-background-radius: 7; }
