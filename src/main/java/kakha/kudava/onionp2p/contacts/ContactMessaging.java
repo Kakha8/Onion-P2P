@@ -38,6 +38,7 @@ public final class ContactMessaging {
     static final int PREVIOUS_MAGIC = 0x4f503035; // OP05 adds encrypted file captions
     static final int LEGACY_MAGIC = 0x4f503034;
     public static final int MAX_BODY_BYTES = 4096;
+    /** Chat attachment limit; resumable Drive transfers use long file sizes and bounded chunks. */
     public static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     private static final int CHUNK_BYTES = 64 * 1024;
     private static final int MAX_SHARE_INVENTORY = 100000;
@@ -166,7 +167,7 @@ public final class ContactMessaging {
                                String link, String shareId, Path file, boolean newConnection, LongConsumer progress,
                                BooleanSupplier cancelled) throws Exception {
         long size = Files.isDirectory(file, java.nio.file.LinkOption.NOFOLLOW_LINKS) ? -1 : Files.size(file);
-        if (size < -1 || size > MAX_FILE_BYTES) throw new IllegalArgumentException("Files must be 1 GiB or smaller.");
+        if (size < -1) throw new IllegalArgumentException("Invalid shared file size.");
         String name = safeFileName(file.getFileName().toString());
         long timestamp = System.currentTimeMillis();
         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
@@ -223,7 +224,7 @@ public final class ContactMessaging {
             awaitReceiptSend(output, material, nonce, aad);
             throw new IOException(reason.isBlank() ? "This shared file is no longer available." : reason);
         }
-        if (type != 6 || length < 16 || length > MAX_FILE_BYTES + 4_400) throw new IOException("The sender did not provide the shared file.");
+        if (type != 6 || length < 16) throw new IOException("The sender did not provide the shared file.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
         receiveFile(input, output, material, null, sharedStore, link, messageId, timestamp, nonce, aad, length, true, true, shareId, updated, null, progress);
     }
@@ -262,7 +263,7 @@ public final class ContactMessaging {
         sendFolderRequest(socket, material, (byte) 10, shareId, relative, first);
         socket.setSoTimeout(30000);
         var response = readDriveResponse(socket, material);
-        if (response.type() != 6 || response.length() < 16 || response.length() > MAX_FILE_BYTES + 4400)
+        if (response.type() != 6 || response.length() < 16)
             throw new IOException("The sender did not provide the file.");
         receiveFile(response.input(), response.output(), material, null, null, link, response.id(), response.timestamp(),
                 response.nonce(), response.aad(), response.length(), true, true, null, null, directory, progress);
@@ -442,7 +443,7 @@ public final class ContactMessaging {
         byte[] nonce = new byte[12]; input.readFully(nonce);
         byte type = input.readByte();
         int length = input.readInt();
-        long maxLength = type == 1 || type == 6 ? MAX_FILE_BYTES + 4_400 : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 || type == 15 || type == 16 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
+        long maxLength = type == 1 ? MAX_FILE_BYTES + 4_400 : type == 6 ? Integer.MAX_VALUE : type == 11 ? 20 + 16 * MAX_SHARE_INVENTORY : type == 12 || type == 14 || type == 15 || type == 16 ? 18000 : type == 4 ? 512 : type == 5 ? 32 : (type == 8 || type == 10) ? 16440 : MAX_BODY_BYTES + 16;
         if (length < 16 || length > maxLength) throw new IOException("Invalid message size.");
         if (type < 0 || type > 16 || type == 9 || type == 13) throw new IOException("Unsupported message type.");
         byte[] aad = aad(idBytes, timestamp, type, material.remotePublic(), material.localPublic());
@@ -509,12 +510,12 @@ public final class ContactMessaging {
                     if (Files.isSymbolicLink(target)) throw new IOException("Links cannot be shared.");
                 }
                 var attrs = Files.readAttributes(target, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
-                if (!attrs.isRegularFile() || attrs.size() > MAX_FILE_BYTES) throw new IOException("Unavailable file.");
+                if (!attrs.isRegularFile()) throw new IOException("Unavailable file.");
                 String sourceVersion = attrs.size() + ":" + attrs.lastModifiedTime() + ":" + attrs.fileKey();
                 // Bind every chunk to the same source version. A changed source is never appended.
                 long position = !version.isEmpty() && !version.endsWith(":" + sourceVersion) ? 0 : offset;
                 if (position > attrs.size()) throw new IOException("Invalid offset.");
-                end = Math.min(attrs.size(), position + 256 * 1024);
+                end = position + Math.min(256 * 1024, attrs.size() - position);
                 if (uploads != null) activity = uploads.begin(link, shareId, relative, target.getFileName().toString(), attrs.size(), position, input, requestId);
                 int queuePosition = uploads == null ? 0 : uploads.queuePosition(activity);
                 if (queuePosition > 0) {
@@ -601,7 +602,7 @@ public final class ContactMessaging {
                 catch (java.nio.charset.CharacterCodingException e) { throw new IOException("Invalid shared filename.", e); }
                 finally { Arrays.fill(nameBytes, (byte) 0); }
                 long size = metadata.getLong();
-                if (size < -1 || size > MAX_FILE_BYTES) throw new IOException("Shared file exceeds the 1 GiB limit.");
+                if (size < -1) throw new IOException("Invalid shared file size.");
                 sharedStore.recordOffer(uuidString(shareIdBytes), link, name, size, timestamp);
             } finally { Arrays.fill(payload, (byte) 0); }
             awaitReceiptSend(output, material, nonce, aad);
@@ -633,8 +634,8 @@ public final class ContactMessaging {
                     }
                     listing = bytes.toByteArray();
                 }
-                else if (!Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS) || Files.size(target) > MAX_FILE_BYTES)
-                    throw new IOException("File is unavailable or exceeds 1 GiB.");
+                else if (!Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                    throw new IOException("File is unavailable.");
             } catch (Exception unavailable) {
                 sendControl(output, input, material, (byte) 7, "Folder or file is unavailable. Access may have been removed.".getBytes(StandardCharsets.UTF_8));
                 return;
@@ -762,7 +763,9 @@ public final class ContactMessaging {
                     finally { Arrays.fill(captionBytes, (byte) 0); }
                 }
                 expectedSize = decrypted.readLong();
-                if (expectedSize < 0 || expectedSize > MAX_FILE_BYTES) throw new IOException("Attachment exceeds the 1 GiB limit.");
+                if (expectedSize < 0) throw new IOException("Invalid file size.");
+                if (!driveShare && expectedSize > MAX_FILE_BYTES) throw new IOException("Attachment exceeds the 1 GiB limit.");
+                if (expectedSize > ciphertextLength - 16L) throw new IOException("File size exceeds its encrypted frame.");
                 try (var target = Files.newOutputStream(temporary)) {
                     byte[] buffer = new byte[CHUNK_BYTES];
                     long written = 0;
@@ -805,7 +808,10 @@ public final class ContactMessaging {
     private static void sendFileOverStreams(DataOutputStream output, DataInputStream input,
                                             ContactRendezvous.Material material, String link, Path file) throws Exception {
         long fileSize = Files.size(file);
-        if (fileSize < 0 || fileSize > MAX_FILE_BYTES) throw new IOException("Shared file exceeds the 1 GiB limit.");
+        // Only the compatibility whole-file protocol has an int-sized frame. Drive's
+        // resumable chunk protocol has no whole-file frame and supports larger files.
+        if (fileSize < 0 || fileSize > Integer.MAX_VALUE - 285L)
+            throw new IOException("Use resumable Drive downloads for files this large.");
         String fileName = safeFileName(file.getFileName().toString());
         byte[] nameBytes = fileName.getBytes(StandardCharsets.UTF_8);
         byte[] emptyCaption = new byte[0];

@@ -38,6 +38,22 @@ final class DriveActivityPane extends VBox {
         for (Filter filter : Filter.values()) {
             var button = new ToggleButton(names[filter.ordinal()]); button.setUserData(filter); button.setToggleGroup(group);
             button.getStyleClass().add("activity-filter"); button.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(button, Priority.ALWAYS);
+            if (filter != Filter.ALL) {
+                ReadOnlyIntegerProperty count = switch (filter) {
+                    case ADDING -> imports.activeCountProperty();
+                    case UPLOADING -> uploads.activeEntryCountProperty();
+                    case DOWNLOADING -> downloads.activeEntryCountProperty();
+                    default -> throw new IllegalStateException();
+                };
+                var badge = new Label(); badge.getStyleClass().add("activity-count-badge");
+                badge.textProperty().bind(count.asString());
+                badge.visibleProperty().bind(button.selectedProperty().not().and(count.greaterThan(0)));
+                badge.managedProperty().bind(badge.visibleProperty());
+                var text = new Label(names[filter.ordinal()]); text.getStyleClass().add("activity-filter-label");
+                var content = new HBox(4, text, badge); content.setAlignment(Pos.CENTER);
+                button.setText(null); button.setGraphic(content); button.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                button.accessibleTextProperty().bind(javafx.beans.binding.Bindings.concat(names[filter.ordinal()], ", ", count, " active"));
+            }
             button.setOnAction(event -> { if (!button.isSelected()) button.setSelected(true); applyFilter(filter); });
             filters.getChildren().add(button);
         }

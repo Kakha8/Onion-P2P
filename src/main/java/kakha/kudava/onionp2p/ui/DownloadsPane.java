@@ -16,6 +16,7 @@ import java.util.*;
 final class DownloadsPane extends VBox {
     private final ReadOnlyIntegerWrapper activeCount = new ReadOnlyIntegerWrapper();
     private final ReadOnlyIntegerWrapper itemCount = new ReadOnlyIntegerWrapper();
+    private final ReadOnlyIntegerWrapper activeEntryCount = new ReadOnlyIntegerWrapper();
     private final DownloadQueue queue;
     private final Label title = new Label("Downloads"), summary = new Label("No downloads yet");
     private final VBox rows = new VBox();
@@ -63,9 +64,11 @@ final class DownloadsPane extends VBox {
     void reveal() { setVisible(true); setManaged(true); toFront(); }
     ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     ReadOnlyIntegerProperty itemCountProperty() { return itemCount.getReadOnlyProperty(); }
+    ReadOnlyIntegerProperty activeEntryCountProperty() { return activeEntryCount.getReadOnlyProperty(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<DownloadQueue.Item> items) {
         itemCount.set(items.size());
+        activeEntryCount.set((int) items.stream().filter(item -> item.active() && item.state() != DownloadQueue.State.PAUSED).count());
         int active = 0, done = 0, waiting = 0, paused = 0, queued = 0;
         for (var item : items) {
             if (item.active() && item.state() != DownloadQueue.State.PAUSED && item.state() != DownloadQueue.State.QUEUED) active++;

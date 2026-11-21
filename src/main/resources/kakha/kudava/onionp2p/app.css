@@ -14,6 +14,9 @@
 .toggle-button.activity-filter { -fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #94a3b5; -fx-padding: 5 7; -fx-background-radius: 5; -fx-font-size: 11px; -fx-cursor: hand; }
 .toggle-button.activity-filter:hover { -fx-background-color: #293442; -fx-text-fill: #e5edf6; }
 .toggle-button.activity-filter:selected { -fx-background-color: #303c4b; -fx-text-fill: #e5edf6; }
+.activity-count-badge { -fx-background-color: #344153; -fx-background-radius: 9; -fx-text-fill: #dce7f5; -fx-font-size: 9px; -fx-font-weight: bold; -fx-alignment: center; -fx-min-width: 15; -fx-padding: 1 4; }
+.activity-filter-label { -fx-text-fill: #94a3b5; -fx-font-size: 11px; }
+.activity-filter:selected .activity-filter-label, .activity-filter:hover .activity-filter-label { -fx-text-fill: #e5edf6; }
 .downloads-list, .downloads-list > .viewport, .downloads-rows { -fx-background-color: transparent; -fx-background-insets: 0; }
 .downloads-list { -fx-padding: 0; -fx-border-width: 0; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; }
 .download-row { -fx-padding: 8 12 8 14; -fx-spacing: 3; -fx-border-color: transparent transparent #303a47 transparent; }

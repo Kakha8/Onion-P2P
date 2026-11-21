@@ -13,6 +13,34 @@ import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FolderSharingTest {
+    @Test @Timeout(60)
+    void driveOffersFolderListingsAndChunksSupportFilesAboveTwoGiBWhileChatRejectsThem() throws Exception {
+        Path profile = temp.resolve("large-owner"), folder = Files.createDirectory(temp.resolve("large-folder"));
+        Path file = folder.resolve("large.bin"); long size = 3L * 1024 * 1024 * 1024 + 17;
+        // Sparse test data exercises long offsets without allocating a multi-gigabyte buffer or copy.
+        try (var channel = java.nio.channels.FileChannel.open(file, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.SPARSE)) {
+            channel.position(size - 1); channel.write(java.nio.ByteBuffer.wrap(new byte[]{42}));
+        }
+        var owner = new SharedDriveStore(profile); var receiver = new SharedDriveStore(temp.resolve("large-recipient"));
+        String hash = new kakha.kudava.onionp2p.drive.DriveChecksums(profile).sha256(file);
+        String id = UUID.randomUUID().toString(), folderId = UUID.randomUUID().toString();
+        try (var session = new Session(receiver, "owner", false)) {
+            ContactMessaging.sendDriveShare(session.client, material(true), owner, "recipient", id, file, true, ignored -> {}, () -> false);
+            assertEquals(size, receiver.all().getFirst().size());
+            ContactMessaging.sendDriveShare(session.client, material(true), owner, "recipient", folderId, folder, false, ignored -> {}, () -> false);
+        }
+        try (var session = new Session(owner, "recipient", true)) {
+            var direct = ContactMessaging.downloadChunk(session.client, material(false), id, "", size - 1, "", true);
+            assertEquals(size, direct.total()); assertEquals(size - 1, direct.offset()); assertArrayEquals(new byte[]{42}, direct.bytes());
+            assertTrue(direct.version().startsWith("sha256:" + hash + ":"));
+            assertEquals(size, ContactMessaging.browseFolder(session.client, material(false), folderId, "", false, receiver, "owner").getFirst().size());
+            var nested = ContactMessaging.downloadChunk(session.client, material(false), folderId, "large.bin", size - 1, "", false);
+            assertEquals(size - 1, nested.offset()); assertArrayEquals(new byte[]{42}, nested.bytes());
+        }
+        var error = assertThrows(IllegalArgumentException.class, () -> ContactMessaging.sendFile(null, material(true), null,
+                "recipient", file, true, ignored -> {}, () -> false));
+        assertTrue(error.getMessage().contains("1 GiB"));
+    }
     @Test @Timeout(30)
     void fourthRecipientReceivesAnEncryptedQueuePositionAndStartsAfterASlotIsFreed() throws Exception {
         var owner = new SharedDriveStore(temp.resolve("limited-owner"));

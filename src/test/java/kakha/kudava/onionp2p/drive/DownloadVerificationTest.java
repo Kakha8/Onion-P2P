@@ -10,6 +10,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DownloadVerificationTest {
+    @Test void longSizesAndResumeOffsetsAreAcceptedWithoutAllocatingTheWholeFile() throws Exception {
+        Path output = Files.createDirectory(temp.resolve("large")), checkpoint = temp.resolve("large.properties");
+        Path partial = output.resolve(".onion-resume-large.part");
+        long received = 2L * 1024 * 1024 * 1024 + 11, total = 3L * 1024 * 1024 * 1024;
+        try (var file = java.nio.channels.FileChannel.open(partial, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.SPARSE)) {
+            file.position(received - 1); file.write(java.nio.ByteBuffer.wrap(new byte[]{0}));
+        }
+        String token = version(new byte[]{1, 2, 3});
+        var saved = new Properties(); saved.setProperty("partial", partial.toString()); saved.setProperty("name", "large.bin");
+        saved.setProperty("version", token); saved.setProperty("received", Long.toString(received)); saved.setProperty("total", Long.toString(total));
+        DownloadState.write(checkpoint, saved);
+        var transfer = new ResumableFile(checkpoint, output);
+        assertThrows(CancellationException.class, () -> transfer.download(output, (offset, version) -> {
+            assertEquals(received, offset); assertEquals(token, version);
+            return new ResumableFile.Chunk(token, "large.bin", total, offset, new byte[]{1, 2, 3});
+        }, new DownloadQueue.Progress() {
+            public void stage(String detail) { fail("The incomplete file must not be verified yet"); }
+            public void update(long bytes, long size) { assertEquals(received + 3, bytes); assertEquals(total, size); throw new CancellationException(); }
+        }));
+        assertEquals(received + 3, new ResumableFile(checkpoint, output).received());
+        assertFalse(Files.exists(output.resolve("large.bin")));
+        transfer.discard();
+    }
     @TempDir Path temp;
     private static final DownloadQueue.Progress PROGRESS = new DownloadQueue.Progress() {
         public void update(long bytes, long total) {} public void stage(String detail) {}

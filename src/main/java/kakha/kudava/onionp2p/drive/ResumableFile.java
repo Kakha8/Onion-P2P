@@ -73,8 +73,8 @@ public final class ResumableFile {
             if (!version.isEmpty() && (!version.equals(chunk.version()) || total != chunk.total() || !name.equals(chunk.name()))) {
                 discard(); throw new IOException("The shared file changed. Retry to download the new version.");
             }
-            if (chunk.offset() != received || chunk.total() < 0 || chunk.total() > 1024L * 1024 * 1024
-                    || chunk.bytes().length > CHUNK_SIZE || received + chunk.bytes().length > chunk.total()
+            if (chunk.offset() != received || chunk.total() < 0 || received > chunk.total()
+                    || chunk.bytes().length > CHUNK_SIZE || chunk.bytes().length > chunk.total() - received
                     || chunk.bytes().length == 0 && received != chunk.total()) throw new IOException("Invalid download chunk.");
             version = chunk.version(); total = chunk.total(); name = chunk.name();
             if (partial == null) partial = Files.createTempFile(directory, ".onion-resume-", ".part");

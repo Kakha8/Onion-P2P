@@ -161,7 +161,6 @@ public final class SharedDownloads implements AutoCloseable {
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");
             for (var child : manager.browseSharedFolderForDownload(owner, shareId, remote, progress::stage)) {
                 if (members.size() >= 100000) throw new IOException("Folder download exceeds 100,000 entries.");
-                if (!child.folder() && child.size() > 1024L * 1024 * 1024) throw new IOException(child.name() + " exceeds the 1 GiB file limit.");
                 String childRemote = remote.isEmpty() ? child.name() : remote + "/" + child.name();
                 String childLocal = local.isEmpty() ? child.name() : local + "/" + child.name();
                 members.add(new Member(childRemote, childLocal, child.folder(), child.size()));
@@ -172,7 +171,10 @@ public final class SharedDownloads implements AutoCloseable {
     private static DownloadQueue.Progress scaled(DownloadQueue.Progress target, long offset, long size, long total) {
         return new DownloadQueue.Progress() {
             public void checkpoint() { target.checkpoint(); }
-            public void update(long received, long wireTotal) { target.update(offset + (wireTotal <= 0 ? 0 : received * size / wireTotal), total); }
+            public void update(long received, long wireTotal) {
+                long bytes = wireTotal <= 0 ? 0 : received >= wireTotal ? size : Math.min(size, (long) ((double) received / wireTotal * size));
+                target.update(offset + bytes, total);
+            }
             public void stage(String detail) { target.stage(detail); }
         };
     }

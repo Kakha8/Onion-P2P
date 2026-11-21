@@ -212,9 +212,6 @@ public final class ContactManager implements AutoCloseable {
             Path normalized = file.toAbsolutePath().normalize();
             if (java.nio.file.Files.isSymbolicLink(normalized) || (!java.nio.file.Files.isRegularFile(normalized) && !java.nio.file.Files.isDirectory(normalized)))
                 throw new java.io.IOException("File is no longer available: " + normalized.getFileName());
-            long size = java.nio.file.Files.isDirectory(normalized) ? -1 : java.nio.file.Files.size(normalized);
-            if (size > ContactMessaging.MAX_FILE_BYTES)
-                throw new IllegalArgumentException("Files must be 1 GiB or smaller: " + normalized.getFileName());
             if (sharedDriveStore.isPublishedForPathAndContact(normalized, canonical)) alreadyShared++;
             else toQueue.add(normalized);
         }

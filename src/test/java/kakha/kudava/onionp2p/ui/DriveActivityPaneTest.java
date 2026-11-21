@@ -55,14 +55,32 @@ class DriveActivityPaneTest {
                 root[0].applyCss(); root[0].layout();
                 assertEquals(2, pane[0].activeCountProperty().get());
                 assertEquals(4, pane[0].lookupAll(".activity-filter").size());
+                assertNull(tab(pane[0], DriveActivityPane.Filter.ALL).getGraphic());
+                assertFalse(badge(pane[0], DriveActivityPane.Filter.ADDING).isVisible(), "Completed imports have no active badge");
+                assertEquals("1", badge(pane[0], DriveActivityPane.Filter.UPLOADING).getText());
+                assertTrue(badge(pane[0], DriveActivityPane.Filter.UPLOADING).isVisible());
+                assertEquals("1", badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).getText());
+                assertTrue(badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).isVisible());
+                snapshot(root[0], "-badges");
+            });
+            String anotherUpload = uploads.begin("alice", "another-share", "", "Other.zip", 1000, 0, new Object());
+            fx(() -> assertEquals("2", badge(pane[0], DriveActivityPane.Filter.UPLOADING).getText(), "Count upload entries, even for the same recipient"));
+            uploads.acknowledged(anotherUpload, 1000);
+            fx(() -> {
+                assertEquals("1", badge(pane[0], DriveActivityPane.Filter.UPLOADING).getText());
                 pane[0].select(DriveActivityPane.Filter.ADDING);
                 assertEquals(1, pane[0].lookupAll(".activity-section").stream().filter(javafx.scene.Node::isManaged).count());
                 assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Added.txt".equals(((Label) node).getText())));
                 pane[0].select(DriveActivityPane.Filter.DOWNLOADING);
+                assertFalse(badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).isVisible(), "Selected tabs have no badge");
+                assertFalse(badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).isManaged());
+                assertTrue(badge(pane[0], DriveActivityPane.Filter.UPLOADING).isVisible());
                 var cancel = pane[0].lookupAll(".button").stream().filter(node -> "Cancel download".equals(node.getAccessibleText())).findFirst().orElseThrow();
                 ((Button) cancel).fire();
                 pane[0].select(DriveActivityPane.Filter.UPLOADING);
-                var stop = pane[0].lookupAll(".button").stream().filter(node -> "Cancel upload".equals(node.getAccessibleText())).findFirst().orElseThrow();
+                assertFalse(badge(pane[0], DriveActivityPane.Filter.UPLOADING).isVisible());
+                var stop = pane[0].lookupAll(".button").stream().filter(node -> node.isVisible() && node.isManaged()
+                        && "Cancel upload".equals(node.getAccessibleText())).findFirst().orElseThrow();
                 ((Button) stop).fire();
                 pane[0].select(DriveActivityPane.Filter.ALL);
                 root[0].applyCss(); root[0].layout();
@@ -70,6 +88,8 @@ class DriveActivityPaneTest {
             });
             fx(() -> {
                 assertEquals(0, pane[0].activeCountProperty().get());
+                assertFalse(badge(pane[0], DriveActivityPane.Filter.UPLOADING).isVisible());
+                assertFalse(badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).isVisible());
                 assertEquals(DownloadQueue.State.CANCELLED, downloads.items().getFirst().state());
                 assertEquals(UploadTracker.State.CANCELLED_BY_SENDER, uploads.items().getFirst().state());
                 root[0].applyCss(); root[0].layout();
@@ -77,6 +97,11 @@ class DriveActivityPaneTest {
             });
         }
     }
+    private static ToggleButton tab(DriveActivityPane pane, DriveActivityPane.Filter filter) {
+        return pane.lookupAll(".activity-filter").stream().map(node -> (ToggleButton) node)
+                .filter(button -> button.getUserData() == filter).findFirst().orElseThrow();
+    }
+    private static Label badge(DriveActivityPane pane, DriveActivityPane.Filter filter) { return (Label) tab(pane, filter).lookup(".activity-count-badge"); }
     private static void snapshot(StackPane root, String suffix) {
         String snapshot = System.getProperty("onion.activitySnapshot");
         if (snapshot != null) {

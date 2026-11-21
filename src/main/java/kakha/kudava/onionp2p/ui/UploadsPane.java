@@ -14,6 +14,7 @@ import java.util.function.Function;
 final class UploadsPane extends VBox {
     private final ReadOnlyIntegerWrapper activeCount = new ReadOnlyIntegerWrapper();
     private final ReadOnlyIntegerWrapper itemCount = new ReadOnlyIntegerWrapper();
+    private final ReadOnlyIntegerWrapper activeEntryCount = new ReadOnlyIntegerWrapper();
     private final Label title = new Label("Uploads"), summary = new Label("No uploads yet");
     private final Label limitNotice = new Label("3-recipient limit reached. Additional recipients are queued.");
     private final VBox rows = new VBox();
@@ -61,10 +62,13 @@ final class UploadsPane extends VBox {
     }
     ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     ReadOnlyIntegerProperty itemCountProperty() { return itemCount.getReadOnlyProperty(); }
+    ReadOnlyIntegerProperty activeEntryCountProperty() { return activeEntryCount.getReadOnlyProperty(); }
     void reveal() { setVisible(true); setManaged(true); toFront(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<UploadTracker.Item> items) {
         itemCount.set(items.size());
+        activeEntryCount.set((int) items.stream().filter(item -> item.state() == UploadTracker.State.UPLOADING
+                || item.state() == UploadTracker.State.QUEUED || item.state() == UploadTracker.State.WAITING).count());
         int active = (int) items.stream().filter(item -> item.state() == UploadTracker.State.UPLOADING).map(UploadTracker.Item::contact).distinct().count();
         long queued = items.stream().filter(item -> item.state() == UploadTracker.State.QUEUED && item.queuePosition() > 0).map(UploadTracker.Item::contact).distinct().count();
         activeCount.set(active);
