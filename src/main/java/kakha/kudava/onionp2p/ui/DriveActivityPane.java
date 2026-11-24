@@ -18,6 +18,8 @@ final class DriveActivityPane extends VBox {
     private final UploadsPane uploads;
     private final DownloadsPane downloads;
     private final Button minimize;
+    private final Button clearCompleted = new Button("Clear completed");
+    private final Label cleanupError = new Label();
     private final Label empty = new Label("No file activity yet");
     private Filter selected = Filter.ALL;
     private boolean minimized;
@@ -33,7 +35,31 @@ final class DriveActivityPane extends VBox {
         var labels = new VBox(2, title, summary); HBox.setHgrow(labels, Priority.ALWAYS);
         minimize = icon("M6 9l6 6 6-6", "Minimize activity");
         var close = icon("M6 6l12 12 M18 6L6 18", "Hide activity — transfers continue");
-        var heading = new HBox(6, labels, minimize, close); heading.setAlignment(Pos.CENTER_LEFT); heading.getStyleClass().add("downloads-header");
+        clearCompleted.getStyleClass().add("activity-clear-button");
+        clearCompleted.setAccessibleText("Clear completed activity");
+        clearCompleted.setTooltip(new Tooltip("Clear finished, cancelled, and failed entries in this view. Files and shares are kept."));
+        clearCompleted.disableProperty().bind(javafx.beans.binding.Bindings.createBooleanBinding(() -> {
+            Filter filter = group.getSelectedToggle() == null ? Filter.ALL : (Filter) group.getSelectedToggle().getUserData();
+            return switch (filter) {
+                case ADDING -> imports.finishedCountProperty().get() == 0;
+                case UPLOADING -> uploads.finishedCountProperty().get() == 0;
+                case DOWNLOADING -> downloads.finishedCountProperty().get() == 0;
+                case ALL -> imports.finishedCountProperty().get() + uploads.finishedCountProperty().get() + downloads.finishedCountProperty().get() == 0;
+            };
+        }, group.selectedToggleProperty(), imports.finishedCountProperty(), uploads.finishedCountProperty(), downloads.finishedCountProperty()));
+        cleanupError.getStyleClass().addAll("downloads-summary", "activity-cleanup-message");
+        cleanupError.setWrapText(true); show(cleanupError, false);
+        clearCompleted.setOnAction(event -> {
+            show(cleanupError, false);
+            try {
+                if (selected == Filter.ALL || selected == Filter.ADDING) imports.clearFinished();
+                if (selected == Filter.ALL || selected == Filter.UPLOADING) uploads.clearFinished();
+                if (selected == Filter.ALL || selected == Filter.DOWNLOADING) downloads.clearFinished();
+            } catch (RuntimeException error) {
+                cleanupError.setText("Could not clear some entries. Please try again."); show(cleanupError, true);
+            }
+        });
+        var heading = new HBox(6, labels, clearCompleted, minimize, close); heading.setAlignment(Pos.CENTER_LEFT); heading.getStyleClass().add("downloads-header");
         String[] names = {"All", "Adding", "Uploading", "Downloading"};
         for (Filter filter : Filter.values()) {
             var button = new ToggleButton(names[filter.ordinal()]); button.setUserData(filter); button.setToggleGroup(group);
@@ -74,9 +100,10 @@ final class DriveActivityPane extends VBox {
         imports.itemCountProperty().addListener((obs, before, count) -> applyFilter(selected));
         uploads.itemCountProperty().addListener((obs, before, count) -> applyFilter(selected));
         downloads.itemCountProperty().addListener((obs, before, count) -> applyFilter(selected));
-        getChildren().addAll(heading, filters, scroll);
+        getChildren().addAll(heading, filters, scroll, cleanupError);
         minimize.setOnAction(event -> {
             minimized = !minimized; scroll.setVisible(!minimized); scroll.setManaged(!minimized); filters.setVisible(!minimized); filters.setManaged(!minimized);
+            show(clearCompleted, !minimized);
             ((SVGPath) minimize.getGraphic()).setContent(minimized ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6");
         });
         close.setOnAction(event -> hide()); select(Filter.ALL); hide();
@@ -84,6 +111,7 @@ final class DriveActivityPane extends VBox {
     ReadOnlyIntegerProperty activeCountProperty() { return active.getReadOnlyProperty(); }
     void reveal() {
         minimized = false; scroll.setVisible(true); scroll.setManaged(true); filters.setVisible(true); filters.setManaged(true);
+        show(clearCompleted, true);
         ((SVGPath) minimize.getGraphic()).setContent("M6 9l6 6 6-6");
         setVisible(true); setManaged(true); toFront();
     }
@@ -91,12 +119,13 @@ final class DriveActivityPane extends VBox {
     void hide() { setVisible(false); setManaged(false); }
     void select(Filter filter) { group.selectToggle((Toggle) filters.getChildren().get(filter.ordinal())); applyFilter(filter); }
     private void applyFilter(Filter filter) {
+        boolean changed = selected != filter;
         selected = filter;
         show(imports, filter == Filter.ADDING || filter == Filter.ALL && imports.itemCountProperty().get() > 0);
         show(uploads, filter == Filter.UPLOADING || filter == Filter.ALL && uploads.itemCountProperty().get() > 0);
         show(downloads, filter == Filter.DOWNLOADING || filter == Filter.ALL && downloads.itemCountProperty().get() > 0);
         show(empty, filter == Filter.ALL && imports.itemCountProperty().get() + uploads.itemCountProperty().get() + downloads.itemCountProperty().get() == 0);
-        if (scroll != null) scroll.setVvalue(0);
+        if (scroll != null && changed) scroll.setVvalue(0);
     }
     private static void show(javafx.scene.Node node, boolean show) { node.setVisible(show); node.setManaged(show); }
     private static Button icon(String path, String label) {

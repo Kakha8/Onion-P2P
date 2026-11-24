@@ -15,6 +15,8 @@ final class UploadsPane extends VBox {
     private final ReadOnlyIntegerWrapper activeCount = new ReadOnlyIntegerWrapper();
     private final ReadOnlyIntegerWrapper itemCount = new ReadOnlyIntegerWrapper();
     private final ReadOnlyIntegerWrapper activeEntryCount = new ReadOnlyIntegerWrapper();
+    private final ReadOnlyIntegerWrapper finishedCount = new ReadOnlyIntegerWrapper();
+    private final UploadTracker tracker;
     private final Label title = new Label("Uploads"), summary = new Label("No uploads yet");
     private final Label limitNotice = new Label("3-recipient limit reached. Additional recipients are queued.");
     private final VBox rows = new VBox();
@@ -39,6 +41,7 @@ final class UploadsPane extends VBox {
         this(tracker, contactName, ignored -> {});
     }
     UploadsPane(UploadTracker tracker, Function<String, String> contactName, java.util.function.Consumer<String> cancelUpload) {
+        this.tracker = tracker;
         this.contactName = contactName;
         this.cancelUpload = cancelUpload;
         getStyleClass().add("downloads-panel");
@@ -58,15 +61,18 @@ final class UploadsPane extends VBox {
         limitNotice.getStyleClass().add("transfer-limit-notice"); limitNotice.setWrapText(true); limitNotice.setMaxWidth(Double.MAX_VALUE);
         limitNotice.setVisible(false); limitNotice.setManaged(false);
         rows.getStyleClass().add("downloads-rows"); getChildren().addAll(header, limitNotice, scroll); hide();
-        tracker.setListener(items -> Platform.runLater(() -> update(items)));
+        tracker.setListener(ignored -> Platform.runLater(() -> update(tracker.items())));
     }
     ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     ReadOnlyIntegerProperty itemCountProperty() { return itemCount.getReadOnlyProperty(); }
     ReadOnlyIntegerProperty activeEntryCountProperty() { return activeEntryCount.getReadOnlyProperty(); }
+    ReadOnlyIntegerProperty finishedCountProperty() { return finishedCount.getReadOnlyProperty(); }
+    void clearFinished() { tracker.clearFinished(); }
     void reveal() { setVisible(true); setManaged(true); toFront(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<UploadTracker.Item> items) {
         itemCount.set(items.size());
+        finishedCount.set((int) items.stream().filter(UploadTracker.Item::finished).count());
         activeEntryCount.set((int) items.stream().filter(item -> item.state() == UploadTracker.State.UPLOADING
                 || item.state() == UploadTracker.State.QUEUED || item.state() == UploadTracker.State.WAITING).count());
         int active = (int) items.stream().filter(item -> item.state() == UploadTracker.State.UPLOADING).map(UploadTracker.Item::contact).distinct().count();
@@ -99,7 +105,11 @@ final class UploadsPane extends VBox {
             ((Label) heading.getChildren().get(0)).setText(item.name());
             boolean canCancel = item.state() == UploadTracker.State.UPLOADING || item.state() == UploadTracker.State.WAITING
                     || item.state() == UploadTracker.State.PAUSED || item.state() == UploadTracker.State.DISCONNECTED || item.state() == UploadTracker.State.QUEUED;
-            heading.getChildren().get(1).setVisible(canCancel); heading.getChildren().get(1).setManaged(canCancel);
+            Button action = (Button) heading.getChildren().get(1);
+            action.setVisible(canCancel || item.finished()); action.setManaged(action.isVisible());
+            action.setAccessibleText(item.finished() ? "Dismiss upload" : "Cancel upload");
+            action.setTooltip(new Tooltip(item.finished() ? "Dismiss from activity — sharing stays unchanged" : "Cancel upload"));
+            action.setOnAction(event -> { if (item.finished()) tracker.dismiss(item.key()); else cancelUpload.accept(item.key()); });
             ((Label) row.getChildren().get(1)).setText("To " + contactName.apply(item.contact()));
             String status = switch (item.state()) {
                 case UPLOADING -> "Uploading";

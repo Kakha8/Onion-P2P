@@ -69,6 +69,15 @@ class DownloadsPaneTest {
             queue.cancel(moving);
             fx(() -> assertTrue(pane[0].lookupAll(".label").stream().map(node -> (Label) node)
                     .anyMatch(label -> "Cancelled".equals(label.getText()) && label.getGraphic() != null)));
+            fx(() -> {
+                var dismiss = pane[0].lookupAll(".button").stream().filter(node -> "Dismiss download".equals(node.getAccessibleText()) && node.isVisible()).findFirst().orElseThrow();
+                ((javafx.scene.control.Button) dismiss).fire();
+            });
+            fx(() -> {
+                assertTrue(pane[0].lookupAll(".download-name").stream().noneMatch(node -> "Archive.zip".equals(((Label) node).getText())));
+                assertTrue(queue.items().stream().noneMatch(item -> item.id().equals(moving)));
+                assertEquals(1, queue.items().size(), "The waiting download stays in the pane");
+            });
             queue.add("queued-ui", "online", "Busy owner", "queued.bin", 100, progress -> { throw new DownloadQueue.QueuedException(2); });
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
             while (queue.items().stream().noneMatch(item -> item.state() == DownloadQueue.State.QUEUED) && System.nanoTime() < deadline) Thread.sleep(10);

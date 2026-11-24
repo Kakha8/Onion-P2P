@@ -23,6 +23,7 @@ public final class DownloadQueue implements AutoCloseable {
     public record Item(String id, String key, String owner, String ownerName, String name,
                        State state, String detail, long received, long total, Path destination) {
         public boolean active() { return state == State.WAITING || state == State.QUEUED || state == State.CONNECTING || state == State.DOWNLOADING || state == State.PAUSED; }
+        public boolean finished() { return !active(); }
     }
     public interface Progress { void update(long received, long total); void stage(String detail); default void checkpoint() {} }
     @FunctionalInterface public interface Work {
@@ -36,6 +37,7 @@ public final class DownloadQueue implements AutoCloseable {
         volatile Item item;
         final Work work;
         final AtomicBoolean running = new AtomicBoolean(), started = new AtomicBoolean(), cancelled = new AtomicBoolean(), paused = new AtomicBoolean(), resuming = new AtomicBoolean();
+        final AtomicBoolean dismissed = new AtomicBoolean(), discarded = new AtomicBoolean();
         long lastProgress;
         Job(Item item, Work work) { this.item = item; this.work = work; }
     }
@@ -84,6 +86,21 @@ public final class DownloadQueue implements AutoCloseable {
     }
     public void setListener(Consumer<List<Item>> listener) { this.listener = listener; publish(); }
     public synchronized List<Item> items() { return jobs.values().stream().map(job -> job.item).toList(); }
+    public synchronized void dismiss(String id) {
+        Job job = jobs.get(id);
+        if (job == null || !job.item.finished()) return;
+        synchronized (job) {
+            if (journal != null) try { java.nio.file.Files.deleteIfExists(journal.resolve(id + ".properties")); }
+            catch (java.io.IOException error) { throw new java.io.UncheckedIOException("Could not dismiss download activity", error); }
+            job.dismissed.set(true);
+        }
+        jobs.remove(id); publish();
+        if (!job.running.get()) Thread.ofPlatform().daemon().name("download-history-cleanup").start(() -> discard(job));
+    }
+    public synchronized void clearFinished() {
+        for (String id : jobs.values().stream().filter(job -> job.item.finished()).map(job -> job.item.id()).toList()) dismiss(id);
+    }
+    private static void discard(Job job) { if (job.discarded.compareAndSet(false, true)) job.work.discard(); }
     public synchronized String add(String key, String owner, String ownerName, String name, long size, Work work) {
         if (closed) throw new IllegalStateException("Downloads are stopped.");
         for (var job : jobs.values()) if (job.item.key().equals(key) && job.item.active()) return job.item.id();
@@ -103,7 +120,7 @@ public final class DownloadQueue implements AutoCloseable {
         Thread.ofPlatform().daemon().name("download-cancel-notice").start(() -> {
             try { job.work.cancelled(); } catch (Exception ignored) { /* Local cancellation does not depend on the peer being reachable. */ }
         });
-        if (!job.started.get()) job.work.discard();
+        if (!job.started.get()) discard(job);
     }
     public synchronized void pause(String id) {
         var job = jobs.get(id); if (job == null || !job.item.active()) return;
@@ -128,7 +145,7 @@ public final class DownloadQueue implements AutoCloseable {
     private void stopByOwner(Job job, String message) {
         job.cancelled.set(true);
         change(job, State.CANCELLED, message, job.item.received(), job.item.total(), null);
-        if (!job.started.get()) job.work.discard();
+        if (!job.started.get()) discard(job);
     }
     public synchronized void resume(String id) {
         var job = jobs.get(id); if (job == null || job.item.state() != State.PAUSED) return;
@@ -191,7 +208,7 @@ public final class DownloadQueue implements AutoCloseable {
         } finally {
             job.running.set(false);
             job.started.set(false);
-            if (job.cancelled.get()) job.work.discard();
+            if (job.cancelled.get() || job.dismissed.get()) discard(job);
         }
     }
     private void waiting(Job job) {
@@ -211,7 +228,7 @@ public final class DownloadQueue implements AutoCloseable {
     }
     private void change(Job job, State state, String detail, long received, long total, Path destination) {
         synchronized (job) {
-            if (closed) return;
+            if (closed || job.dismissed.get()) return;
             if (job.cancelled.get() && state != State.CANCELLED) return;
             if (job.paused.get() && state != State.PAUSED && state != State.CANCELLED) return;
             Item before = job.item;
@@ -223,6 +240,7 @@ public final class DownloadQueue implements AutoCloseable {
     private void persist(Job job) {
         if (journal == null) return;
         synchronized (job) {
+            if (job.dismissed.get()) return;
             try {
                 var file = journal.resolve(job.item.id() + ".properties");
                 if (job.item.state() == State.CANCELLED) { java.nio.file.Files.deleteIfExists(file); return; }
@@ -243,7 +261,7 @@ public final class DownloadQueue implements AutoCloseable {
         closed = true; executor.shutdownNow();
         for (var job : jobs.values()) {
             persist(job);
-            if (job.cancelled.get() && !job.started.get()) job.work.discard();
+            if (job.cancelled.get() && !job.started.get()) discard(job);
         }
     }
 }

@@ -17,6 +17,7 @@ final class DownloadsPane extends VBox {
     private final ReadOnlyIntegerWrapper activeCount = new ReadOnlyIntegerWrapper();
     private final ReadOnlyIntegerWrapper itemCount = new ReadOnlyIntegerWrapper();
     private final ReadOnlyIntegerWrapper activeEntryCount = new ReadOnlyIntegerWrapper();
+    private final ReadOnlyIntegerWrapper finishedCount = new ReadOnlyIntegerWrapper();
     private final DownloadQueue queue;
     private final Label title = new Label("Downloads"), summary = new Label("No downloads yet");
     private final VBox rows = new VBox();
@@ -56,7 +57,7 @@ final class DownloadsPane extends VBox {
         scroll.setMinHeight(0); scroll.getStyleClass().add("downloads-list");
         rows.getStyleClass().add("downloads-rows");
         getChildren().addAll(header, scroll); setVisible(false); setManaged(false);
-        queue.setListener(items -> Platform.runLater(() -> update(items)));
+        queue.setListener(ignored -> Platform.runLater(() -> update(queue.items())));
         var clock = new Timeline(new KeyFrame(Duration.seconds(1), event -> views.values().forEach(Row::updateMetrics)));
         clock.setCycleCount(Timeline.INDEFINITE);
         sceneProperty().addListener((obs, before, scene) -> { if (scene == null) clock.stop(); else clock.play(); });
@@ -65,9 +66,12 @@ final class DownloadsPane extends VBox {
     ReadOnlyIntegerProperty activeCountProperty() { return activeCount.getReadOnlyProperty(); }
     ReadOnlyIntegerProperty itemCountProperty() { return itemCount.getReadOnlyProperty(); }
     ReadOnlyIntegerProperty activeEntryCountProperty() { return activeEntryCount.getReadOnlyProperty(); }
+    ReadOnlyIntegerProperty finishedCountProperty() { return finishedCount.getReadOnlyProperty(); }
+    void clearFinished() { queue.clearFinished(); }
     void hide() { setVisible(false); setManaged(false); }
     private void update(List<DownloadQueue.Item> items) {
         itemCount.set(items.size());
+        finishedCount.set((int) items.stream().filter(DownloadQueue.Item::finished).count());
         activeEntryCount.set((int) items.stream().filter(item -> item.active() && item.state() != DownloadQueue.State.PAUSED).count());
         int active = 0, done = 0, waiting = 0, paused = 0, queued = 0;
         for (var item : items) {
@@ -81,6 +85,9 @@ final class DownloadsPane extends VBox {
             Row row = views.computeIfAbsent(item.id(), id -> { Row created = new Row(id); rows.getChildren().add(created); return created; });
             row.update(item);
         }
+        var ids = items.stream().map(DownloadQueue.Item::id).collect(java.util.stream.Collectors.toSet());
+        views.entrySet().removeIf(entry -> { if (ids.contains(entry.getKey())) return false; rows.getChildren().remove(entry.getValue()); return true; });
+        completed.retainAll(ids);
         activeCount.set(active);
         title.setText(active > 0 ? "Downloads · " + active + " active" : "Downloads");
         summary.setText(items.isEmpty() ? "No downloads yet" : done + " of " + items.size() + " complete" + (waiting > 0 ? " · " + waiting + " waiting" : "") + (paused > 0 ? " · " + paused + " paused" : "") + (queued > 0 ? " · " + queued + " queued" : ""));
@@ -91,7 +98,7 @@ final class DownloadsPane extends VBox {
         final kakha.kudava.onionp2p.drive.TransferRate rate = new kakha.kudava.onionp2p.drive.TransferRate();
         boolean measuring;
         final ProgressBar progress = new ProgressBar(0);
-        final Button action, pause;
+        final Button action, pause, dismiss;
         DownloadQueue.Item current;
         Row(String id) {
             getStyleClass().add("download-row");
@@ -108,7 +115,13 @@ final class DownloadsPane extends VBox {
             pause.setOnAction(event -> {
                 if (current.state() == DownloadQueue.State.PAUSED) queue.resume(id); else queue.pause(id);
             });
-            HBox line = new HBox(8, name, pause, action); line.setAlignment(Pos.CENTER_LEFT);
+            dismiss = icon("M6 6l12 12 M18 6L6 18", "Dismiss download");
+            dismiss.setTooltip(new Tooltip("Dismiss from activity — downloaded files are kept"));
+            dismiss.setOnAction(event -> {
+                try { queue.dismiss(id); }
+                catch (java.io.UncheckedIOException error) { detail.setText("Could not dismiss activity. Try again."); }
+            });
+            HBox line = new HBox(8, name, pause, action, dismiss); line.setAlignment(Pos.CENTER_LEFT);
             detail.getStyleClass().add("download-detail"); detail.setWrapText(true); detail.setMaxWidth(Double.MAX_VALUE);
             bytes.getStyleClass().add("downloads-summary");
             metrics.getStyleClass().add("downloads-summary");
@@ -120,6 +133,8 @@ final class DownloadsPane extends VBox {
             detail.setText(item.detail()); detail.setTooltip(new Tooltip("Shared by " + item.ownerName()));
             boolean complete = item.state() == DownloadQueue.State.COMPLETE;
             boolean paused = item.state() == DownloadQueue.State.PAUSED;
+            dismiss.setVisible(item.finished()); dismiss.setManaged(item.finished());
+            action.setVisible(item.state() != DownloadQueue.State.CANCELLED); action.setManaged(action.isVisible());
             TransferPresentation.status(this, detail, item.state() == DownloadQueue.State.CANCELLED, item.state() == DownloadQueue.State.QUEUED);
             pause.setVisible(item.active()); pause.setManaged(item.active());
             pause.setGraphic(glyph(paused ? "M8 5l11 7-11 7z" : "M8 5v14 M16 5v14"));

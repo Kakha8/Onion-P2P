@@ -16,12 +16,14 @@ public final class DriveImports {
         default void hashing(Path source, long hashed, long total) {}
         default void finished(Path source, long bytes) {}
         default void publishing() {}
+        default void checkpoint() {}
     }
     private record File(Path source, Path target, long size) {}
     public static Path add(Path source, Path directory, DriveChecksums checksums) throws IOException {
         return add(source, directory, checksums, new Progress() {});
     }
     public static Path add(Path source, Path directory, DriveChecksums checksums, Progress progress) throws IOException {
+        checkpoint(progress);
         Path from = source.toAbsolutePath().normalize(), root = directory.toAbsolutePath().normalize();
         if (Files.isSymbolicLink(from)) throw new IOException("Links cannot be added to My files.");
         if (!Files.exists(from)) throw new IOException("The selected item no longer exists.");
@@ -40,30 +42,30 @@ public final class DriveImports {
             if (Files.isDirectory(from)) {
                 Files.walkFileTree(from, new SimpleFileVisitor<>() {
                     @Override public FileVisitResult preVisitDirectory(Path path, BasicFileAttributes attributes) throws IOException {
-                        checkpoint(); directories.add(destination.resolve(from.relativize(path))); return FileVisitResult.CONTINUE;
+                        checkpoint(progress); directories.add(destination.resolve(from.relativize(path))); return FileVisitResult.CONTINUE;
                     }
                     @Override public FileVisitResult visitFile(Path path, BasicFileAttributes attributes) throws IOException {
-                        checkpoint();
+                        checkpoint(progress);
                         if (attributes.isRegularFile()) files.add(new File(path, destination.resolve(from.relativize(path)), attributes.size()));
                         return FileVisitResult.CONTINUE;
                     }
                 });
             } else files.add(new File(from, destination, Files.size(from)));
             progress.planned(files.stream().mapToLong(File::size).sum(), files.size());
-            for (Path folder : directories) { checkpoint(); Files.createDirectories(folder); }
+            for (Path folder : directories) { checkpoint(progress); Files.createDirectories(folder); }
             // Copy the entire item before starting its checksum phase.
             for (File file : files) {
-                checkpoint();
+                checkpoint(progress);
                 DriveChecksums.copyBytes(file.source(), file.target(), bytes -> progress.file(file.source(), bytes, 0, file.size()));
                 progress.copied(file.source(), Files.size(file.target()));
             }
             for (File file : files) {
-                checkpoint();
+                checkpoint(progress);
                 try { checksums.hashImported(file.target(), bytes -> progress.hashing(file.source(), bytes, file.size())); }
                 catch (SQLException error) { throw new IOException("Could not save the file checksum.", error); }
                 progress.finished(file.source(), Files.size(file.target()));
             }
-            checkpoint(); progress.publishing(); checkpoint();
+            checkpoint(progress); progress.publishing(); checkpoint(progress);
             return staging.publish(root, from.getFileName().toString());
         } catch (IOException | RuntimeException | Error error) {
             failure = error; throw error;
@@ -76,7 +78,8 @@ public final class DriveImports {
             }
         }
     }
-    private static void checkpoint() throws java.io.InterruptedIOException {
+    private static void checkpoint(Progress progress) throws java.io.InterruptedIOException {
+        progress.checkpoint();
         if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Adding stopped.");
     }
     static Path unique(Path directory, String name) {

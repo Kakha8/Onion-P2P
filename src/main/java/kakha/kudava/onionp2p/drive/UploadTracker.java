@@ -11,6 +11,7 @@ public final class UploadTracker implements AutoCloseable {
     public record Cancellation(String contact, String share, String relative, String request) {}
     public record Item(String key, String contact, String name, long sent, long total, double speed, State state, int queuePosition) {
         public Item(String key, String contact, String name, long sent, long total, double speed, State state) { this(key, contact, name, sent, total, speed, state, 0); }
+        public boolean finished() { return state == State.COMPLETE || state == State.FAILED || state == State.CANCELLED || state == State.CANCELLED_BY_SENDER; }
     }
     private static final class Transfer {
         Item item; Object connection; long updated;
@@ -183,6 +184,13 @@ public final class UploadTracker implements AutoCloseable {
         }).toList();
     }
     public synchronized void setListener(Consumer<List<Item>> listener) { this.listener = listener; publish(); }
+    public synchronized void dismiss(String key) {
+        Transfer transfer = transfers.get(key);
+        if (transfer != null && transfer.item.finished()) { transfers.remove(key); releaseIfIdle(transfer.item.contact()); publish(); }
+    }
+    public synchronized void clearFinished() {
+        for (String key : transfers.values().stream().filter(transfer -> transfer.item.finished()).map(transfer -> transfer.item.key()).toList()) dismiss(key);
+    }
     private void publish() { try { listener.accept(items()); } catch (RuntimeException ignored) {} }
     @Override public void close() { timer.shutdownNow(); }
 }

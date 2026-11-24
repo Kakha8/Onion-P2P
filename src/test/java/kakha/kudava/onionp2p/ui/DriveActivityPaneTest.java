@@ -72,6 +72,7 @@ class DriveActivityPaneTest {
                 assertEquals(1, pane[0].lookupAll(".activity-section").stream().filter(javafx.scene.Node::isManaged).count());
                 assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Added.txt".equals(((Label) node).getText())));
                 pane[0].select(DriveActivityPane.Filter.DOWNLOADING);
+                assertTrue(pane[0].lookup(".activity-clear-button").isDisabled(), "A view with only an active download must not be cleared");
                 assertFalse(badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).isVisible(), "Selected tabs have no badge");
                 assertFalse(badge(pane[0], DriveActivityPane.Filter.DOWNLOADING).isManaged());
                 assertTrue(badge(pane[0], DriveActivityPane.Filter.UPLOADING).isVisible());
@@ -94,9 +95,30 @@ class DriveActivityPaneTest {
                 assertEquals(UploadTracker.State.CANCELLED_BY_SENDER, uploads.items().getFirst().state());
                 root[0].applyCss(); root[0].layout();
                 snapshot(root[0], "");
+                var dismiss = pane[0].lookupAll(".button").stream().filter(node -> "Dismiss import".equals(node.getAccessibleText())).findFirst().orElseThrow();
+                ((Button) dismiss).fire();
+            });
+            fx(() -> {
+                assertTrue(imports.items().isEmpty()); assertEquals("abc", read(temp.resolve("drive/Added.txt")));
+                assertEquals("abc", read(source));
+                pane[0].select(DriveActivityPane.Filter.UPLOADING);
+                var clear = (Button) pane[0].lookup(".activity-clear-button"); assertFalse(clear.isDisabled()); clear.fire();
+            });
+            fx(() -> {
+                assertTrue(uploads.items().isEmpty()); assertEquals(1, downloads.items().size());
+                var clear = (Button) pane[0].lookup(".activity-clear-button"); assertTrue(clear.isDisabled());
+                pane[0].select(DriveActivityPane.Filter.ALL); assertFalse(clear.isDisabled()); clear.fire();
+            });
+            fx(() -> {
+                assertTrue(downloads.items().isEmpty());
+                assertTrue(pane[0].lookup(".activity-clear-button").isDisabled());
+                assertTrue(pane[0].lookupAll(".download-row").isEmpty());
+                assertEquals("abc", read(temp.resolve("drive/Added.txt")));
+                root[0].applyCss(); root[0].layout(); snapshot(root[0], "-cleared");
             });
         }
     }
+    private static String read(Path path) { try { return Files.readString(path); } catch (java.io.IOException error) { throw new java.io.UncheckedIOException(error); } }
     private static ToggleButton tab(DriveActivityPane pane, DriveActivityPane.Filter filter) {
         return pane.lookupAll(".activity-filter").stream().map(node -> (ToggleButton) node)
                 .filter(button -> button.getUserData() == filter).findFirst().orElseThrow();

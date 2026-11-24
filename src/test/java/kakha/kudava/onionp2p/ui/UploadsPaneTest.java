@@ -56,6 +56,12 @@ class UploadsPaneTest {
                 assertTrue(pane[0].lookupAll(".label").stream().anyMatch(node -> "Cancelled by recipient".equals(((Label) node).getText())));
                 assertTrue(pane[0].lookupAll(".label").stream()
                         .map(node -> (Label) node).anyMatch(label -> "Cancelled by recipient".equals(label.getText()) && label.getGraphic() != null));
+                var dismiss = pane[0].lookupAll(".button").stream().filter(node -> "Dismiss upload".equals(node.getAccessibleText())).findFirst().orElseThrow();
+                ((javafx.scene.control.Button) dismiss).fire();
+            });
+            fx(() -> {
+                assertTrue(tracker.items().isEmpty());
+                assertTrue(pane[0].lookupAll(".download-row").isEmpty());
             });
             tracker.begin("one", "share", "file", "one.bin", 1000, 0, new Object());
             tracker.begin("two", "share", "file", "two.bin", 1000, 0, new Object());
