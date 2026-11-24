@@ -11,9 +11,11 @@ import java.util.*;
 /** SHA-256 of managed file contents, cached against the last observed file version. */
 public final class DriveChecksums {
     private final String url;
+    private final Path importStaging;
     private record Version(long size, String modified, String created, String key) {}
 
     public DriveChecksums(Path directory) throws Exception {
+        importStaging = directory.toAbsolutePath().normalize().resolve("import-staging");
         Files.createDirectories(directory);
         Path database = directory.resolve("contacts.sqlite");
         if (!Files.exists(database)) Files.createFile(database);
@@ -24,6 +26,8 @@ public final class DriveChecksums {
             s.execute("CREATE TABLE IF NOT EXISTS drive_checksums (file_path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, modified TEXT NOT NULL, created TEXT NOT NULL, file_key TEXT NOT NULL)");
         }
     }
+
+    Path importStagingDirectory() { return importStaging; }
 
     private Connection connect() throws SQLException {
         var c = DriverManager.getConnection(url);

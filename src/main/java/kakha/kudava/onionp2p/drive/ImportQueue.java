@@ -18,7 +18,13 @@ public final class ImportQueue implements AutoCloseable {
     private Consumer<List<Item>> listener = ignored -> {};
     private boolean closed;
 
-    public ImportQueue(DriveChecksums checksums) { this.checksums = checksums; }
+    public ImportQueue(DriveChecksums checksums) {
+        this.checksums = checksums;
+        worker.execute(() -> {
+            try { ImportStaging.cleanAbandoned(checksums); }
+            catch (java.io.IOException error) { System.err.println("Could not clean unfinished imports; cleanup will retry at the next startup."); }
+        });
+    }
     public synchronized List<Item> items() { return List.copyOf(jobs.values()); }
     public synchronized void setListener(Consumer<List<Item>> listener) { this.listener = listener; publish(); }
     private void publish() { listener.accept(List.copyOf(jobs.values())); }
@@ -56,6 +62,7 @@ public final class ImportQueue implements AutoCloseable {
                 emit(detail("Hashing SHA-256", path), starting);
             }
             public void finished(Path path, long bytes) { done += bytes; finished++; hashed = done; emit(detail("Hashing SHA-256", path), false); }
+            public void publishing() { emit("Finishing import…", true); }
             String detail(String phase, Path path) {
                 Path root = source.toAbsolutePath().normalize();
                 return path.equals(root) ? phase + "…" : phase + " · " + root.relativize(path);
