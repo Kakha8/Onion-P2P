@@ -52,7 +52,7 @@ public final class DriveChecksums {
         String saved = cached(path, before);
         if (saved != null) return saved;
         String value = calculate(path, () -> {});
-        if (!before.equals(version(path))) throw new IOException("The file changed while calculating its checksum.");
+        if (!before.equals(version(path))) throw new FileFailures.ChangedException("The file changed while calculating its checksum.");
         save(path, value, before);
         return value;
     }
@@ -74,7 +74,7 @@ public final class DriveChecksums {
             }
         }
         checkpoint.run();
-        if (!before.equals(version(path))) throw new IOException("The file changed while calculating its checksum.");
+        if (!before.equals(version(path))) throw new FileFailures.ChangedException("The file changed while calculating its checksum.");
         return HexFormat.of().formatHex(hash.digest());
     }
 
@@ -119,7 +119,7 @@ public final class DriveChecksums {
         String value = calculate(target, () -> {
             if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Adding stopped.");
         }, progress);
-        if (!before.equals(version(target))) throw new IOException("The added file changed while hashing. Try again.");
+        if (!before.equals(version(target))) throw new FileFailures.ChangedException("The added file changed while hashing. Try again.");
         save(target.toAbsolutePath().normalize(), value, before);
         return value;
     }
@@ -140,7 +140,7 @@ public final class DriveChecksums {
                     copied += read; progress.accept(copied);
                 }
             }
-            if (!original.equals(version(source))) throw new IOException("The selected file changed while being added. Try again.");
+            if (!original.equals(version(source))) throw new FileFailures.ChangedException("The selected file changed while being added. Try again.");
         } catch (IOException failure) {
             if (created) try { Files.deleteIfExists(target); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
             throw failure;

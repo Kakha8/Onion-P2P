@@ -21,13 +21,19 @@ public final class ImportQueue implements AutoCloseable {
         Job(Item item) { this.item = item; }
     }
     private final DriveChecksums checksums;
+    @FunctionalInterface interface Importer { Path add(Path source, Path directory, DriveChecksums checksums, DriveImports.Progress progress) throws java.io.IOException; }
+    private final Importer importer;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> Thread.ofPlatform().daemon().name("drive-import").unstarted(r));
     private final Map<String, Job> jobs = new LinkedHashMap<>();
     private Consumer<List<Item>> listener = ignored -> {};
     private boolean closed;
 
     public ImportQueue(DriveChecksums checksums) {
+        this(checksums, DriveImports::add);
+    }
+    ImportQueue(DriveChecksums checksums, Importer importer) {
         this.checksums = checksums;
+        this.importer = importer;
         worker.execute(() -> {
             try { ImportStaging.cleanAbandoned(checksums); }
             catch (java.io.IOException error) { System.err.println("Could not clean unfinished imports; cleanup will retry at the next startup."); }
@@ -122,13 +128,13 @@ public final class ImportQueue implements AutoCloseable {
         try {
             checkCancelled(job);
             update(new Item(id, name, State.SCANNING, "Preparing files…", 0, 0, -1, 0, 0, 0, null));
-            Path target = DriveImports.add(source, directory, checksums, progress);
+            Path target = importer.add(source, directory, checksums, progress);
             update(new Item(id, name, State.COMPLETE, "Added · SHA-256 saved", progress.done, progress.done,
                     progress.done, progress.finished, progress.finished, 0, target));
         } catch (Exception error) {
             boolean cancelled = job.cancelled.get();
             String detail = cancelled ? error.getSuppressed().length == 0 ? "Cancelled" : "Cancelled · Temporary cleanup will retry when you sign in again."
-                    : "Could not add: " + (error.getMessage() == null ? "Try again." : error.getMessage());
+                    : FileFailures.adding(error, source);
             update(new Item(id, name, cancelled ? State.CANCELLED : State.FAILED, detail,
                     progress.copied, progress.hashed, progress.total, progress.finished, progress.count, 0, null));
         } finally {

@@ -529,16 +529,17 @@ public final class ContactMessaging {
                     out.writeLong(attrs.size()); out.writeLong(position);
                     source.skipNBytes(position);
                     byte[] data = source.readNBytes((int) Math.min(256 * 1024, attrs.size() - position));
-                    if (data.length != Math.min(256 * 1024, attrs.size() - position)) throw new IOException("File changed.");
+                    if (data.length != Math.min(256 * 1024, attrs.size() - position)) throw new kakha.kudava.onionp2p.drive.FileFailures.ChangedException("File changed.");
                     out.write(data); Arrays.fill(data, (byte) 0);
                 }
                 var after = Files.readAttributes(target, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
                 if (after.size() != attrs.size() || !after.lastModifiedTime().equals(attrs.lastModifiedTime())
-                        || !java.util.Objects.equals(after.fileKey(), attrs.fileKey())) throw new IOException("File changed.");
+                        || !java.util.Objects.equals(after.fileKey(), attrs.fileKey())) throw new kakha.kudava.onionp2p.drive.FileFailures.ChangedException("File changed.");
                 reply = bytes.toByteArray();
             } catch (Exception unavailable) {
                 if (uploads != null && activity != null) uploads.failed(activity);
-                String reason = unavailable instanceof DownloadQueue.OwnerStoppedException ? unavailable.getMessage() : "The file changed or is no longer shared.";
+                String reason = unavailable instanceof DownloadQueue.OwnerStoppedException ? unavailable.getMessage()
+                        : kakha.kudava.onionp2p.drive.FileFailures.remote(unavailable);
                 sendControl(output, input, material, (byte) 7, reason.getBytes(StandardCharsets.UTF_8));
                 return;
             }

@@ -72,15 +72,16 @@ final class ImportsPane extends VBox {
             boolean done = item.state() == ImportQueue.State.COMPLETE;
             boolean cancelled = item.state() == ImportQueue.State.CANCELLED;
             boolean cancelling = item.state() == ImportQueue.State.CANCELLING;
+            boolean failed = item.state() == ImportQueue.State.FAILED;
             TransferPresentation.status(this, detail, cancelled, false);
             cancel.setVisible(item.finished() || item.cancellable() || cancelling); cancel.setManaged(cancel.isVisible()); cancel.setDisable(cancelling);
             cancel.setAccessibleText(item.finished() ? "Dismiss import" : "Cancel import");
             cancel.getTooltip().setText(item.finished() ? "Dismiss from activity — your files are kept" : "Cancel adding this item");
-            long processed = cancelling || cancelled ? lastProcessed : item.state() == ImportQueue.State.COPYING ? item.copied() : item.hashed();
+            long processed = cancelling || cancelled || failed ? lastProcessed : item.state() == ImportQueue.State.COPYING ? item.copied() : item.hashed();
             lastProcessed = processed;
-            bytes.setText(amount(processed, item.total(), done));
+            bytes.setText(failed && item.total() < 0 ? "Not added" : amount(processed, item.total(), done));
             double total = item.total();
-            progress.setProgress(done ? 1 : item.state() == ImportQueue.State.QUEUED || (cancelling || cancelled) && total < 0 ? 0 : total < 0 ? -1 : total == 0 ? 0 : Math.min(.99, processed / total));
+            progress.setProgress(done ? 1 : item.state() == ImportQueue.State.QUEUED || (cancelling || cancelled || failed) && total < 0 ? 0 : total < 0 ? -1 : total == 0 ? 0 : Math.min(.99, processed / total));
             String files = item.files() > 1 ? item.filesDone() + " / " + item.files() + " files · " : "";
             metrics.setText(files + (item.state() == ImportQueue.State.COPYING || item.state() == ImportQueue.State.HASHING
                     ? TransferPresentation.speedAndEta(processed, item.total(), item.speed())
@@ -89,7 +90,11 @@ final class ImportsPane extends VBox {
         static String amount(long bytes, long total, boolean done) {
             return total < 0 ? "Preparing…" : size(bytes) + " / " + size(total) + " · " + (done ? 100 : total == 0 ? 0 : Math.min(99, bytes * 100 / total)) + "%";
         }
-        static String size(long value) { return value >= 1_000_000 ? String.format(Locale.ROOT, "%.1f MB", value / 1_000_000.0) : value >= 1000 ? String.format(Locale.ROOT, "%.1f KB", value / 1000.0) : value + " B"; }
+        static String size(long value) {
+            return value >= 1_000_000_000 ? String.format(Locale.ROOT, "%.1f GB", value / 1_000_000_000.0)
+                    : value >= 1_000_000 ? String.format(Locale.ROOT, "%.1f MB", value / 1_000_000.0)
+                    : value >= 1000 ? String.format(Locale.ROOT, "%.1f KB", value / 1000.0) : value + " B";
+        }
         static Label label(String style) { var label = new Label(); label.getStyleClass().add(style); label.setMinWidth(0); label.setMaxWidth(Double.MAX_VALUE); return label; }
         static ProgressBar bar() { var bar = new ProgressBar(); bar.getStyleClass().add("download-progress"); bar.setMaxWidth(Double.MAX_VALUE); return bar; }
     }

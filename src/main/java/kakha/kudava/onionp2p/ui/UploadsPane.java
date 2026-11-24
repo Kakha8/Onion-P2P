@@ -140,7 +140,8 @@ final class UploadsPane extends VBox {
     }
     private static SVGPath glyph(String path) { var icon = new SVGPath(); icon.setContent(path); icon.getStyleClass().add("download-glyph"); return icon; }
     private static String size(long bytes) {
-        return bytes >= 1000000 ? String.format(Locale.ROOT, "%.1f MB", bytes / 1000000.0)
+        return bytes >= 1_000_000_000 ? String.format(Locale.ROOT, "%.1f GB", bytes / 1_000_000_000.0)
+                : bytes >= 1000000 ? String.format(Locale.ROOT, "%.1f MB", bytes / 1000000.0)
                 : bytes >= 1000 ? String.format(Locale.ROOT, "%.1f KB", bytes / 1000.0) : bytes + " B";
     }
 }

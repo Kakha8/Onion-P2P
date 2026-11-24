@@ -179,9 +179,13 @@ final class SharedFolderBrowser {
             destination = chosen.toPath();
         }
         if (!ownerOnline.get()) return;
-        manager.downloads().folderItem(share, sender, path, name, folder, selected == null ? -1 : selected.size(), destination);
-        dialog.close();
-        showDownloads.run();
+        try {
+            manager.downloads().folderItem(share, sender, path, name, folder, selected == null ? -1 : selected.size(), destination);
+            dialog.close();
+            showDownloads.run();
+        } catch (java.io.UncheckedIOException error) {
+            status.setText(kakha.kudava.onionp2p.drive.FileFailures.downloading(error));
+        }
     }
 
     private void showMenu(Button anchor, FolderAccess.Entry entry) {
@@ -226,6 +230,7 @@ final class SharedFolderBrowser {
     }
 
     private static String formatSize(long size) {
+        if (size >= 1024L * 1024 * 1024) return String.format(Locale.ROOT, "%.1f GiB", size / (1024.0 * 1024 * 1024));
         if (size >= 1024 * 1024) return String.format(Locale.ROOT, "%.1f MiB", size / (1024.0 * 1024));
         if (size >= 1024) return String.format(Locale.ROOT, "%.1f KiB", size / 1024.0);
         return size + " B";

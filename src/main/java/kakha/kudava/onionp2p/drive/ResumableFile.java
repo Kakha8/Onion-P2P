@@ -16,9 +16,15 @@ public final class ResumableFile {
     private String version = "", name;
     private long received, total = -1;
     private final Path checkpoint;
-    public ResumableFile() { checkpoint = null; }
+    @FunctionalInterface interface Hashing { String calculate(Path file, Runnable checkpoint) throws IOException; }
+    private final Hashing hashing;
+    public ResumableFile() { checkpoint = null; hashing = DriveChecksums::calculate; }
     public ResumableFile(Path checkpoint, Path directory) throws IOException {
+        this(checkpoint, directory, DriveChecksums::calculate);
+    }
+    ResumableFile(Path checkpoint, Path directory, Hashing hashing) throws IOException {
         this.checkpoint = checkpoint;
+        this.hashing = hashing;
         var values = DownloadState.read(checkpoint);
         if (values.isEmpty()) return;
         try {
@@ -56,11 +62,18 @@ public final class ResumableFile {
         if (partial != null) values.setProperty("partial", partial.toAbsolutePath().normalize().toString());
         Path target = finishing != null ? finishing : destination;
         if (target != null) values.setProperty("destination", target.toAbsolutePath().normalize().toString());
-        DownloadState.write(checkpoint, values);
+        try { DownloadState.write(checkpoint, values); }
+        catch (IOException error) { throw new IOException("Could not save download progress", error); }
     }
 
     public Path download(Path directory, Source source, DownloadQueue.Progress progress) throws Exception {
         if (destination != null) { verify(destination, progress); return destination; }
+        if (partial != null) {
+            try {
+                var attributes = Files.readAttributes(partial, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!attributes.isRegularFile() || attributes.size() != received) discard();
+            } catch (NoSuchFileException missing) { discard(); }
+        }
         Files.createDirectories(directory);
         while (true) {
             progress.checkpoint();
@@ -71,7 +84,7 @@ public final class ResumableFile {
                 throw new VerificationException("The sender does not provide file checksums. Update both apps and retry.");
             }
             if (!version.isEmpty() && (!version.equals(chunk.version()) || total != chunk.total() || !name.equals(chunk.name()))) {
-                discard(); throw new IOException("The shared file changed. Retry to download the new version.");
+                discard(); throw new FileFailures.ChangedException("The shared file changed. Retry to download the new version.");
             }
             if (chunk.offset() != received || chunk.total() < 0 || received > chunk.total()
                     || chunk.bytes().length > CHUNK_SIZE || chunk.bytes().length > chunk.total() - received
@@ -82,6 +95,7 @@ public final class ResumableFile {
             try (OutputStream out = Files.newOutputStream(partial, StandardOpenOption.APPEND)) { out.write(chunk.bytes()); }
             catch (IOException failure) {
                 try (var channel = java.nio.channels.FileChannel.open(partial, StandardOpenOption.WRITE)) { channel.truncate(before); }
+                catch (IOException rollback) { failure.addSuppressed(rollback); }
                 throw failure;
             }
             received += chunk.bytes().length;
@@ -113,17 +127,19 @@ public final class ResumableFile {
     private void verify(Path file, DownloadQueue.Progress progress) throws IOException {
         progress.stage("Verifying " + name + "…");
         try {
-            if (!hasChecksum(version) || Files.size(file) != total)
-                throw new IOException("Size or checksum metadata does not match.");
-            String actual = DriveChecksums.calculate(file, progress::checkpoint);
+            if (!hasChecksum(version) || Files.size(file) != total) throw verificationFailed();
+            String actual = hashing.calculate(file, progress::checkpoint);
             if (!java.security.MessageDigest.isEqual(actual.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
                     version.substring(7, 71).getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
-                throw new IOException("Checksum does not match.");
-        } catch (IOException mismatch) {
-            discard(); // Published copies are retained; only our temporary file is deleted.
-            throw new VerificationException("Verification failed. Retry to download a fresh copy.");
-        }
+                throw verificationFailed();
+        } catch (FileFailures.ChangedException changed) { throw verificationFailed(); }
+        catch (NoSuchFileException missing) { discard(); throw missing; }
         progress.checkpoint();
+    }
+
+    private VerificationException verificationFailed() {
+        discard(); // Keep published copies; only temporary data and its checkpoint are removed.
+        return new VerificationException("Verification failed. Retry to download a fresh copy.");
     }
 
     public void discard() {

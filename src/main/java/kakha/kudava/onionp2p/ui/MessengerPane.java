@@ -1913,6 +1913,7 @@ final class MessengerPane extends BorderPane {
     }
 
     private static String formatBytes(long bytes) {
+        if (bytes >= 1024L * 1024 * 1024) return String.format(java.util.Locale.ROOT, "%.1f GiB", bytes / (1024.0 * 1024 * 1024));
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format(java.util.Locale.ROOT, "%.1f KiB", bytes / 1024.0);
         return String.format(java.util.Locale.ROOT, "%.1f MiB", bytes / (1024.0 * 1024));
@@ -3248,9 +3249,13 @@ final class MessengerPane extends BorderPane {
 
     private void downloadSharedDriveFile(SharedDriveStore.SharedFile file, String sender, Path directory) {
         if (!presence.getOrDefault(file.contactLink(), Presence.checking()).online()) return;
-        if (file.folder()) manager.downloads().folderItem(file, sender, "", file.name(), true, -1, directory);
-        else manager.downloads().file(file, sender, directory);
-        activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING);
+        try {
+            if (file.folder()) manager.downloads().folderItem(file, sender, "", file.name(), true, -1, directory);
+            else manager.downloads().file(file, sender, directory);
+            activityPane.reveal(DriveActivityPane.Filter.DOWNLOADING);
+        } catch (java.io.UncheckedIOException error) {
+            showDriveAlert(Alert.AlertType.ERROR, "Could not start download", kakha.kudava.onionp2p.drive.FileFailures.downloading(error));
+        }
     }
 
     private static String shortAddress(String address) {

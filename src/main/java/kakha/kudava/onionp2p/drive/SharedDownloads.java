@@ -123,8 +123,14 @@ public final class SharedDownloads implements AutoCloseable {
             progress.update(completeBytes, total);
             for (var member : plan) {
                 progress.checkpoint();
-                if (member.folder()) { Files.createDirectories(destination.resolve(member.local())); continue; }
-                Path parent = destination.resolve(member.local()).getParent(); Files.createDirectories(parent);
+                if (member.folder()) {
+                    try { Files.createDirectories(destination.resolve(member.local())); }
+                    catch (IOException error) { throw new FileFailures.FolderItemException(member.relative(), error); }
+                    continue;
+                }
+                Path parent = destination.resolve(member.local()).getParent();
+                try { Files.createDirectories(parent); }
+                catch (IOException error) { throw new FileFailures.FolderItemException(member.relative(), error); }
                 downloadMember(member.relative(), parent, scaled(progress, completeBytes, member.size(), total));
                 completeBytes += member.size(); progress.update(completeBytes, total);
             }
@@ -138,7 +144,8 @@ public final class SharedDownloads implements AutoCloseable {
                 values.setProperty(i + ".remote", member.relative()); values.setProperty(i + ".local", member.local());
                 values.setProperty(i + ".folder", Boolean.toString(member.folder())); values.setProperty(i + ".size", Long.toString(member.size()));
             }
-            DownloadState.write(state.resolve("folder.properties"), values);
+            try { DownloadState.write(state.resolve("folder.properties"), values); }
+            catch (IOException error) { throw new IOException("Could not save download progress", error); }
         }
         private ResumableFile transfer(String relative, Path directory) throws IOException {
             var existing = transfers.get(relative); if (existing != null) return existing;
@@ -150,8 +157,14 @@ public final class SharedDownloads implements AutoCloseable {
         }
         private Path downloadMember(String relative, Path directory, DownloadQueue.Progress progress) throws Exception {
             currentMember = relative;
-            return transfer(relative, directory).download(directory,
-                    (offset, version) -> manager.downloadChunk(owner, shareId, relative, offset, version, request.getProperty("request.task")), progress);
+            try {
+                return transfer(relative, directory).download(directory,
+                        (offset, version) -> manager.downloadChunk(owner, shareId, relative, offset, version, request.getProperty("request.task")), progress);
+            } catch (java.util.concurrent.CancellationException cancelled) { throw cancelled; }
+            catch (Exception error) {
+                if (folder) throw new FileFailures.FolderItemException(relative, error);
+                throw error;
+            }
         }
         public void discard() {
             transfers.values().forEach(ResumableFile::discard);
@@ -166,7 +179,11 @@ public final class SharedDownloads implements AutoCloseable {
         private void readPlan(String remote, String local, List<Member> members, int depth, DownloadQueue.Progress progress) throws Exception {
             if (depth > 64) throw new IOException("Folder nesting exceeds 64 levels.");
             progress.stage("Reading " + (remote.isEmpty() ? name : remote) + "…");
-            for (var child : manager.browseSharedFolderForDownload(owner, shareId, remote, progress::stage)) {
+            java.util.List<FolderAccess.Entry> children;
+            try { children = manager.browseSharedFolderForDownload(owner, shareId, remote, progress::stage); }
+            catch (java.util.concurrent.CancellationException cancelled) { throw cancelled; }
+            catch (Exception error) { throw new FileFailures.FolderItemException(remote.isEmpty() ? name : remote, error); }
+            for (var child : children) {
                 if (members.size() >= 100000) throw new IOException("Folder download exceeds 100,000 entries.");
                 String childRemote = remote.isEmpty() ? child.name() : remote + "/" + child.name();
                 String childLocal = local.isEmpty() ? child.name() : local + "/" + child.name();

@@ -26,7 +26,8 @@ public final class DriveImports {
         checkpoint(progress);
         Path from = source.toAbsolutePath().normalize(), root = directory.toAbsolutePath().normalize();
         if (Files.isSymbolicLink(from)) throw new IOException("Links cannot be added to My files.");
-        if (!Files.exists(from)) throw new IOException("The selected item no longer exists.");
+        // Reading attributes preserves the distinction between a missing source and denied access.
+        Files.readAttributes(from, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         if (from.startsWith(checksums.importStagingDirectory())
                 || Files.isDirectory(from) && checksums.importStagingDirectory().startsWith(from))
             throw new IOException("Choose files outside the app's temporary import folder.");

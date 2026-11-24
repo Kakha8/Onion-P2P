@@ -107,7 +107,10 @@ public final class DownloadQueue implements AutoCloseable {
         String id = UUID.randomUUID().toString();
         var job = new Job(new Item(id, key, owner, ownerName, name, State.WAITING,
                 "Waiting for a connection to " + ownerName, 0, size, null), work);
-        jobs.put(id, job); persist(job); publish(); submit(job); return id;
+        jobs.put(id, job);
+        try { persist(job); }
+        catch (java.io.UncheckedIOException error) { jobs.remove(id); publish(); throw error; }
+        publish(); submit(job); return id;
     }
     public void wake(String owner) {
         List<Job> copy;
@@ -200,10 +203,12 @@ public final class DownloadQueue implements AutoCloseable {
             else if ((job.cancelled.get() || closed) && job.item.state() != State.CANCELLED) change(job, State.CANCELLED, "Cancelled", job.item.received(), job.item.total(), null);
         } catch (Exception error) {
             if (!job.cancelled.get() && !closed) {
-                if (error instanceof QueuedException) change(job, State.QUEUED, error.getMessage(), job.item.received(), job.item.total(), null);
-                else if (error instanceof OwnerStoppedException) stopByOwner(job, error.getMessage());
-                else if (networkFailure(error)) waiting(job);
-                else change(job, State.FAILED, error.getMessage() == null ? "Download failed" : error.getMessage(), job.item.received(), job.item.total(), null);
+                var queued = FileFailures.find(error, QueuedException.class);
+                var stopped = FileFailures.find(error, OwnerStoppedException.class);
+                if (queued != null) change(job, State.QUEUED, queued.getMessage(), job.item.received(), job.item.total(), null);
+                else if (stopped != null) stopByOwner(job, stopped.getMessage());
+                else if (networkFailure(error)) waiting(job, error);
+                else change(job, State.FAILED, FileFailures.downloading(error), job.item.received(), job.item.total(), null);
             }
         } finally {
             job.running.set(false);
@@ -212,19 +217,24 @@ public final class DownloadQueue implements AutoCloseable {
         }
     }
     private void waiting(Job job) {
+        waiting(job, null);
+    }
+    private void waiting(Job job, Throwable error) {
         String detail = job.resuming.get()
                 ? job.item.ownerName() + " is offline or unreachable. Try again later. Retrying automatically."
                 : "Waiting for a connection to " + job.item.ownerName() + " · retrying automatically";
-        change(job, State.WAITING, detail, job.item.received(), job.item.total(), null);
+        String interrupted = FileFailures.interruptedFolder(error);
+        change(job, State.WAITING, interrupted + detail + (interrupted.isEmpty() ? "" : ". Saved progress is kept."), job.item.received(), job.item.total(), null);
     }
     private void waitingForTor(Job job) { change(job, State.WAITING, "Waiting for Tor to connect · retrying automatically", job.item.received(), job.item.total(), null); }
     private static boolean networkFailure(Throwable error) {
-        for (Throwable cause = error; cause != null; cause = cause.getCause())
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
             if (cause instanceof SocketException || cause instanceof SocketTimeoutException || cause instanceof EOFException) return true;
-        return error instanceof java.io.IOException && error.getMessage() != null
-                && (error.getMessage().startsWith("Tor could not reach")
-                    || error.getMessage().equals("Contact is not reachable yet.")
-                    || error.getMessage().equals("SOCKS negotiation failed."));
+            String message = cause.getMessage();
+            if (cause instanceof java.io.IOException && message != null && (message.startsWith("Tor could not reach")
+                    || message.equals("Contact is not reachable yet.") || message.equals("SOCKS negotiation failed."))) return true;
+        }
+        return false;
     }
     private void change(Job job, State state, String detail, long received, long total, Path destination) {
         synchronized (job) {
@@ -234,8 +244,8 @@ public final class DownloadQueue implements AutoCloseable {
             Item before = job.item;
             job.item = new Item(before.id(), before.key(), before.owner(), before.ownerName(), before.name(), state, detail, received, total, destination);
         }
-        persist(job);
-        publish();
+        // Even an unwritable progress journal must not hide the failed state from the UI.
+        try { persist(job); } finally { publish(); }
     }
     private void persist(Job job) {
         if (journal == null) return;
